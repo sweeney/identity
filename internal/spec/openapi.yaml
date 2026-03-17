@@ -1,0 +1,637 @@
+openapi: "3.0.3"
+
+info:
+  title: Identity API
+  version: "1.0.0"
+  description: |
+    Self-hosted JWT authentication and identity management service.
+
+    ## Token model
+    - **Access token**: short-lived JWT (15 minutes). Pass in `Authorization: Bearer <token>`. Never persist to disk.
+    - **Refresh token**: long-lived opaque token (30-day sliding window). Rotated on every use — always persist the newest one immediately.
+
+    ## Token family rotation & theft detection
+    Every refresh call invalidates the submitted token and issues a new pair. If a previously-used (rotated) refresh token is ever presented again, the server treats it as a stolen token: the **entire token family** is revoked and `token_family_compromised` is returned. The legitimate client must log in again.
+
+    ## Refresh implementation note
+    Use a mutex around the refresh call. If multiple in-flight requests all receive a 401 simultaneously, only one should call `/auth/refresh`; the rest should wait and reuse the result. See docs/api.md for pseudocode.
+
+servers:
+  - url: https://{domain}/api/v1
+    variables:
+      domain:
+        default: id.swee.net
+        description: Your deployment hostname
+
+security: []
+
+tags:
+  - name: auth
+    description: Authentication and session management
+  - name: users
+    description: User management (admin only except GET /users/{id})
+  - name: oauth
+    description: OAuth 2.0 Authorization Code + PKCE (endpoints are at /oauth, not /api/v1)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, refresh_token]
+      properties:
+        access_token:
+          type: string
+          description: Short-lived JWT. Use in Authorization header. Do NOT persist to disk.
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Seconds until access token expires. Always 900 (15 minutes).
+          example: 900
+        refresh_token:
+          type: string
+          description: Long-lived opaque token. Store securely (Keychain / EncryptedSharedPreferences). Rotated on every use.
+
+    User:
+      type: object
+      required: [id, username, display_name, role, is_active, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        role:
+          type: string
+          enum: [user, admin]
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    MeResponse:
+      type: object
+      required: [id, username, role, is_active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          type: string
+          enum: [user, admin]
+        is_active:
+          type: boolean
+
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: |
+            Snake_case error code. Always check this field, not the HTTP status alone.
+            Known codes: invalid_credentials, account_disabled, invalid_refresh_token,
+            token_expired, token_family_compromised, forbidden, not_found, username_taken,
+            cannot_delete_last_admin, validation_error, user_limit_reached, weak_password,
+            rate_limited, internal_error
+        message:
+          type: string
+          description: Human-readable description. Do not parse programmatically.
+
+    OAuthError:
+      type: object
+      required: [error, error_description]
+      description: RFC 6749 error format used by /oauth/token
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, invalid_grant, unsupported_grant_type, access_denied, server_error]
+        error_description:
+          type: string
+
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      summary: Authenticate a user
+      description: Returns a JWT access token and refresh token. No authentication required.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: alice
+                password:
+                  type: string
+                  example: mysecretpassword
+                device_hint:
+                  type: string
+                  description: Informational label shown in the admin UI. E.g. "iPhone 15 / iOS 18"
+                  example: "iPhone 15 / iOS 18"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: invalid_credentials
+                message: invalid username or password
+        "403":
+          description: Account disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: account_disabled
+                message: account has been disabled
+        "422":
+          description: Validation error (missing username or password)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/refresh:
+    post:
+      operationId: refreshToken
+      summary: Rotate token pair
+      description: |
+        Exchange a refresh token for a new access token and refresh token.
+        The submitted refresh token is **immediately invalidated**.
+        Replaying a used token triggers `token_family_compromised` and revokes all sessions in that family.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: Tokens rotated — persist the new refresh token immediately
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        "401":
+          description: Token invalid, expired, or family compromised
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_refresh_token:
+                  value:
+                    error: invalid_refresh_token
+                    message: the refresh token is invalid
+                token_expired:
+                  value:
+                    error: token_expired
+                    message: the refresh token has expired
+                token_family_compromised:
+                  value:
+                    error: token_family_compromised
+                    message: "token reuse detected — please log in again"
+        "403":
+          description: Account disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke session(s)
+      description: |
+        If `refresh_token` is provided, only that device's session is revoked.
+        If omitted, **all sessions** for the authenticated user are revoked (sign out everywhere).
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token:
+                  type: string
+                  description: Omit to revoke all sessions.
+      responses:
+        "204":
+          description: Session(s) revoked
+        "401":
+          description: Missing or invalid access token
+
+  /auth/me:
+    get:
+      operationId: getMe
+      summary: Get current user
+      description: Returns claims embedded in the JWT. Does not hit the database.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        "401":
+          description: Missing or invalid access token
+
+  /users:
+    get:
+      operationId: listUsers
+      summary: List all users
+      description: Admin only.
+      tags: [users]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users, total]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+                  total:
+                    type: integer
+        "401":
+          description: Missing or invalid access token
+        "403":
+          description: Admin role required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: forbidden
+                message: admin role required
+
+    post:
+      operationId: createUser
+      summary: Create a user
+      description: Admin only. `role` defaults to `"user"` if omitted.
+      tags: [users]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                display_name:
+                  type: string
+                password:
+                  type: string
+                  minLength: 8
+                role:
+                  type: string
+                  enum: [user, admin]
+                  default: user
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        "401":
+          description: Missing or invalid access token
+        "403":
+          description: Admin role required
+        "409":
+          description: Username already taken
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: username_taken
+                message: a user with that username already exists
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                weak_password:
+                  value:
+                    error: weak_password
+                    message: password must be at least 8 characters
+                user_limit_reached:
+                  value:
+                    error: user_limit_reached
+                    message: the maximum number of users has been reached
+
+  /users/{id}:
+    get:
+      operationId: getUser
+      summary: Get a user
+      description: Admins can get any user. Regular users can only get themselves — any other ID returns 403.
+      tags: [users]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        "401":
+          description: Missing or invalid access token
+        "403":
+          description: Non-admin accessing another user's record
+        "404":
+          description: User not found
+
+    put:
+      operationId: updateUser
+      summary: Update a user
+      description: |
+        Admin only. All fields are optional (partial update).
+        Omitting `password` leaves it unchanged.
+        Setting `is_active` to `false` immediately revokes all refresh tokens for that user.
+      tags: [users]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+                password:
+                  type: string
+                  minLength: 8
+                role:
+                  type: string
+                  enum: [user, admin]
+                is_active:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        "401":
+          description: Missing or invalid access token
+        "403":
+          description: Admin role required
+        "404":
+          description: User not found
+        "422":
+          description: Weak password
+
+    delete:
+      operationId: deleteUser
+      summary: Delete a user
+      description: Admin only. The last admin cannot be deleted.
+      tags: [users]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: User deleted
+        "401":
+          description: Missing or invalid access token
+        "403":
+          description: Admin role required
+        "404":
+          description: User not found
+        "409":
+          description: Cannot delete last admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: cannot_delete_last_admin
+                message: cannot delete the last admin user
+
+  # ── OAuth endpoints (served at /oauth, not /api/v1) ──────────────
+
+  /oauth/authorize:
+    get:
+      operationId: oauthAuthorize
+      summary: Render OAuth login form
+      description: |
+        Validates the client and redirect URI, then renders a login form.
+        This endpoint is at `/oauth/authorize` (not under `/api/v1`).
+        Only `code_challenge_method=S256` is accepted.
+      tags: [oauth]
+      parameters:
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+        - name: code_challenge
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [S256]
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Login form rendered (HTML)
+        "400":
+          description: Invalid client, redirect URI, or missing parameters (HTML error page)
+
+    post:
+      operationId: oauthAuthorizeSubmit
+      summary: Submit OAuth login credentials
+      description: |
+        Authenticates the user and redirects to the client's redirect URI with an authorization code.
+        The code is single-use and expires after 60 seconds.
+      tags: [oauth]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [client_id, redirect_uri, code_challenge, username, password]
+              properties:
+                client_id:
+                  type: string
+                redirect_uri:
+                  type: string
+                state:
+                  type: string
+                code_challenge:
+                  type: string
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "302":
+          description: Redirect to client with `?code=...&state=...`
+        "200":
+          description: Login form re-rendered with error (bad credentials)
+
+  /oauth/token:
+    post:
+      operationId: oauthToken
+      summary: Exchange authorization code or refresh token for tokens
+      description: |
+        Accepts `grant_type=authorization_code` (with PKCE code_verifier) or `grant_type=refresh_token`.
+        This endpoint is at `/oauth/token` (not under `/api/v1`).
+        Error responses use RFC 6749 format (`error` + `error_description`), not the API error envelope.
+      tags: [oauth]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              oneOf:
+                - type: object
+                  title: Authorization Code Exchange
+                  required: [grant_type, client_id, code, redirect_uri, code_verifier]
+                  properties:
+                    grant_type:
+                      type: string
+                      enum: [authorization_code]
+                    client_id:
+                      type: string
+                    code:
+                      type: string
+                    redirect_uri:
+                      type: string
+                    code_verifier:
+                      type: string
+                - type: object
+                  title: Refresh Token
+                  required: [grant_type, refresh_token]
+                  properties:
+                    grant_type:
+                      type: string
+                      enum: [refresh_token]
+                    refresh_token:
+                      type: string
+      responses:
+        "200":
+          description: Tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        "400":
+          description: Invalid grant, expired code, PKCE failure, or bad refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+              examples:
+                invalid_grant:
+                  value:
+                    error: invalid_grant
+                    error_description: The authorization code is invalid.
+                pkce_failed:
+                  value:
+                    error: invalid_grant
+                    error_description: PKCE verification failed.
+                code_expired:
+                  value:
+                    error: invalid_grant
+                    error_description: The authorization code has expired.
+                code_replayed:
+                  value:
+                    error: invalid_grant
+                    error_description: The authorization code has already been used.

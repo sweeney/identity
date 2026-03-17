@@ -1,0 +1,31 @@
+{{define "title"}}{{if .Client}}Edit Client{{else}}New OAuth Client{{end}}{{end}}
+{{define "content"}}
+<h2>{{if .Client}}Edit OAuth Client{{else}}New OAuth Client{{end}}</h2>
+
+{{if .Error}}<p class="flash-error">{{.Error}}</p>{{end}}
+
+<form method="POST" action="{{.FormAction}}">
+    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+    <label>
+        Client ID
+        {{if .Client}}
+        <input type="text" value="{{.Client.ID}}" readonly>
+        {{else}}
+        <input type="text" name="id" value="{{.FormID}}" required placeholder="e.g. myapp" pattern="[a-z0-9_-]+">
+        <small>Lowercase letters, digits, hyphens, and underscores only.</small>
+        {{end}}
+    </label>
+    <label>
+        Application Name
+        <input type="text" name="name" value="{{if .Client}}{{.Client.Name}}{{else}}{{.FormName}}{{end}}" required placeholder="e.g. My Dashboard">
+    </label>
+    <label>
+        Redirect URIs <small>(one per line)</small>
+        <textarea name="redirect_uris" rows="4" required placeholder="https://myapp.example.com/callback&#10;myapp://callback">{{if .Client}}{{range $i, $uri := .Client.RedirectURIs}}{{if $i}}&#10;{{end}}{{$uri}}{{end}}{{else}}{{.FormRedirectURIs}}{{end}}</textarea>
+    </label>
+    <div class="flex-row">
+        <button type="submit">{{if .Client}}Save Changes{{else}}Create Client{{end}}</button>
+        <a href="/admin/oauth" class="btn btn-secondary">Cancel</a>
+    </div>
+</form>
+{{end}}

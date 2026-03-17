@@ -1,0 +1,61 @@
+{{define "title"}}Audit Log{{end}}
+{{define "content"}}
+<h2>Audit Log</h2>
+
+<form method="GET" action="/admin/audit" class="flex-row" style="margin-bottom:1.5rem">
+    <label style="flex:1;min-width:180px;margin-bottom:0">
+        Filter by user ID
+        <input type="text" name="user_id" value="{{.FilterUserID}}" placeholder="user ID">
+    </label>
+    <label style="flex:1;min-width:180px;margin-bottom:0">
+        Filter by event type
+        <input type="text" name="event_type" value="{{.FilterEventType}}" placeholder="e.g. login_success">
+    </label>
+    <button type="submit" class="btn-small">Filter</button>
+    {{if or .FilterUserID .FilterEventType}}
+    <a href="/admin/audit" class="btn btn-secondary btn-small">Clear</a>
+    {{end}}
+</form>
+
+{{if .Events}}
+<table>
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Event</th>
+            <th>Who</th>
+            <th>Detail</th>
+            <th>IP</th>
+        </tr>
+    </thead>
+    <tbody>
+    {{range .Events}}
+        <tr>
+            <td class="nowrap">{{.OccurredAt.Format "2006-01-02 15:04:05 UTC"}}</td>
+            <td>
+                {{if eq .EventType "login_success"}}<span class="evt-success">login</span>
+                {{else if eq .EventType "oauth_authorize_success"}}<span class="evt-success">oauth login</span>
+                {{else if eq .EventType "user_created"}}<span class="evt-success">user created</span>
+                {{else if eq .EventType "user_updated"}}user updated
+                {{else if eq .EventType "user_deleted"}}<span class="evt-danger">user deleted</span>
+                {{else if eq .EventType "user_deactivated"}}<span class="evt-danger">user deactivated</span>
+                {{else if eq .EventType "logout"}}logout
+                {{else if eq .EventType "logout_all"}}logout all
+                {{else if eq .EventType "login_failure"}}<span class="evt-danger">login failed</span>
+                {{else if eq .EventType "oauth_authorize_failure"}}<span class="evt-danger">oauth failed</span>
+                {{else if eq .EventType "token_family_compromised"}}<span class="evt-danger">token compromised</span>
+                {{else if eq .EventType "backup_success"}}<span class="evt-success">backup</span>
+                {{else if eq .EventType "backup_failure"}}<span class="evt-danger">backup failed</span>
+                {{else}}{{.EventType}}{{end}}
+            </td>
+            <td>{{.Username}}</td>
+            <td>{{if .Detail}}{{.Detail}}{{else if .ClientID}}via {{.ClientID}}{{else if .DeviceHint}}{{.DeviceHint}}{{else}}&mdash;{{end}}</td>
+            <td>{{if eq .IPAddress "::1"}}localhost{{else if eq .IPAddress "127.0.0.1"}}localhost{{else if .IPAddress}}{{.IPAddress}}{{else}}&mdash;{{end}}</td>
+        </tr>
+    {{end}}
+    </tbody>
+</table>
+{{else}}
+<p>No audit events found.</p>
+{{end}}
+{{end}}
