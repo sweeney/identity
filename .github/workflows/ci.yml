@@ -11,10 +11,10 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -146,7 +146,7 @@ jobs:
           go tool cover -func=coverage.out > coverage.txt
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-report
           path: |
@@ -167,10 +167,10 @@ jobs:
             goarch: arm64
             suffix: linux-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -195,7 +195,7 @@ jobs:
           echo "| Size | **$SIZE** ($SIZE_BYTES bytes) |" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: identity-server-${{ matrix.suffix }}
           path: identity-server-${{ matrix.suffix }}
