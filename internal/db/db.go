@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 
 	_ "modernc.org/sqlite"
@@ -103,8 +104,27 @@ func (d *Database) migrate() error {
 			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
 		}
 
+		// Run the migration. If it contains multiple statements and one fails
+		// with "duplicate column name" (from ALTER TABLE ADD COLUMN on a column
+		// that already exists), run each statement individually so the rest
+		// can still execute.
 		if _, err := d.db.Exec(string(sql)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
+			}
+			// Fall back to per-statement execution, ignoring duplicate column errors.
+			for _, stmt := range strings.Split(string(sql), ";") {
+				stmt = strings.TrimSpace(stmt)
+				if stmt == "" {
+					continue
+				}
+				if _, err := d.db.Exec(stmt); err != nil {
+					if strings.Contains(err.Error(), "duplicate column name") {
+						continue
+					}
+					return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
+				}
+			}
 		}
 	}
 
