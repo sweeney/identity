@@ -61,7 +61,6 @@ func TestAuthService_Login_Success(t *testing.T) {
 	user := activeUser()
 	userRepo.EXPECT().GetByUsername("alice").Return(user, nil)
 	tokenRepo.EXPECT().Create(gomock.Any()).Return(nil)
-	backupSvc.EXPECT().TriggerAsync()
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
@@ -165,7 +164,6 @@ func TestAuthService_IssueTokensForUser_Success(t *testing.T) {
 	user := activeUser()
 	userRepo.EXPECT().GetByID("user-123").Return(user, nil)
 	tokenRepo.EXPECT().Create(gomock.Any()).Return(nil)
-	backupSvc.EXPECT().TriggerAsync()
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 

@@ -309,11 +309,10 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 			return nil, fmt.Errorf("rotate token: %w", err)
 		}
 	} else {
-		// Fresh login: insert new token and trigger backup
+		// Fresh login: insert new token
 		if err := s.tokens.Create(newTok); err != nil {
 			return nil, fmt.Errorf("create token: %w", err)
 		}
-		s.backup.TriggerAsync()
 	}
 
 	return &LoginResult{
