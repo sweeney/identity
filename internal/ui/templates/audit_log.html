@@ -44,12 +44,17 @@
                 {{else if eq .EventType "login_failure"}}<span class="evt-danger">login failed</span>
                 {{else if eq .EventType "oauth_authorize_failure"}}<span class="evt-danger">oauth failed</span>
                 {{else if eq .EventType "token_family_compromised"}}<span class="evt-danger">token compromised</span>
+                {{else if eq .EventType "passkey_register_success"}}<span class="evt-success">passkey registered</span>
+                {{else if eq .EventType "passkey_register_failure"}}<span class="evt-danger">passkey register failed</span>
+                {{else if eq .EventType "passkey_login_success"}}<span class="evt-success">passkey login</span>
+                {{else if eq .EventType "passkey_login_failure"}}<span class="evt-danger">passkey login failed</span>
+                {{else if eq .EventType "passkey_deleted"}}passkey deleted
                 {{else if eq .EventType "backup_success"}}<span class="evt-success">backup</span>
                 {{else if eq .EventType "backup_failure"}}<span class="evt-danger">backup failed</span>
                 {{else}}{{.EventType}}{{end}}
             </td>
             <td>{{.Username}}</td>
-            <td>{{if .Detail}}{{.Detail}}{{else if .ClientID}}via {{.ClientID}}{{else if .DeviceHint}}{{.DeviceHint}}{{else}}&mdash;{{end}}</td>
+            <td>{{if and .Detail .ClientID}}{{.Detail}} ({{.ClientID}}){{else if .Detail}}{{.Detail}}{{else if .ClientID}}via {{.ClientID}}{{else if .DeviceHint}}{{.DeviceHint}}{{else}}&mdash;{{end}}</td>
             <td>{{if eq .IPAddress "::1"}}localhost{{else if eq .IPAddress "127.0.0.1"}}localhost{{else if .IPAddress}}{{.IPAddress}}{{else}}&mdash;{{end}}</td>
         </tr>
     {{end}}

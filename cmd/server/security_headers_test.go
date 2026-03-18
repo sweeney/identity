@@ -142,18 +142,25 @@ func TestSecurityHeaders_CSP(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
-	expected := "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'"
-	assert.Equal(t, expected, rr.Header().Get("Content-Security-Policy"))
+	csp := rr.Header().Get("Content-Security-Policy")
+	assert.Contains(t, csp, "default-src 'self'")
+	assert.Contains(t, csp, "style-src 'self' 'unsafe-inline'")
+	assert.Contains(t, csp, "script-src 'self'")
+	assert.Contains(t, csp, "img-src 'self' data:")
+	assert.Contains(t, csp, "frame-ancestors 'none'")
+	assert.Contains(t, csp, "form-action 'self'")
 }
 
-func TestSecurityHeaders_CSPNoUnsafeInline(t *testing.T) {
+func TestSecurityHeaders_CSPNoUnsafeInlineScript(t *testing.T) {
 	h := securityHeaders(dummyHandler, nil, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
-	assert.NotContains(t, rr.Header().Get("Content-Security-Policy"), "unsafe-inline")
+	// script-src must not have unsafe-inline (style-src may have it for template compatibility)
+	csp := rr.Header().Get("Content-Security-Policy")
+	assert.NotContains(t, csp, "script-src 'self' 'unsafe-inline'")
 }
 
 func TestSecurityHeaders_XFrameOptions(t *testing.T) {

@@ -57,7 +57,7 @@ func newTestServer(t *testing.T) *testServer {
 	authSvc := service.NewAuthService(issuer, userStore, tokenStore, noopBackup, auditStore, 30*24*time.Hour)
 	userSvc := service.NewUserService(userStore, tokenStore, noopBackup, auditStore, 10).WithBcryptCost(4)
 
-	handler := apihandler.NewRouter(issuer, authSvc, userSvc, "")
+	handler := apihandler.NewRouter(issuer, authSvc, userSvc, nil, "")
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 

@@ -37,6 +37,7 @@ type UserServicer interface {
 type OAuthServicer interface {
 	ValidateAuthorizeRequest(clientID, redirectURI string) (*domain.OAuthClient, error)
 	Authorize(clientID, redirectURI, username, password, codeChallenge, ip string) (rawCode string, err error)
+	AuthorizeByUserID(clientID, redirectURI, userID, username, codeChallenge, ip string) (rawCode string, err error)
 	ExchangeCode(clientID, code, redirectURI, codeVerifier string) (*LoginResult, error)
 	RefreshToken(rawRefreshToken string) (*LoginResult, error)
 }

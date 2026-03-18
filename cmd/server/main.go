@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
@@ -226,6 +227,21 @@ func run() error {
 	userSvc := service.NewUserService(userStore, tokenStore, backupMgr, auditStore, 10)
 	oauthSvc := service.NewOAuthService(authSvc, oauthClientStore, oauthCodeStore, auditStore, 60*time.Second)
 
+	// WebAuthn / Passkeys (optional — enabled when WEBAUTHN_RP_ID is set, or automatically in development)
+	var webauthnSvc service.WebAuthnServicer
+	if cfg.WebAuthnConfigured() {
+		waCredStore := store.NewWebAuthnCredentialStore(database)
+		waChallengeStore := store.NewWebAuthnChallengeStore(database)
+		wa, waErr := auth.NewWebAuthn(cfg.WebAuthnRPID, cfg.WebAuthnRPDisplayName, cfg.WebAuthnRPOrigins)
+		if waErr != nil {
+			return fmt.Errorf("webauthn: %w", waErr)
+		}
+		webauthnSvc = service.NewWebAuthnService(wa, authSvc, userStore, waCredStore, waChallengeStore, auditStore)
+		log.Printf("passkeys enabled (RP ID: %s, origins: %v)", cfg.WebAuthnRPID, cfg.WebAuthnRPOrigins)
+	} else {
+		log.Println("passkeys disabled (set WEBAUTHN_RP_ID to enable)")
+	}
+
 	// First-run seed: create admin user if no users exist yet
 	if err := seedIfEmpty(userSvc, cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		return fmt.Errorf("seed: %w", err)
@@ -239,7 +255,13 @@ func run() error {
 		m.Start(ctx)
 	}
 
-	// Cleanup goroutine: prune expired/old-revoked tokens and auth codes every 24h
+	// WebAuthn challenge store for cleanup (may be nil if passkeys disabled)
+	var waChallengeStore *store.WebAuthnChallengeStore
+	if cfg.WebAuthnConfigured() {
+		waChallengeStore = store.NewWebAuthnChallengeStore(database)
+	}
+
+	// Cleanup goroutine: prune expired/old-revoked tokens, auth codes, and challenges every 24h
 	go func() {
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
@@ -253,6 +275,11 @@ func run() error {
 				}
 				if err := oauthCodeStore.DeleteExpiredAndUsed(); err != nil {
 					log.Printf("oauth code cleanup error: %v", err)
+				}
+				if waChallengeStore != nil {
+					if err := waChallengeStore.DeleteExpired(); err != nil {
+						log.Printf("webauthn challenge cleanup error: %v", err)
+					}
 				}
 			}
 		}
@@ -284,15 +311,17 @@ func run() error {
 
 	// HTTP mux
 	mux := http.NewServeMux()
-	apiRouter := apihandler.NewRouter(issuer, authSvc, userSvc, cfg.TrustProxy)
+	apiRouter := apihandler.NewRouter(issuer, authSvc, userSvc, webauthnSvc, cfg.TrustProxy)
 
 	// Auth endpoints get strict rate limiting; wrap only the login path
 	// and let the rest of the API router handle other /api/v1/ paths.
 	mux.Handle("POST /api/v1/auth/login", wrapAuth(apiRouter))
+	mux.Handle("POST /api/v1/webauthn/login/begin", wrapAuth(apiRouter))
+	mux.Handle("POST /api/v1/webauthn/login/finish", wrapAuth(apiRouter))
 	mux.Handle("/api/v1/", apiRouter)
 	// All auth endpoints that accept credentials must use the strict rate limiter:
 	//   POST /api/v1/auth/login, POST /oauth/token, POST /oauth/authorize, POST /admin/login
-	oauthRouter := oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy)
+	oauthRouter := oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy, issuer, authSvc, webauthnSvc, secrets.Current, cfg.SiteName)
 	mux.Handle("POST /oauth/token", wrapAuth(oauthRouter))
 	mux.Handle("POST /oauth/authorize", wrapAuth(oauthRouter))
 	mux.Handle("/oauth/", oauthRouter)
@@ -300,15 +329,17 @@ func run() error {
 		SessionSecret: secrets.Current,
 		Production:    cfg.IsProduction(),
 		TrustProxy:    cfg.TrustProxy,
-	}, authSvc, userSvc, oauthClientStore, auditStore, backupMgr)
+		SiteName:      cfg.SiteName,
+	}, authSvc, userSvc, oauthClientStore, auditStore, backupMgr, issuer, webauthnSvc)
 	mux.Handle("POST /admin/login", wrapAuth(adminRouter))
 	mux.Handle("/admin/", adminRouter)
 	staticFS, _ := fs.Sub(ui.StaticFS, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	homeHTML, _ := ui.TemplateFS.ReadFile("templates/home.html")
+	homeTmpl, _ := template.New("home").Parse(string(homeHTML))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(homeHTML)
+		homeTmpl.Execute(w, map[string]string{"SiteName": cfg.SiteName}) //nolint:errcheck
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -375,13 +406,23 @@ func securityHeaders(next http.Handler, allowedOrigins []string, devMode bool) h
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
-		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; "+
-				"style-src 'self'; "+
-				"script-src 'self'; "+
-				"img-src 'self' data:; "+
-				"frame-ancestors 'none'; "+
-				"form-action 'self'")
+		csp := "default-src 'self'; " +
+			"style-src 'self' 'unsafe-inline'; " +
+			"script-src 'self'; " +
+			"img-src 'self' data:; " +
+			"frame-ancestors 'none'; " +
+			"form-action 'self'"
+
+		// OAuth authorize forms redirect to client redirect URIs after submission.
+		// Modern browsers enforce form-action on redirect destinations, so we
+		// must allow CORS origins (which are the client app origins).
+		if len(allowedOrigins) > 0 {
+			for _, o := range allowedOrigins {
+				csp += " " + o
+			}
+		}
+
+		w.Header().Set("Content-Security-Policy", csp)
 
 		// CORS for API and OAuth token endpoints (needed by SPA clients)
 		path := r.URL.Path

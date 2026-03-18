@@ -56,6 +56,21 @@ func (mr *MockOAuthServicerMockRecorder) Authorize(clientID, redirectURI, userna
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Authorize", reflect.TypeOf((*MockOAuthServicer)(nil).Authorize), clientID, redirectURI, username, password, codeChallenge, ip)
 }
 
+// AuthorizeByUserID mocks base method.
+func (m *MockOAuthServicer) AuthorizeByUserID(clientID, redirectURI, userID, username, codeChallenge, ip string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AuthorizeByUserID", clientID, redirectURI, userID, username, codeChallenge, ip)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AuthorizeByUserID indicates an expected call of AuthorizeByUserID.
+func (mr *MockOAuthServicerMockRecorder) AuthorizeByUserID(clientID, redirectURI, userID, username, codeChallenge, ip any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AuthorizeByUserID", reflect.TypeOf((*MockOAuthServicer)(nil).AuthorizeByUserID), clientID, redirectURI, userID, username, codeChallenge, ip)
+}
+
 // ExchangeCode mocks base method.
 func (m *MockOAuthServicer) ExchangeCode(clientID, code, redirectURI, codeVerifier string) (*service.LoginResult, error) {
 	m.ctrl.T.Helper()
