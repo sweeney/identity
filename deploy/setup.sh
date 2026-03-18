@@ -17,6 +17,10 @@ else
 fi
 
 echo "=== Creating directories ==="
+mkdir -p /opt/identity/bin
+# Deploy user (caller of deploy.sh) needs write access; identity user only needs read+exec
+chown "${SUDO_USER:-root}:${SUDO_USER:-root}" /opt/identity/bin
+
 mkdir -p /var/lib/identity
 chown identity:identity /var/lib/identity
 chmod 700 /var/lib/identity
@@ -42,7 +46,7 @@ echo "  Installed identity.service"
 echo ""
 echo "=== Next steps ==="
 echo "  1. Edit secrets:     sudo nano /etc/identity/env"
-echo "  2. Build + install:  ./deploy/deploy.sh"
-echo "  3. Start service:    sudo systemctl enable --now identity"
+echo "  2. Enable service:   sudo systemctl enable identity"
+echo "  3. Deploy:           ./deploy/deploy.sh user@this-host"
 echo "  4. Check status:     sudo systemctl status identity"
 echo "  5. View logs:        sudo journalctl -u identity -f"

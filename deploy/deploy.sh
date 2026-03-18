@@ -1,40 +1,53 @@
 #!/usr/bin/env bash
 #
-# Build and deploy the Identity service.
-# Run from the repo root. Builds for Linux amd64 by default.
+# Build and deploy the Identity service to a remote host.
 #
 # Usage:
-#   ./deploy/deploy.sh              # build + deploy locally
-#   ./deploy/deploy.sh user@host    # build + deploy to remote host via ssh
+#   ./deploy/deploy.sh sweeney@garibaldi
+#
+# Keeps the last 3 versioned binaries in /opt/identity/bin/ and symlinks
+# the active one. Requires passwordless sudo for systemctl on the remote.
+#
+# First-time setup:
+#   sudo mkdir -p /opt/identity/bin
+#   sudo chown sweeney:sweeney /opt/identity/bin
+#   sudo ln -sf /opt/identity/bin/identity-server /usr/local/bin/identity-server
+#   # then update identity.service ExecStart to /usr/local/bin/identity-server (the symlink)
 #
 set -euo pipefail
 
-REMOTE="${1:-}"
+REMOTE="${1:?Usage: $0 user@host}"
 BINARY="identity-server"
 BUILD_DIR="bin"
-INSTALL_PATH="/usr/local/bin/$BINARY"
+DEPLOY_DIR="/opt/identity/bin"
+KEEP_VERSIONS=3
+
+VERSION=$(date +%Y%m%d-%H%M%S)
+REMOTE_BIN="${BINARY}-${VERSION}"
 
 echo "=== Building $BINARY (linux/amd64) ==="
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/$BINARY" ./cmd/server/
 echo "  Built: $BUILD_DIR/$BINARY"
 
-if [ -n "$REMOTE" ]; then
-    echo "=== Deploying to $REMOTE ==="
-    scp "$BUILD_DIR/$BINARY" "$REMOTE:/tmp/$BINARY"
-    ssh "$REMOTE" "sudo mv /tmp/$BINARY $INSTALL_PATH && sudo chmod 755 $INSTALL_PATH && sudo systemctl restart identity"
-    echo "  Deployed and restarted"
-else
-    echo "=== Installing locally ==="
-    sudo cp "$BUILD_DIR/$BINARY" "$INSTALL_PATH"
-    sudo chmod 755 "$INSTALL_PATH"
-    sudo systemctl restart identity
-    echo "  Installed and restarted"
-fi
+echo "=== Uploading to $REMOTE ==="
+ssh "$REMOTE" "mkdir -p $DEPLOY_DIR"
+scp "$BUILD_DIR/$BINARY" "$REMOTE:$DEPLOY_DIR/$REMOTE_BIN"
+ssh "$REMOTE" "chmod 755 $DEPLOY_DIR/$REMOTE_BIN"
+
+echo "=== Linking $REMOTE_BIN ==="
+ssh "$REMOTE" "ln -sfn $REMOTE_BIN $DEPLOY_DIR/$BINARY"
+
+echo "=== Restarting service ==="
+ssh "$REMOTE" "sudo systemctl restart identity"
+sleep 2
+
+echo "=== Cleaning old versions (keeping $KEEP_VERSIONS) ==="
+ssh "$REMOTE" "\
+  cd $DEPLOY_DIR && \
+  ls -t ${BINARY}-* \
+    | tail -n +$((KEEP_VERSIONS + 1)) \
+    | xargs -r rm --"
 
 echo ""
-echo "=== Status ==="
-if [ -n "$REMOTE" ]; then
-    ssh "$REMOTE" "sudo systemctl status identity --no-pager -l"
-else
-    sudo systemctl status identity --no-pager -l
-fi
+echo "=== Deployed $VERSION ==="
+ssh "$REMOTE" "sudo journalctl -u identity -n 5 --no-pager"

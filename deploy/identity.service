@@ -8,7 +8,7 @@ Type=simple
 User=identity
 Group=identity
 
-ExecStart=/usr/local/bin/identity-server
+ExecStart=/opt/identity/bin/identity-server
 WorkingDirectory=/var/lib/identity
 
 EnvironmentFile=/etc/identity/env

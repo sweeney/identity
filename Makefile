@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-integration lint generate clean
+.PHONY: build test test-unit test-integration lint generate clean deploy
 
 BINARY := identity-server
 MAIN   := ./cmd/server
@@ -32,3 +32,6 @@ coverage:
 
 clean:
 	rm -rf bin/ coverage.out coverage.html
+
+deploy:
+	./deploy/deploy.sh sweeney@garibaldi

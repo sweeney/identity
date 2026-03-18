@@ -65,7 +65,16 @@ Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expir
 ADMIN_USERNAME="admin" ADMIN_PASSWORD="<password>" ./bin/identity-server
 ```
 
-Optional env vars: `IDENTITY_ENV` (`development`|`production`), `PORT` (default 8181), `DB_PATH` (default `identity.db`), `JWT_SECRET` (overrides DB-managed secret), `R2_*` for Cloudflare R2 backups.
+Optional env vars: `IDENTITY_ENV` (`development`|`production`), `PORT` (default 8181), `DB_PATH` (default `identity.db`), `JWT_SECRET` (overrides DB-managed secret), `CORS_ORIGINS` (comma-separated allowed origins for API CORS), `R2_*` for Cloudflare R2 backups.
+
+## Deploying
+
+```bash
+make deploy                              # Build + deploy to sweeney@garibaldi
+./deploy/deploy.sh sweeney@garibaldi     # Same thing, explicit
+```
+
+Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 versions. Fully non-interactive (uses passwordless `systemctl`).
 
 ## CLI commands
 

@@ -20,9 +20,15 @@ echo ""
 
 # ── Binary ────────────────────────────────────
 echo "=== Installing binary ==="
-cp /tmp/identity-server /usr/local/bin/identity-server
-chmod 755 /usr/local/bin/identity-server
-echo "  /usr/local/bin/identity-server"
+mkdir -p /opt/identity/bin
+# Deploy user owns bin/ so deploy.sh can scp without sudo
+chown "${SUDO_USER:-root}:${SUDO_USER:-root}" /opt/identity/bin
+systemctl stop identity 2>/dev/null || true
+VERSION=$(date +%Y%m%d-%H%M%S)
+cp /tmp/identity-server "/opt/identity/bin/identity-server-${VERSION}"
+chmod 755 "/opt/identity/bin/identity-server-${VERSION}"
+ln -sfn "identity-server-${VERSION}" /opt/identity/bin/identity-server
+echo "  /opt/identity/bin/identity-server -> identity-server-${VERSION}"
 
 # ── System user ───────────────────────────────
 echo ""
