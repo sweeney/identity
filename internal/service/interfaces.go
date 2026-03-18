@@ -25,6 +25,7 @@ type AuthServicer interface {
 type UserServicer interface {
 	Create(username, displayName, password string, role domain.Role, meta ...AuditMeta) (*domain.User, error)
 	GetByID(id string) (*domain.User, error)
+	GetByUsername(username string) (*domain.User, error)
 	List() ([]*domain.User, error)
 	Update(id string, input UpdateUserInput, meta ...AuditMeta) (*domain.User, error)
 	Delete(id string, meta ...AuditMeta) error

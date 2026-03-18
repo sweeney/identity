@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{block "title" .}}Identity{{end}} — Identity</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <main class="container">
+        {{if not .HideNav}}
+        <nav>
+            <a href="/admin/" class="brand">id.swee.net</a>
+            <div class="links">
+                <a href="/admin/">Dashboard</a>
+                <a href="/admin/users">Users</a>
+                <a href="/admin/oauth">OAuth Clients</a>
+                <a href="/admin/audit">Audit Log</a>
+                <form method="POST" action="/admin/logout" style="display:inline">
+                    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+                    <button class="btn-secondary btn-small">Logout</button>
+                </form>
+            </div>
+        </nav>
+        {{end}}
+        {{if .Flash}}
+        <p class="{{if .FlashIsError}}flash-error{{else}}flash-success{{end}}">{{.Flash}}</p>
+        {{end}}
+        {{block "content" .}}{{end}}
+    </main>
+</body>
+</html>

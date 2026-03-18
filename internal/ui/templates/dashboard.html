@@ -16,7 +16,10 @@
         {{else}}
         <p>No backup recorded yet.</p>
         {{end}}
-        <a href="/admin/backup">Run backup now &rarr;</a>
+        <form method="POST" action="/admin/backup" style="display:inline">
+            <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+            <button type="submit" style="background:none;border:none;color:inherit;text-decoration:underline;cursor:pointer;padding:0;font:inherit;">Run backup now &rarr;</button>
+        </form>
     </article>
 </div>
 {{end}}

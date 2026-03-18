@@ -292,7 +292,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      securityHeaders(mux),
+		Handler:      securityHeaders(mux, cfg.CORSOrigins, cfg.Env == config.EnvDevelopment),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -319,7 +319,13 @@ func run() error {
 }
 
 // securityHeaders wraps a handler with standard security response headers.
-func securityHeaders(next http.Handler) http.Handler {
+func securityHeaders(next http.Handler, allowedOrigins []string, devMode bool) http.Handler {
+	// Build origin lookup set once at startup.
+	allowed := make(map[string]bool, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowed[o] = true
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -328,20 +334,20 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; "+
 				"style-src 'self'; "+
-				"script-src 'self' 'unsafe-inline'; "+
+				"script-src 'self'; "+
 				"img-src 'self' data:; "+
 				"frame-ancestors 'none'")
 
 		// CORS for API and OAuth token endpoints (needed by SPA clients)
 		path := r.URL.Path
 		if strings.HasPrefix(path, "/api/") || path == "/oauth/token" {
+			w.Header().Set("Vary", "Origin")
 			origin := r.Header.Get("Origin")
-			if origin != "" {
+			if origin != "" && isAllowedOrigin(origin, allowed, devMode) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 				w.Header().Set("Access-Control-Max-Age", "86400")
-				w.Header().Set("Vary", "Origin")
 			}
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -351,4 +357,16 @@ func securityHeaders(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isAllowedOrigin checks whether the given origin is in the allowlist.
+// In dev mode with an empty allowlist, any http://localhost origin is allowed.
+func isAllowedOrigin(origin string, allowed map[string]bool, devMode bool) bool {
+	if allowed[origin] {
+		return true
+	}
+	if devMode && len(allowed) == 0 && strings.HasPrefix(origin, "http://localhost") {
+		return true
+	}
+	return false
 }

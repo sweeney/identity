@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,9 @@ type Config struct {
 	// Initial admin credentials (optional — only used on first run to seed the DB)
 	AdminUsername string
 	AdminPassword string
+
+	// CORS
+	CORSOrigins []string
 
 	// Cloudflare R2 (S3-compatible backup storage)
 	R2AccountID       string
@@ -99,6 +103,16 @@ func Load() (*Config, error) {
 	// Optional overrides
 	if v := os.Getenv("DB_PATH"); v != "" {
 		cfg.DBPath = v
+	}
+
+	// CORS_ORIGINS: comma-separated list of allowed origins (e.g. "https://app.example.com,https://other.example.com")
+	if v := os.Getenv("CORS_ORIGINS"); v != "" {
+		for _, o := range strings.Split(v, ",") {
+			o = strings.TrimSpace(o)
+			if o != "" {
+				cfg.CORSOrigins = append(cfg.CORSOrigins, o)
+			}
+		}
 	}
 
 	// R2 config — optional at load time (service runs without backup if unset, logs a warning)

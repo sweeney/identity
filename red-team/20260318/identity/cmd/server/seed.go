@@ -1,0 +1,70 @@
+package main
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"io"
+	"log"
+
+	"github.com/sweeney/identity/internal/domain"
+	"github.com/sweeney/identity/internal/service"
+)
+
+// seedIfEmpty creates an initial admin user if no users exist yet.
+//
+// Three modes:
+//  1. ADMIN_USERNAME + ADMIN_PASSWORD env vars set → create admin with those creds (unattended)
+//  2. Env vars not set → generate a random password, print it to stdout once
+//  3. Users already exist → no-op
+func seedIfEmpty(svc *service.UserService, username, password string) error {
+	users, err := svc.List()
+	if err != nil {
+		return fmt.Errorf("seed check: %w", err)
+	}
+	if len(users) > 0 {
+		return nil
+	}
+
+	// No users — first run. Determine credentials.
+	if username == "" {
+		username = "admin"
+	}
+
+	generated := false
+	if password == "" {
+		password, err = generatePassword()
+		if err != nil {
+			return fmt.Errorf("generate password: %w", err)
+		}
+		generated = true
+	}
+
+	_, err = svc.Create(username, username, password, domain.RoleAdmin)
+	if err != nil {
+		return fmt.Errorf("seed admin user: %w", err)
+	}
+
+	if generated {
+		log.Println("════════════════════════════════════════════════════")
+		log.Println("  FIRST RUN — admin account created")
+		log.Printf("  Username: %s", username)
+		log.Printf("  Password: %s", password)
+		log.Println("")
+		log.Println("  Save this password now — it will not be shown again.")
+		log.Println("  Change it after login at /admin/users")
+		log.Println("════════════════════════════════════════════════════")
+	} else {
+		log.Printf("first run: created admin user %q from environment", username)
+	}
+
+	return nil
+}
+
+func generatePassword() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}

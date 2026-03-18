@@ -6,10 +6,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
 )
+
+// dummyHash is a pre-computed bcrypt hash (cost 12) used to prevent timing-based
+// username enumeration. When a login attempt targets a non-existent user, we run
+// bcrypt against this hash so the response time matches a real user lookup.
+var dummyHash = func() string {
+	h, _ := bcrypt.GenerateFromPassword([]byte("dummy-never-matches"), 12)
+	return string(h)
+}()
 
 // LoginResult holds the tokens returned on a successful login or refresh.
 type LoginResult struct {
@@ -60,7 +69,7 @@ func (s *AuthService) Login(username, password, deviceHint, clientIP string) (*L
 	user, err := s.users.GetByUsername(username)
 	if errors.Is(err, domain.ErrNotFound) {
 		// Constant-time: still run bcrypt to prevent timing-based username enumeration
-		auth.CheckPassword(password, "$2a$12$placeholder-hash-to-burn-time-here") //nolint:errcheck
+		auth.CheckPassword(password, dummyHash) //nolint:errcheck
 		s.record(&domain.AuthEvent{
 			EventType: domain.EventLoginFailure,
 			Username:  username,
@@ -106,7 +115,7 @@ func (s *AuthService) Login(username, password, deviceHint, clientIP string) (*L
 func (s *AuthService) AuthorizeUser(username, password, clientIP string) (string, error) {
 	user, err := s.users.GetByUsername(username)
 	if errors.Is(err, domain.ErrNotFound) {
-		auth.CheckPassword(password, "$2a$12$placeholder-hash-to-burn-time-here") //nolint:errcheck
+		auth.CheckPassword(password, dummyHash) //nolint:errcheck
 		return "", ErrInvalidCredentials
 	}
 	if err != nil {

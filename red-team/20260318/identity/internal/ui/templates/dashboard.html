@@ -1,0 +1,22 @@
+{{define "title"}}Dashboard{{end}}
+{{define "content"}}
+<h2>Dashboard</h2>
+<div class="grid">
+    <article>
+        <h3>Users</h3>
+        <p><strong>{{.UserCount}}</strong> registered</p>
+        <a href="/admin/users">Manage users &rarr;</a>
+    </article>
+    <article>
+        <h3>Backup</h3>
+        {{if .LastBackupAt}}
+        <p>Last: <strong>{{.LastBackupAgo}}</strong></p>
+        <p><small>{{.LastBackupAt}}</small></p>
+        {{if .LastBackupDetail}}<p><small><code>{{.LastBackupDetail}}</code></small></p>{{end}}
+        {{else}}
+        <p>No backup recorded yet.</p>
+        {{end}}
+        <a href="/admin/backup">Run backup now &rarr;</a>
+    </article>
+</div>
+{{end}}

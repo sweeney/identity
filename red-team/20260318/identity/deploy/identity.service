@@ -1,0 +1,39 @@
+[Unit]
+Description=Identity authentication service
+After=network.target
+Documentation=https://github.com/sweeney/identity
+
+[Service]
+Type=simple
+User=identity
+Group=identity
+
+ExecStart=/usr/local/bin/identity-server
+WorkingDirectory=/var/lib/identity
+
+EnvironmentFile=/etc/identity/env
+
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/identity
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=identity
+
+[Install]
+WantedBy=multi-user.target

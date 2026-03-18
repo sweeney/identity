@@ -100,10 +100,25 @@ func (h *adminHandler) sessionUsername(r *http.Request) string {
 func (h *adminHandler) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(sessionCookieName)
-		if err != nil || !h.validateSession(cookie.Value) {
+		if err != nil {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
+
+		claims, err := h.parseSession(cookie.Value)
+		if err != nil {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
+		// Verify the user still exists, is active, and has admin role.
+		user, err := h.userSvc.GetByUsername(claims.Subject)
+		if err != nil || !user.IsActive || user.Role != domain.RoleAdmin {
+			h.clearSession(w)
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }

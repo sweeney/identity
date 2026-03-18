@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"net/url"
 
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/ui"
@@ -142,9 +143,9 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build redirect URL with code and state
-	redirectURL := redirectURI + "?code=" + rawCode
+	redirectURL := redirectURI + "?code=" + url.QueryEscape(rawCode)
 	if state != "" {
-		redirectURL += "&state=" + state
+		redirectURL += "&state=" + url.QueryEscape(state)
 	}
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }

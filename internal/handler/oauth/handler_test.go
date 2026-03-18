@@ -126,6 +126,87 @@ func TestAuthorizePost_Success(t *testing.T) {
 	assert.Contains(t, loc, "state=state-xyz")
 }
 
+func TestAuthorizePost_StateWithSpecialChars(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	client := &domain.OAuthClient{ID: "client-1", Name: "My App"}
+	svc.EXPECT().ValidateAuthorizeRequest("client-1", "https://myapp.example.com/callback").Return(client, nil)
+	svc.EXPECT().Authorize("client-1", "https://myapp.example.com/callback", "alice", "password", "challenge-abc", gomock.Any()).
+		Return("raw-code-xyz", nil)
+
+	h := newTestRouter(svc)
+	rr := postForm(t, h, "/oauth/authorize", url.Values{
+		"client_id":      {"client-1"},
+		"redirect_uri":   {"https://myapp.example.com/callback"},
+		"state":          {"foo&bar=baz#qux"},
+		"code_challenge": {"challenge-abc"},
+		"username":       {"alice"},
+		"password":       {"password"},
+	})
+
+	assert.Equal(t, http.StatusFound, rr.Code)
+	loc, err := url.Parse(rr.Header().Get("Location"))
+	require.NoError(t, err)
+	assert.Equal(t, "raw-code-xyz", loc.Query().Get("code"))
+	assert.Equal(t, "foo&bar=baz#qux", loc.Query().Get("state"))
+}
+
+func TestAuthorizePost_StateWithSpaces(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	client := &domain.OAuthClient{ID: "client-1", Name: "My App"}
+	svc.EXPECT().ValidateAuthorizeRequest("client-1", "https://myapp.example.com/callback").Return(client, nil)
+	svc.EXPECT().Authorize("client-1", "https://myapp.example.com/callback", "alice", "password", "challenge-abc", gomock.Any()).
+		Return("raw-code-xyz", nil)
+
+	h := newTestRouter(svc)
+	rr := postForm(t, h, "/oauth/authorize", url.Values{
+		"client_id":      {"client-1"},
+		"redirect_uri":   {"https://myapp.example.com/callback"},
+		"state":          {"hello world"},
+		"code_challenge": {"challenge-abc"},
+		"username":       {"alice"},
+		"password":       {"password"},
+	})
+
+	assert.Equal(t, http.StatusFound, rr.Code)
+	loc, err := url.Parse(rr.Header().Get("Location"))
+	require.NoError(t, err)
+	assert.Equal(t, "raw-code-xyz", loc.Query().Get("code"))
+	assert.Equal(t, "hello world", loc.Query().Get("state"))
+}
+
+func TestAuthorizePost_EmptyState(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	client := &domain.OAuthClient{ID: "client-1", Name: "My App"}
+	svc.EXPECT().ValidateAuthorizeRequest("client-1", "https://myapp.example.com/callback").Return(client, nil)
+	svc.EXPECT().Authorize("client-1", "https://myapp.example.com/callback", "alice", "password", "challenge-abc", gomock.Any()).
+		Return("raw-code-xyz", nil)
+
+	h := newTestRouter(svc)
+	rr := postForm(t, h, "/oauth/authorize", url.Values{
+		"client_id":      {"client-1"},
+		"redirect_uri":   {"https://myapp.example.com/callback"},
+		"state":          {""},
+		"code_challenge": {"challenge-abc"},
+		"username":       {"alice"},
+		"password":       {"password"},
+	})
+
+	assert.Equal(t, http.StatusFound, rr.Code)
+	loc := rr.Header().Get("Location")
+	assert.NotContains(t, loc, "&state=")
+	assert.NotContains(t, loc, "?state=")
+	// Verify code is still present
+	parsed, err := url.Parse(loc)
+	require.NoError(t, err)
+	assert.Equal(t, "raw-code-xyz", parsed.Query().Get("code"))
+}
+
 func TestAuthorizePost_BadCredentials(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := mocks.NewMockOAuthServicer(ctrl)

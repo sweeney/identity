@@ -53,7 +53,7 @@ func NewRouter(cfg Config, authSvc service.AuthServicer, userSvc service.UserSer
 	mux.Handle("POST /admin/users/{id}/edit", h.requireSession(h.requireCSRF(http.HandlerFunc(h.usersEditPost))))
 	mux.Handle("GET /admin/users/{id}/delete", h.requireSession(http.HandlerFunc(h.usersDeleteGet)))
 	mux.Handle("POST /admin/users/{id}/delete", h.requireSession(h.requireCSRF(http.HandlerFunc(h.usersDeletePost))))
-	mux.Handle("GET /admin/backup", h.requireSession(http.HandlerFunc(h.triggerBackup)))
+	mux.Handle("POST /admin/backup", h.requireSession(h.requireCSRF(http.HandlerFunc(h.triggerBackup))))
 
 	// OAuth clients
 	mux.Handle("GET /admin/oauth", h.requireSession(http.HandlerFunc(h.oauthList)))

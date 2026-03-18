@@ -107,6 +107,11 @@ func (s *UserService) GetByID(id string) (*domain.User, error) {
 	return s.users.GetByID(id)
 }
 
+// GetByUsername returns a user by username.
+func (s *UserService) GetByUsername(username string) (*domain.User, error) {
+	return s.users.GetByUsername(username)
+}
+
 // List returns all users.
 func (s *UserService) List() ([]*domain.User, error) {
 	return s.users.List()
