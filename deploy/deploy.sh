@@ -8,11 +8,7 @@
 # Keeps the last 3 versioned binaries in /opt/identity/bin/ and symlinks
 # the active one. Requires passwordless sudo for systemctl on the remote.
 #
-# First-time setup:
-#   sudo mkdir -p /opt/identity/bin
-#   sudo chown sweeney:sweeney /opt/identity/bin
-#   sudo ln -sf /opt/identity/bin/identity-server /usr/local/bin/identity-server
-#   # then update identity.service ExecStart to /usr/local/bin/identity-server (the symlink)
+# First-time setup: run deploy/setup.sh on the target host with sudo.
 #
 set -euo pipefail
 
@@ -30,16 +26,22 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/$BINARY" ./cmd/ser
 echo "  Built: $BUILD_DIR/$BINARY"
 
 echo "=== Uploading to $REMOTE ==="
-ssh "$REMOTE" "mkdir -p $DEPLOY_DIR"
 scp "$BUILD_DIR/$BINARY" "$REMOTE:$DEPLOY_DIR/$REMOTE_BIN"
 ssh "$REMOTE" "chmod 755 $DEPLOY_DIR/$REMOTE_BIN"
 
-echo "=== Linking $REMOTE_BIN ==="
+echo "=== Activating $REMOTE_BIN ==="
 ssh "$REMOTE" "ln -sfn $REMOTE_BIN $DEPLOY_DIR/$BINARY"
-
-echo "=== Restarting service ==="
 ssh "$REMOTE" "sudo systemctl restart identity"
+
+echo "=== Verifying ==="
 sleep 2
+if ssh "$REMOTE" "sudo systemctl is-active --quiet identity"; then
+    echo "  ✓ identity is running"
+else
+    echo "  ✗ identity failed to start"
+    ssh "$REMOTE" "sudo journalctl -u identity -n 20 --no-pager"
+    exit 1
+fi
 
 echo "=== Cleaning old versions (keeping $KEEP_VERSIONS) ==="
 ssh "$REMOTE" "\
