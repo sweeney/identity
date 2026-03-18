@@ -80,21 +80,6 @@ func (mr *MockUserServicerMockRecorder) Delete(id any, meta ...any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockUserServicer)(nil).Delete), varargs...)
 }
 
-// GetByUsername mocks base method.
-func (m *MockUserServicer) GetByUsername(username string) (*domain.User, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetByUsername", username)
-	ret0, _ := ret[0].(*domain.User)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetByUsername indicates an expected call of GetByUsername.
-func (mr *MockUserServicerMockRecorder) GetByUsername(username any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByUsername", reflect.TypeOf((*MockUserServicer)(nil).GetByUsername), username)
-}
-
 // GetByID mocks base method.
 func (m *MockUserServicer) GetByID(id string) (*domain.User, error) {
 	m.ctrl.T.Helper()
@@ -108,6 +93,21 @@ func (m *MockUserServicer) GetByID(id string) (*domain.User, error) {
 func (mr *MockUserServicerMockRecorder) GetByID(id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockUserServicer)(nil).GetByID), id)
+}
+
+// GetByUsername mocks base method.
+func (m *MockUserServicer) GetByUsername(username string) (*domain.User, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByUsername", username)
+	ret0, _ := ret[0].(*domain.User)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetByUsername indicates an expected call of GetByUsername.
+func (mr *MockUserServicerMockRecorder) GetByUsername(username any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByUsername", reflect.TypeOf((*MockUserServicer)(nil).GetByUsername), username)
 }
 
 // List mocks base method.
