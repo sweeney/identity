@@ -29,6 +29,10 @@ func TestWebAuthnCredentialStore_CreateAndGetByCredentialID(t *testing.T) {
 		AAGUID:          []byte("0123456789abcdef"),
 		SignCount:       0,
 		Transports:      []string{"internal", "hybrid"},
+		BackupEligible:  true,
+		BackupState:     false,
+		UserPresent:     true,
+		UserVerified:    true,
 		Name:            "MacBook Pro",
 		CreatedAt:       now,
 		LastUsedAt:      now,
@@ -44,6 +48,10 @@ func TestWebAuthnCredentialStore_CreateAndGetByCredentialID(t *testing.T) {
 	assert.Equal(t, "none", got.AttestationType)
 	assert.Equal(t, uint32(0), got.SignCount)
 	assert.Equal(t, []string{"internal", "hybrid"}, got.Transports)
+	assert.Equal(t, true, got.BackupEligible)
+	assert.Equal(t, false, got.BackupState)
+	assert.Equal(t, true, got.UserPresent)
+	assert.Equal(t, true, got.UserVerified)
 	assert.Equal(t, "MacBook Pro", got.Name)
 }
 
