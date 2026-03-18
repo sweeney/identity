@@ -62,6 +62,32 @@ func (s *WebAuthnChallengeStore) GetByID(id string) (*domain.WebAuthnChallenge, 
 	return &ch, nil
 }
 
+func (s *WebAuthnChallengeStore) Consume(id string) (*domain.WebAuthnChallenge, error) {
+	var ch domain.WebAuthnChallenge
+	var userID sql.NullString
+	var createdAt, expiresAt string
+
+	// Atomic delete-and-return: a single DELETE … RETURNING statement ensures
+	// only one concurrent caller can consume the challenge.
+	err := s.db.DB().QueryRow(
+		`DELETE FROM webauthn_challenges WHERE id = ?
+		 RETURNING id, user_id, challenge, type, session_data, created_at, expires_at`, id,
+	).Scan(&ch.ID, &userID, &ch.Challenge, &ch.Type, &ch.SessionData, &createdAt, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("consume webauthn challenge: %w", err)
+	}
+
+	if userID.Valid {
+		ch.UserID = userID.String
+	}
+	ch.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	ch.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expiresAt)
+	return &ch, nil
+}
+
 func (s *WebAuthnChallengeStore) Delete(id string) error {
 	_, err := s.db.DB().Exec(`DELETE FROM webauthn_challenges WHERE id = ?`, id)
 	if err != nil {

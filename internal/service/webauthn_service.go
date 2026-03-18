@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -14,6 +16,25 @@ import (
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
 )
+
+const maxPasskeyNameLength = 100
+
+// sanitizePasskeyName strips control characters and enforces a maximum length.
+func sanitizePasskeyName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		// Allow space (0x20) and printable characters, strip control chars and DEL
+		if r == ' ' || (r > 0x1F && r != 0x7F) {
+			b.WriteRune(r)
+		}
+	}
+	name = b.String()
+	if utf8.RuneCountInString(name) > maxPasskeyNameLength {
+		runes := []rune(name)
+		name = string(runes[:maxPasskeyNameLength])
+	}
+	return name
+}
 
 // WebAuthnServicer is the interface the API handler uses for passkey operations.
 //
@@ -35,14 +56,15 @@ type WebAuthnServicer interface {
 
 // WebAuthnService handles passkey registration, authentication, and credential management.
 type WebAuthnService struct {
-	wa          *webauthn.WebAuthn
-	authSvc      *AuthService
-	users        domain.UserRepository
-	credentials  domain.WebAuthnCredentialRepository
-	challenges   domain.WebAuthnChallengeRepository
-	audit        domain.AuditRepository
-	backup       domain.BackupService
-	challengeTTL time.Duration
+	wa             *webauthn.WebAuthn
+	authSvc        *AuthService
+	users          domain.UserRepository
+	credentials    domain.WebAuthnCredentialRepository
+	challenges     domain.WebAuthnChallengeRepository
+	audit          domain.AuditRepository
+	backup         domain.BackupService
+	challengeTTL   time.Duration
+	maxCredentials int
 }
 
 // NewWebAuthnService creates a WebAuthnService.
@@ -56,14 +78,15 @@ func NewWebAuthnService(
 	backup domain.BackupService,
 ) *WebAuthnService {
 	return &WebAuthnService{
-		wa:           wa,
-		authSvc:      authSvc,
-		users:        users,
-		credentials:  credentials,
-		challenges:   challenges,
-		audit:        audit,
-		backup:       backup,
-		challengeTTL: 120 * time.Second,
+		wa:             wa,
+		authSvc:        authSvc,
+		users:          users,
+		credentials:    credentials,
+		challenges:     challenges,
+		audit:          audit,
+		backup:         backup,
+		challengeTTL:   120 * time.Second,
+		maxCredentials: 25,
 	}
 }
 
@@ -82,6 +105,10 @@ func (s *WebAuthnService) BeginRegistration(userID string) (*protocol.Credential
 	existingCreds, err := s.credentials.ListByUserID(userID)
 	if err != nil {
 		return nil, "", fmt.Errorf("list credentials: %w", err)
+	}
+
+	if len(existingCreds) >= s.maxCredentials {
+		return nil, "", ErrWebAuthnCredentialLimitReached
 	}
 
 	waUser := &auth.WebAuthnUser{
@@ -123,16 +150,13 @@ func (s *WebAuthnService) FinishRegistration(userID, challengeID, name string, r
 		return nil, ErrWebAuthnNotEnabled
 	}
 
-	ch, err := s.challenges.GetByID(challengeID)
+	ch, err := s.challenges.Consume(challengeID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, ErrWebAuthnInvalidChallenge
 		}
-		return nil, fmt.Errorf("get challenge: %w", err)
+		return nil, fmt.Errorf("consume challenge: %w", err)
 	}
-
-	// Always clean up the challenge
-	defer s.challenges.Delete(challengeID) //nolint:errcheck
 
 	if ch.UserID != userID || ch.Type != "registration" {
 		return nil, ErrWebAuthnInvalidChallenge
@@ -168,6 +192,9 @@ func (s *WebAuthnService) FinishRegistration(userID, challengeID, name string, r
 		return nil, ErrWebAuthnVerificationFailed
 	}
 
+	// Sanitize the passkey name
+	name = sanitizePasskeyName(name)
+
 	// Extract transports
 	transports := make([]string, len(credential.Transport))
 	for i, t := range credential.Transport {
@@ -186,6 +213,8 @@ func (s *WebAuthnService) FinishRegistration(userID, challengeID, name string, r
 		Transports:      transports,
 		BackupEligible:  credential.Flags.BackupEligible,
 		BackupState:     credential.Flags.BackupState,
+		UserPresent:     credential.Flags.UserPresent,
+		UserVerified:    credential.Flags.UserVerified,
 		Name:            name,
 		CreatedAt:       now,
 		LastUsedAt:      now,
@@ -218,34 +247,22 @@ func (s *WebAuthnService) BeginLogin(username string) (*protocol.CredentialAsser
 			return nil, "", fmt.Errorf("begin discoverable login: %w", err)
 		}
 	} else {
+		// Always use discoverable flow to prevent username enumeration.
+		// All three cases (unknown user, user with no passkeys, user with passkeys)
+		// return an identical-looking 200 response with empty allowCredentials.
+		// The authenticator knows which credentials it has, so allowCredentials
+		// is not needed — the discoverable flow works for all cases.
 		user, userErr := s.users.GetByUsername(username)
-		if errors.Is(userErr, domain.ErrNotFound) {
-			// Don't reveal whether user exists — return a fake challenge
-			// that will fail at FinishLogin. This matches the bcrypt dummy hash pattern.
-			assertion, sessionData, err = s.wa.BeginDiscoverableLogin()
-			if err != nil {
-				return nil, "", fmt.Errorf("begin login: %w", err)
-			}
-		} else if userErr != nil {
+		if userErr != nil && !errors.Is(userErr, domain.ErrNotFound) {
 			return nil, "", fmt.Errorf("get user: %w", userErr)
-		} else {
+		}
+		if userErr == nil {
 			userID = user.ID
-			creds, credErr := s.credentials.ListByUserID(user.ID)
-			if credErr != nil {
-				return nil, "", fmt.Errorf("list credentials: %w", credErr)
-			}
-			if len(creds) == 0 {
-				return nil, "", ErrWebAuthnNoCredentials
-			}
+		}
 
-			waUser := &auth.WebAuthnUser{
-				User:        user,
-				Credentials: auth.DomainCredentialsToWebAuthn(creds),
-			}
-			assertion, sessionData, err = s.wa.BeginLogin(waUser)
-			if err != nil {
-				return nil, "", fmt.Errorf("begin login: %w", err)
-			}
+		assertion, sessionData, err = s.wa.BeginDiscoverableLogin()
+		if err != nil {
+			return nil, "", fmt.Errorf("begin login: %w", err)
 		}
 	}
 
@@ -278,16 +295,13 @@ func (s *WebAuthnService) FinishLogin(challengeID string, r *http.Request, devic
 		return nil, ErrWebAuthnNotEnabled
 	}
 
-	ch, err := s.challenges.GetByID(challengeID)
+	ch, err := s.challenges.Consume(challengeID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, ErrWebAuthnInvalidChallenge
 		}
-		return nil, fmt.Errorf("get challenge: %w", err)
+		return nil, fmt.Errorf("consume challenge: %w", err)
 	}
-
-	// Always clean up the challenge
-	defer s.challenges.Delete(challengeID) //nolint:errcheck
 
 	if ch.Type != "authentication" {
 		return nil, ErrWebAuthnInvalidChallenge
@@ -391,6 +405,7 @@ func (s *WebAuthnService) RenameCredential(userID, credentialID, name string) er
 	if err != nil {
 		return err
 	}
+	name = sanitizePasskeyName(name)
 	return s.credentials.Rename(cred.ID, name)
 }
 

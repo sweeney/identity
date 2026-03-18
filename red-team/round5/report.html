@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Red Team Report — Round 5 — id.swee.net</title>
+<style>
+  :root {
+    --bg: #0a0a0f; --bg2: #12121a; --bg3: #1a1a26; --border: #2a2a3a;
+    --text: #c8c8d4; --text-dim: #6a6a7a; --accent: #7b68ee;
+    --red: #ff4757; --orange: #ffa502; --yellow: #eccc68;
+    --green: #2ed573; --cyan: #70a1ff;
+    --mono: 'SF Mono','Fira Code','JetBrains Mono','Cascadia Code',Consolas,monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { font-family: var(--mono); font-size: 14px; line-height: 1.7; background: var(--bg); color: var(--text); max-width: 960px; margin: 0 auto; padding: 40px 24px 100px; }
+  h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; }
+  h1 { font-size: 22px; color: #fff; margin-bottom: 8px; }
+  h2 { font-size: 16px; color: var(--accent); margin-top: 48px; margin-bottom: 16px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 14px; color: #ddd; margin-top: 16px; margin-bottom: 8px; }
+  p { margin-bottom: 12px; }
+  code { background: var(--bg3); padding: 1px 5px; border-radius: 3px; font-size: 12.5px; }
+  pre { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; overflow-x: auto; font-size: 12px; margin: 8px 0 16px; line-height: 1.5; }
+  .subtitle { color: var(--text-dim); margin-bottom: 24px; }
+  .meta { color: var(--text-dim); font-size: 12px; margin-bottom: 32px; }
+  .meta span { margin-right: 20px; }
+  .sev { display: inline-block; padding: 1px 8px; border-radius: 3px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+  .sev-high { background: rgba(255,71,87,0.12); color: var(--red); border: 1px solid rgba(255,71,87,0.3); }
+  .sev-medium-high { background: rgba(255,165,2,0.14); color: #ff8c00; border: 1px solid rgba(255,140,0,0.35); }
+  .sev-medium { background: rgba(255,165,2,0.12); color: var(--orange); border: 1px solid rgba(255,165,2,0.3); }
+  .sev-low { background: rgba(236,204,104,0.12); color: var(--yellow); border: 1px solid rgba(236,204,104,0.3); }
+  .sev-info { background: rgba(112,161,255,0.1); color: var(--cyan); border: 1px solid rgba(112,161,255,0.2); }
+  .fixed { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; background: rgba(46,213,115,0.08); color: var(--green); border: 1px solid rgba(46,213,115,0.2); margin-left: 6px; }
+  .partial { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; background: rgba(255,165,2,0.08); color: var(--orange); border: 1px solid rgba(255,165,2,0.2); margin-left: 6px; }
+  .fail-badge { display: inline-block; padding: 4px 16px; border-radius: 4px; font-size: 14px; font-weight: 700; letter-spacing: 0.05em; background: rgba(255,165,2,0.12); color: var(--orange); border: 2px solid rgba(255,165,2,0.3); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 12.5px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.1em; }
+  tr:hover td { background: rgba(123,104,238,0.04); }
+  .finding { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 20px 24px; margin: 16px 0 24px; }
+  .finding-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .finding-title { color: #fff; font-weight: 600; }
+  .finding-id { color: var(--text-dim); font-size: 12px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .good-list { list-style: none; padding: 0; }
+  .good-list li { padding: 4px 0; }
+  .good-list li::before { content: "[+] "; color: var(--green); font-weight: 700; }
+  .chart { display: flex; gap: 24px; margin: 16px 0 24px; flex-wrap: wrap; }
+  .chart-bar { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .chart-val { font-size: 28px; font-weight: 700; color: #fff; }
+  .chart-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; }
+  .chart-sub { font-size: 10px; color: var(--text-dim); }
+  .attack-scenario { background: rgba(255,71,87,0.04); border-left: 3px solid rgba(255,71,87,0.3); padding: 10px 16px; margin: 8px 0 16px; border-radius: 0 4px 4px 0; }
+  .evidence { background: rgba(112,161,255,0.04); border-left: 3px solid rgba(112,161,255,0.2); padding: 10px 16px; margin: 8px 0 16px; border-radius: 0 4px 4px 0; font-size: 12.5px; }
+  .fix { background: rgba(46,213,115,0.04); border-left: 3px solid rgba(46,213,115,0.2); padding: 10px 16px; margin: 8px 0 16px; border-radius: 0 4px 4px 0; }
+</style>
+</head>
+<body>
+
+<h1>// RED TEAM REPORT &mdash; ROUND 5</h1>
+<p class="subtitle">id.swee.net &mdash; Identity &amp; Auth Server &mdash; WebAuthn Attack Surface</p>
+<div class="meta">
+  <span>target: https://id.swee.net/</span>
+  <span>source: github.com/sweeney/identity</span><br>
+  <span>date: 2026-03-18</span>
+  <span>stack: Go / SQLite / OAuth 2.0+PKCE / JWT / WebAuthn / Cloudflare</span>
+</div>
+
+<div style="text-align: center; margin: 32px 0;">
+  <span class="fail-badge">ASSESSMENT: CONDITIONAL PASS</span>
+  <p style="color: var(--text-dim); font-size: 12px; margin-top: 12px;">
+    1 MEDIUM-HIGH &bull; 3 MEDIUM &bull; 4 LOW &bull; 2 INFO &mdash; new WebAuthn attack surface requires remediation
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<h2>// Executive Summary</h2>
+
+<p>Round 4 achieved a clean PASS with zero HIGH/MEDIUM findings on the core auth server. Round 5 assesses the newly added <strong>WebAuthn/passkey</strong> functionality, which introduces new credential types, cryptographic ceremonies, and admin UI surfaces. The existing auth infrastructure remains solid. However, the WebAuthn implementation has several issues that need attention before the passkey feature can be considered production-hardened.</p>
+
+<p>Two proof-of-concept exploits were developed and tested live:</p>
+<table>
+  <tr><th>PoC</th><th>File</th><th>Status</th></tr>
+  <tr><td>Username enumeration oracle</td><td><code>poc-username-enum.py</code></td><td>Working &mdash; tested live against id.swee.net</td></tr>
+  <tr><td>Challenge race condition</td><td><code>poc-challenge-race.py</code></td><td>Demonstrates race window</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>// Round 1&ndash;4 Remediation Status</h2>
+
+<table>
+  <tr><th>#</th><th>Original Finding</th><th>Original Severity</th><th>Status</th></tr>
+  <tr><td>1</td><td>CORS wildcard origin reflection</td><td>HIGH</td><td><span class="fixed">REMEDIATED</span> explicit allowlist, verified live</td></tr>
+  <tr><td>2</td><td>No rate limiting on auth endpoints</td><td>MEDIUM</td><td><span class="fixed">REMEDIATED</span> strict 5/min on all credential endpoints</td></tr>
+  <tr><td>3</td><td>Timing-based username enumeration</td><td>MEDIUM</td><td><span class="fixed">REMEDIATED</span> dummy bcrypt on both login paths</td></tr>
+  <tr><td>4</td><td>Admin session not validated against user state</td><td>MEDIUM</td><td><span class="fixed">REMEDIATED</span> per-request DB check</td></tr>
+  <tr><td>5</td><td>No CSRF on OAuth authorize POST</td><td>LOW-MED</td><td><span class="partial">PARTIAL</span> CSP form-action + PKCE, no explicit token</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>// New Findings Summary</h2>
+
+<table>
+  <tr><th>#</th><th>Finding</th><th>Severity</th></tr>
+  <tr><td>R5-01</td><td>Username enumeration via WebAuthn login/begin &mdash; 3-way oracle + credential ID harvesting</td><td><span class="sev sev-medium-high">MEDIUM-HIGH</span></td></tr>
+  <tr><td>R5-02</td><td>TOCTOU race on challenge consumption &mdash; <code>defer Delete</code> allows concurrent reuse</td><td><span class="sev sev-medium">MEDIUM</span></td></tr>
+  <tr><td>R5-03</td><td>Hardcoded UserPresent/UserVerified flags &mdash; authenticator state never persisted</td><td><span class="sev sev-medium">MEDIUM</span></td></tr>
+  <tr><td>R5-04</td><td>No credential registration limit &mdash; stolen JWT registers ~225 persistent backdoor passkeys</td><td><span class="sev sev-medium">MEDIUM</span></td></tr>
+  <tr><td>R5-05</td><td>CORS origins auto-merged into WebAuthn origins &mdash; different trust decisions coupled</td><td><span class="sev sev-low">LOW</span></td></tr>
+  <tr><td>R5-06</td><td>Query params on POST (<code>challenge_id</code>, <code>name</code>) &mdash; proxy/Referer leakage</td><td><span class="sev sev-low">LOW</span></td></tr>
+  <tr><td>R5-07</td><td>Passkey name unsanitized (no length/char limit) &mdash; XSS blocked by html/template</td><td><span class="sev sev-low">LOW</span></td></tr>
+  <tr><td>R5-08</td><td>Admin passkey login no CSRF &mdash; mitigated by SameSite=Strict</td><td><span class="sev sev-low">LOW</span></td></tr>
+  <tr><td>R5-09</td><td>HSTS 30-day max-age, no preload</td><td><span class="sev sev-info">INFO</span></td></tr>
+  <tr><td>R5-10</td><td>RP ID scoped to <code>swee.net</code></td><td><span class="sev sev-info">INFO</span> (by design)</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>// Detailed Findings</h2>
+
+<!-- R5-01 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-medium-high">MEDIUM-HIGH</span>
+    <span class="finding-title">R5-01: Username Enumeration via WebAuthn Login/Begin</span>
+  </div>
+
+  <p>The <code>POST /api/v1/webauthn/login/begin</code> endpoint produces three distinguishable responses that reveal user state: (1) nonexistent user returns a fake discoverable challenge, (2) existing user with no passkeys returns <code>webauthn_no_credentials</code> error, (3) existing user with passkeys returns a real challenge containing <code>allowCredentials</code> with credential IDs.</p>
+
+  <h3>Attack Scenario</h3>
+  <div class="attack-scenario">
+    <p>1. Attacker sends <code>POST /api/v1/webauthn/login/begin</code> with a target username.<br>
+    2. If the response is HTTP 400 with <code>webauthn_no_credentials</code>, the user <strong>exists</strong> but has no passkeys.<br>
+    3. If the response is HTTP 200 with <code>allowCredentials: []</code> (empty), the user <strong>does not exist</strong> (fake discoverable challenge).<br>
+    4. If the response is HTTP 200 with populated <code>allowCredentials</code>, the user <strong>exists and has passkeys</strong>. The credential IDs are leaked, which can be used for targeted attacks.<br>
+    5. This oracle is not mitigated by the dummy-bcrypt timing fix applied to password login.</p>
+  </div>
+
+  <h3>Evidence</h3>
+  <div class="evidence">
+    <strong>Source:</strong> <code>internal/service/webauthn_service.go</code> lines 222&ndash;228 (fake challenge for nonexistent user), lines 238&ndash;239 (error on exists-but-no-passkeys).<br>
+    <strong>Live test:</strong> <code>poc-username-enum.py</code> &mdash; confirmed 3-way oracle working against production. Rate limit is 5/min but supports slow enumeration over time.
+  </div>
+
+  <h3>Recommended Fix</h3>
+  <div class="fix">
+    <p>Unify the response for all three cases: always return a discoverable-style challenge (HTTP 200), regardless of user existence or passkey status. The <code>FinishLogin</code> callback will reject the assertion for nonexistent users. This matches the dummy-bcrypt pattern used for password login.</p>
+  </div>
+</div>
+
+<!-- R5-02 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-medium">MEDIUM</span>
+    <span class="finding-title">R5-02: TOCTOU Race on Challenge Consumption</span>
+  </div>
+
+  <p>Both <code>FinishRegistration</code> and <code>FinishLogin</code> use <code>defer s.challenges.Delete(challengeID)</code> to clean up challenges. The challenge is fetched, validated, and the cryptographic ceremony is completed before the deferred delete executes. Two concurrent requests with the same <code>challenge_id</code> can both read the challenge before either deletes it.</p>
+
+  <h3>Attack Scenario</h3>
+  <div class="attack-scenario">
+    <p>1. User initiates a WebAuthn login, receiving a <code>challenge_id</code>.<br>
+    2. Attacker intercepts or shares the challenge_id (e.g., via XSS or MitM).<br>
+    3. Attacker and legitimate user both send <code>FinishLogin</code> simultaneously.<br>
+    4. Both requests call <code>GetByID</code> &mdash; both succeed because the deferred delete has not fired.<br>
+    5. Both proceed through cryptographic verification. If both have valid assertions, both receive tokens.<br>
+    6. SQLite single-connection serialization narrows but does not fully close this window, since the Go HTTP server handles requests concurrently and the CPU-bound crypto step releases the DB connection.</p>
+  </div>
+
+  <h3>Evidence</h3>
+  <div class="evidence">
+    <strong>Source:</strong> <code>internal/service/webauthn_service.go</code> line 135 (<code>defer</code> in FinishRegistration), line 290 (<code>defer</code> in FinishLogin).<br>
+    <strong>PoC:</strong> <code>poc-challenge-race.py</code> demonstrates the race window.
+  </div>
+
+  <h3>Recommended Fix</h3>
+  <div class="fix">
+    <p>Delete the challenge atomically <em>before</em> performing cryptographic verification. Use a transaction: SELECT + DELETE + commit in one step, then proceed with validation using the fetched data. This ensures the challenge is consumed exactly once.</p>
+  </div>
+</div>
+
+<!-- R5-03 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-medium">MEDIUM</span>
+    <span class="finding-title">R5-03: Hardcoded UserPresent/UserVerified Flags</span>
+  </div>
+
+  <p>The <code>DomainCredentialToWebAuthn</code> function hardcodes <code>UserPresent: true</code> and <code>UserVerified: true</code> for every credential. The actual authenticator flags from registration are never persisted &mdash; the domain model and database schema lack columns for UP and UV. This permanently destroys the security assurance metadata for every credential.</p>
+
+  <h3>Attack Scenario</h3>
+  <div class="attack-scenario">
+    <p>1. User registers a basic security key that supports UP but not UV (no biometric).<br>
+    2. The authenticator correctly reports UV=false during registration.<br>
+    3. The server discards this flag and stores the credential as if UV=true.<br>
+    4. If step-up authentication or risk-based access control is later implemented based on UV status, this credential is indistinguishable from a biometric-verified one.<br>
+    5. A stolen non-biometric key gains the same trust level as a biometric-protected credential.<br>
+    6. Additionally, if the RP tightens policy from <code>"preferred"</code> to <code>"required"</code>, it cannot identify which existing credentials actually had UV.</p>
+  </div>
+
+  <h3>Evidence</h3>
+  <div class="evidence">
+    <strong>Source:</strong> <code>internal/auth/webauthn.go</code> lines 34&ndash;39 (hardcoded flags).<br>
+    <code>internal/domain/webauthn.go</code> lines 8&ndash;22 (missing fields).<br>
+    <code>internal/service/webauthn_service.go</code> lines 178&ndash;192 (flags not extracted at registration).<br>
+    <code>internal/store/webauthn_credential_store.go</code> lines 24&ndash;54 (not stored in DB).
+  </div>
+
+  <h3>Recommended Fix</h3>
+  <div class="fix">
+    <p>1. Add <code>user_present</code> and <code>user_verified</code> columns to the <code>webauthn_credentials</code> table.<br>
+    2. Add corresponding fields to the domain model.<br>
+    3. Persist the actual flags from <code>credential.Flags</code> at registration time.<br>
+    4. Restore the actual flags in <code>DomainCredentialToWebAuthn</code> instead of hardcoding.<br>
+    5. Migrate existing credentials conservatively: <code>user_present=true, user_verified=false</code>.</p>
+  </div>
+</div>
+
+<!-- R5-04 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-medium">MEDIUM</span>
+    <span class="finding-title">R5-04: No Credential Registration Limit</span>
+  </div>
+
+  <p>There is no cap on the number of passkeys a user can register. An attacker with a stolen JWT can register unlimited rogue passkeys as persistent backdoors. At the general rate limit of 30 req/min (registration is not behind the strict auth limiter), an attacker can register ~15 passkeys/minute, yielding ~225 passkeys within a single 15-minute access token lifetime.</p>
+
+  <h3>Attack Scenario</h3>
+  <div class="attack-scenario">
+    <p>1. Attacker obtains a valid JWT for a target user (via XSS, token theft, or compromised session).<br>
+    2. Attacker scripts rapid <code>register/begin</code> + <code>register/finish</code> calls, each with a different authenticator.<br>
+    3. ~225 rogue passkeys are registered within the JWT lifetime.<br>
+    4. Victim rotates password and revokes refresh tokens &mdash; rogue passkeys survive.<br>
+    5. Attacker retains persistent login access via any of the 225 passkeys.<br>
+    6. Victim must manually discover and delete every rogue credential to fully recover.</p>
+  </div>
+
+  <h3>Evidence</h3>
+  <div class="evidence">
+    <strong>Source:</strong> <code>internal/service/webauthn_service.go</code> line 72 (<code>BeginRegistration</code> does not check credential count).<br>
+    <code>internal/db/migrations/003_webauthn.sql</code> &mdash; no CHECK constraint or per-user limit.<br>
+    <code>cmd/server/main.go</code> lines 289&ndash;319 &mdash; registration endpoints only behind general rate limiter (30/min), not strict (5/min).
+  </div>
+
+  <h3>Recommended Fix</h3>
+  <div class="fix">
+    <p>1. Cap credentials per user (e.g., 25). Check <code>len(existingCreds)</code> in <code>BeginRegistration</code>.<br>
+    2. Apply the strict auth rate limiter to registration endpoints.<br>
+    3. Require re-authentication (password or existing passkey) before registering a new passkey, instead of accepting any valid JWT.</p>
+  </div>
+</div>
+
+<!-- R5-05 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">R5-05: CORS Origins Auto-Merged into WebAuthn Origins</span>
+  </div>
+
+  <p>Lines 173&ndash;187 of <code>internal/config/config.go</code> automatically merge all <code>CORS_ORIGINS</code> into <code>WebAuthnRPOrigins</code>. This couples two different trust decisions: "this origin may read API responses" (CORS) and "this origin may use passkeys bound to our RP ID" (WebAuthn authentication). Adding a sibling subdomain to CORS silently grants it WebAuthn ceremony rights.</p>
+
+  <h3>Attack Scenario</h3>
+  <div class="attack-scenario">
+    <p>1. Developer adds <code>https://app.swee.net</code> to <code>CORS_ORIGINS</code> for a new SPA.<br>
+    2. Auto-merge silently adds it to <code>WebAuthnRPOrigins</code>.<br>
+    3. XSS or compromise on <code>app.swee.net</code> allows attacker to initiate WebAuthn ceremonies using passkeys bound to RP ID <code>swee.net</code>.<br>
+    4. The browser permits this because the RP ID matches. The server permits it because the origin is in the allowed list.</p>
+  </div>
+
+  <h3>Evidence</h3>
+  <div class="evidence">
+    <strong>Source:</strong> <code>internal/config/config.go</code> lines 173&ndash;187 (merge logic with explicit comment).<br>
+    <strong>Current risk:</strong> Low (CORS_ORIGINS appears to be empty or id.swee.net only). Risk increases if sibling subdomains are added.
+  </div>
+
+  <h3>Recommended Fix</h3>
+  <div class="fix">
+    <p>Remove the auto-merge logic. Configure <code>WEBAUTHN_RP_ORIGINS</code> and <code>CORS_ORIGINS</code> independently. Add a startup warning if they diverge, to surface the trust boundary difference.</p>
+  </div>
+</div>
+
+<!-- R5-06 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">R5-06: Query Parameters on POST Endpoints</span>
+  </div>
+
+  <p>The WebAuthn finish endpoints accept <code>challenge_id</code> and <code>name</code> as URL query parameters on POST requests rather than in the request body. Query parameters on POST requests are an anti-pattern: they appear in <code>Referer</code> headers, may be logged by reverse proxies (Cloudflare), and are visible in browser developer tools.</p>
+
+  <h3>Evidence</h3>
+  <div class="evidence">
+    <strong>Source:</strong> <code>internal/handler/api/webauthn.go</code> lines 45&ndash;46 (<code>r.URL.Query().Get("challenge_id")</code>, <code>r.URL.Query().Get("name")</code>).<br>
+    <code>internal/handler/admin/handler.go</code> lines 407&ndash;408 (same pattern).<br>
+    The <code>name</code> parameter could contain PII if users name passkeys after devices.
+  </div>
+
+  <h3>Recommended Fix</h3>
+  <div class="fix">
+    <p>Move <code>challenge_id</code> and <code>name</code> to the POST request body. These are POST endpoints already receiving a JSON body (the WebAuthn attestation/assertion), so wrapping in an envelope or adding fields is trivial.</p>
+  </div>
+</div>
+
+<!-- R5-07 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">R5-07: Passkey Name Unsanitized</span>
+  </div>
+
+  <p>The passkey <code>name</code> parameter has no length limit, no character filtering, and no input validation. An attacker with a valid session can register a passkey named <code>&lt;script&gt;alert(1)&lt;/script&gt;</code> or a multi-megabyte string. XSS is blocked by Go's <code>html/template</code> auto-escaping, but the lack of validation allows UI disruption (layout breakage from very long names, RTL override characters, zero-width abuse).</p>
+
+  <h3>Evidence</h3>
+  <div class="evidence">
+    <strong>Source:</strong> <code>internal/handler/api/webauthn.go</code> line 46 (no validation).<br>
+    <code>internal/ui/templates/passkeys.html</code> line 14 and <code>user_form.html</code> line 58 (<code>{{.Name}}</code> &mdash; auto-escaped, XSS blocked).<br>
+    No <code>template.HTML()</code> or unsafe functions found in the template FuncMap.
+  </div>
+
+  <h3>Recommended Fix</h3>
+  <div class="fix">
+    <p>Add input validation: limit passkey names to 100 characters, allow only alphanumeric + spaces + basic punctuation, strip control characters.</p>
+  </div>
+</div>
+
+<!-- R5-08 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">R5-08: Admin Passkey Login Missing CSRF Token</span>
+  </div>
+
+  <p><code>POST /admin/login/passkey</code> accepts an <code>access_token</code> via form body and sets an admin session cookie, but has no CSRF token validation. Unlike all other admin POST routes, this one is not wrapped in <code>requireCSRF()</code>. The same pattern exists on <code>POST /oauth/authorize/passkey</code>.</p>
+
+  <p><strong>Mitigation:</strong> The <code>admin_session</code> cookie uses <code>SameSite=Strict</code>, which blocks cross-site form submissions in all modern browsers. The attack also requires a pre-obtained valid JWT access token (15-min TTL, HS256-signed). The combination makes exploitation unrealistic.</p>
+
+  <h3>Evidence</h3>
+  <div class="evidence">
+    <strong>Source:</strong> <code>internal/handler/admin/router.go</code> line 48 (no <code>requireCSRF</code>).<br>
+    <code>internal/handler/admin/handler.go</code> lines 258&ndash;296 (<code>loginPasskey</code> handler).<br>
+    <code>internal/handler/admin/handler.go</code> lines 134&ndash;143 (SameSite=Strict on session cookie).
+  </div>
+
+  <h3>Recommended Fix</h3>
+  <div class="fix">
+    <p>Add an <code>Origin</code>/<code>Referer</code> header check as defense-in-depth. A full CSRF token is difficult here since no session exists yet, but verifying the request origin matches <code>https://id.swee.net</code> closes the gap.</p>
+  </div>
+</div>
+
+<!-- R5-09 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-info">INFO</span>
+    <span class="finding-title">R5-09: HSTS 30-Day Max-Age, No Preload</span>
+  </div>
+
+  <p>Live server returns <code>max-age=2592000</code> (30 days). Code shows <code>max-age=63072000</code> (2 years) &mdash; likely Cloudflare override or deployment lag. Missing <code>includeSubDomains</code> and <code>preload</code> directives. Carried forward from Round 4.</p>
+
+  <div class="evidence">
+    <strong>Live test:</strong> <code>curl -sI https://id.swee.net/ | grep -i strict</code> confirms 30-day max-age.
+  </div>
+</div>
+
+<!-- R5-10 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-info">INFO</span>
+    <span class="finding-title">R5-10: RP ID Scoped to swee.net (By Design)</span>
+  </div>
+
+  <p>The WebAuthn RP ID is <code>swee.net</code> rather than <code>id.swee.net</code>. This means passkeys are cryptographically bound to the parent domain and can be exercised by any origin under <code>*.swee.net</code>, subject to the <code>RPOrigins</code> server-side check. This broadens the trust boundary permanently &mdash; changing the RP ID would invalidate all existing passkeys.</p>
+
+  <p><strong>Current mitigation:</strong> The <code>RPOrigins</code> allowlist restricts which origins can complete ceremonies. As long as only <code>https://id.swee.net</code> is listed, sibling subdomains are rejected.</p>
+
+  <div class="evidence">
+    <strong>Source:</strong> <code>internal/auth/webauthn.go</code> &mdash; <code>RPID: "swee.net"</code>.<br>
+    <code>internal/config/config.go</code> lines 148&ndash;187 (RP ID and origins configuration).
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>// Trajectory Across All Rounds</h2>
+
+<div class="chart">
+  <div class="chart-bar">
+    <div class="chart-val">13</div>
+    <div class="chart-label">Round 1</div>
+    <div class="chart-sub">1 HIGH</div>
+  </div>
+  <div class="chart-bar" style="color: var(--text-dim); font-size: 24px; padding-top: 8px;">&rarr;</div>
+  <div class="chart-bar">
+    <div class="chart-val">15</div>
+    <div class="chart-label">Round 2</div>
+    <div class="chart-sub">1 HIGH</div>
+  </div>
+  <div class="chart-bar" style="color: var(--text-dim); font-size: 24px; padding-top: 8px;">&rarr;</div>
+  <div class="chart-bar">
+    <div class="chart-val">6</div>
+    <div class="chart-label">Round 3</div>
+    <div class="chart-sub">1 HIGH</div>
+  </div>
+  <div class="chart-bar" style="color: var(--text-dim); font-size: 24px; padding-top: 8px;">&rarr;</div>
+  <div class="chart-bar">
+    <div class="chart-val" style="color: var(--green);">3</div>
+    <div class="chart-label">Round 4</div>
+    <div class="chart-sub" style="color: var(--green);">0 HIGH</div>
+  </div>
+  <div class="chart-bar" style="color: var(--text-dim); font-size: 24px; padding-top: 8px;">&rarr;</div>
+  <div class="chart-bar">
+    <div class="chart-val" style="color: var(--orange);">10</div>
+    <div class="chart-label">Round 5</div>
+    <div class="chart-sub">1 M-H, 3 MED</div>
+  </div>
+</div>
+
+<p style="color: var(--text-dim); font-size: 12px;">Round 5 finding count reflects the new WebAuthn attack surface. Core auth findings from Rounds 1&ndash;4 remain resolved (4/5 fully remediated, 1 partially).</p>
+
+<!-- ============================================================ -->
+<h2>// What's Still Solid</h2>
+
+<ul class="good-list">
+  <li><strong>No SQL injection</strong> &mdash; parameterized queries throughout, including all new WebAuthn stores</li>
+  <li><strong>No XSS</strong> &mdash; Go template auto-escaping, strong CSP, no unsafe template functions</li>
+  <li><strong>No CORS abuse</strong> &mdash; proper allowlist, no origin reflection</li>
+  <li><strong>PKCE enforced</strong> &mdash; S256 required, no downgrade</li>
+  <li><strong>Token rotation</strong> &mdash; atomic TOCTOU-safe transaction, concurrent test coverage</li>
+  <li><strong>Theft detection</strong> &mdash; family-based revocation working correctly</li>
+  <li><strong>Rate limiting</strong> &mdash; per-IP, strict on all credential endpoints, proxy-header-resistant, bounded map</li>
+  <li><strong>Admin re-auth</strong> &mdash; password required for destructive operations</li>
+  <li><strong>CSRF</strong> &mdash; HMAC tokens on all state-changing admin endpoints (except passkey login)</li>
+  <li><strong>Session security</strong> &mdash; HttpOnly, Secure, SameSite=Strict, 2-hour TTL</li>
+  <li><strong>WebAuthn challenge binding</strong> &mdash; challenges bound to user, type-checked, expiry-checked</li>
+  <li><strong>WebAuthn crypto verification</strong> &mdash; go-webauthn library handles assertion/attestation correctly</li>
+  <li><strong>Challenge single-use on failure</strong> &mdash; consumed even on failed verification attempts</li>
+  <li><strong>Discoverable login privacy</strong> &mdash; fake challenges for nonexistent users (partial &mdash; see R5-01)</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2>// Conclusion</h2>
+
+<p>The core identity server remains well-hardened after four rounds of testing. The WebAuthn/passkey implementation is functional and the cryptographic ceremony handling is correct, but the surrounding infrastructure has gaps in credential lifecycle management (R5-03, R5-04), information leakage (R5-01), and concurrency safety (R5-02). These are typical first-implementation issues and are straightforward to remediate.</p>
+
+<p><strong>Priority remediation order:</strong></p>
+<table>
+  <tr><th>Priority</th><th>Finding</th><th>Rationale</th></tr>
+  <tr><td>1</td><td>R5-01 (username enum)</td><td>Actively exploitable, PoC working live</td></tr>
+  <tr><td>2</td><td>R5-04 (no cred limit)</td><td>Enables persistent backdoors from stolen JWT</td></tr>
+  <tr><td>3</td><td>R5-02 (challenge TOCTOU)</td><td>Concurrency bug, fix is straightforward</td></tr>
+  <tr><td>4</td><td>R5-03 (UV flags)</td><td>Data loss is permanent, harder to fix retroactively</td></tr>
+  <tr><td>5</td><td>R5-05&ndash;08 (LOW)</td><td>Defense-in-depth improvements</td></tr>
+</table>
+
+<hr>
+<p class="meta" style="margin-top: 32px;">
+  Generated by Red Team &bull; Round 5 &bull; 2026-03-18
+</p>
+
+</body>
+</html>

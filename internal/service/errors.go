@@ -17,6 +17,7 @@ var (
 	ErrWebAuthnVerificationFailed = errors.New("webauthn verification failed")
 	ErrWebAuthnNoCredentials  = errors.New("webauthn no credentials")
 	ErrWebAuthnCredentialNotFound = errors.New("webauthn credential not found")
+	ErrWebAuthnCredentialLimitReached = errors.New("webauthn credential limit reached")
 
 	// OAuth errors
 	ErrUnknownClient          = errors.New("unknown client")

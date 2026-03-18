@@ -17,7 +17,6 @@
     btn.textContent = 'Waiting for passkey...';
 
     var name = document.getElementById('passkey-name').value.trim();
-    var nameParam = name ? '&name=' + encodeURIComponent(name) : '';
 
     // 1. Begin registration
     fetch('/admin/passkeys/register/begin', {
@@ -59,11 +58,19 @@
               body.transports = credential.response.getTransports();
             }
 
+            var finishHeaders = {
+              'Content-Type': 'application/json',
+              'X-Challenge-ID': challengeId,
+            };
+            if (name) {
+              finishHeaders['X-Passkey-Name'] = name;
+            }
+
             return fetch(
-              '/admin/passkeys/register/finish?challenge_id=' + challengeId + nameParam,
+              '/admin/passkeys/register/finish',
               {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: finishHeaders,
                 credentials: 'same-origin',
               body: JSON.stringify(body),
               }

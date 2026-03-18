@@ -90,6 +90,48 @@ func TestWebAuthnChallengeStore_DeleteExpired(t *testing.T) {
 	assert.Equal(t, "ch-valid", got.ID)
 }
 
+func TestWebAuthnChallengeStore_Consume(t *testing.T) {
+	db := openTestDB(t)
+	s := store.NewWebAuthnChallengeStore(db)
+
+	now := time.Now().UTC()
+	ch := &domain.WebAuthnChallenge{
+		ID:          "ch-consume",
+		UserID:      "user-1",
+		Challenge:   []byte("challenge-bytes"),
+		Type:        "registration",
+		SessionData: `{"challenge":"xyz"}`,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(2 * time.Minute),
+	}
+	require.NoError(t, s.Create(ch))
+
+	// First Consume returns the challenge
+	got, err := s.Consume("ch-consume")
+	require.NoError(t, err)
+	assert.Equal(t, "ch-consume", got.ID)
+	assert.Equal(t, "user-1", got.UserID)
+	assert.Equal(t, []byte("challenge-bytes"), got.Challenge)
+	assert.Equal(t, "registration", got.Type)
+	assert.Contains(t, got.SessionData, "challenge")
+
+	// Second Consume returns ErrNotFound — challenge was already consumed
+	_, err = s.Consume("ch-consume")
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+
+	// GetByID also returns ErrNotFound — challenge is gone
+	_, err = s.GetByID("ch-consume")
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestWebAuthnChallengeStore_Consume_NotFound(t *testing.T) {
+	db := openTestDB(t)
+	s := store.NewWebAuthnChallengeStore(db)
+
+	_, err := s.Consume("does-not-exist")
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
 func TestWebAuthnChallengeStore_NullUserID(t *testing.T) {
 	db := openTestDB(t)
 	s := store.NewWebAuthnChallengeStore(db)

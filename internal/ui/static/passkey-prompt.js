@@ -22,7 +22,6 @@
     var finishUrl = section.getAttribute('data-finish-url');
 
     var name = document.getElementById('passkey-name').value.trim();
-    var nameParam = name ? '&name=' + encodeURIComponent(name) : '';
 
     fetch(beginUrl, {
       method: 'POST',
@@ -60,11 +59,19 @@
               body.transports = credential.response.getTransports();
             }
 
+            var finishHeaders = {
+              'Content-Type': 'application/json',
+              'X-Challenge-ID': challengeId,
+            };
+            if (name) {
+              finishHeaders['X-Passkey-Name'] = name;
+            }
+
             return fetch(
-              finishUrl + '?challenge_id=' + challengeId + nameParam,
+              finishUrl,
               {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: finishHeaders,
                 credentials: 'same-origin',
                 body: JSON.stringify(body),
               }

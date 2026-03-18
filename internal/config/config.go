@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -170,18 +171,16 @@ func Load() (*Config, error) {
 	if cfg.WebAuthnRPID != "" && len(cfg.WebAuthnRPOrigins) == 0 {
 		cfg.WebAuthnRPOrigins = []string{"https://" + cfg.WebAuthnRPID}
 	}
-	// Merge CORS origins into WebAuthn origins — if you trust an origin for
-	// CORS, it should also be allowed to perform WebAuthn ceremonies. This
-	// avoids hardcoding port lists and keeps configuration in one place.
+	// Warn if CORS origins contain entries not in WebAuthn origins.
+	// The two are configured independently; this helps catch misconfigurations.
 	if cfg.WebAuthnRPID != "" && len(cfg.CORSOrigins) > 0 {
-		existing := make(map[string]bool, len(cfg.WebAuthnRPOrigins))
+		waOrigins := make(map[string]bool, len(cfg.WebAuthnRPOrigins))
 		for _, o := range cfg.WebAuthnRPOrigins {
-			existing[o] = true
+			waOrigins[o] = true
 		}
 		for _, o := range cfg.CORSOrigins {
-			if !existing[o] {
-				cfg.WebAuthnRPOrigins = append(cfg.WebAuthnRPOrigins, o)
-				existing[o] = true
+			if !waOrigins[o] {
+				log.Printf("WARNING: CORS origin %q is not in WEBAUTHN_RP_ORIGINS — add it if passkey ceremonies should work from that origin", o)
 			}
 		}
 	}

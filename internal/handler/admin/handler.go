@@ -256,6 +256,16 @@ func (h *adminHandler) loginPost(w http.ResponseWriter, r *http.Request) {
 
 // loginPasskey accepts an access_token (from a WebAuthn login) and creates an admin session.
 func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
+	// Defense-in-depth: reject cross-origin requests alongside SameSite=Strict cookies.
+	if origin := r.Header.Get("Origin"); origin != "" {
+		host := r.Host
+		// Origin is scheme://host — check that it ends with the request Host
+		if !strings.HasSuffix(origin, "://"+host) {
+			http.Error(w, "forbidden: origin mismatch", http.StatusForbidden)
+			return
+		}
+	}
+
 	accessToken := r.FormValue("access_token")
 	if accessToken == "" {
 		h.render(w, r, "login.html", map[string]any{
@@ -404,8 +414,8 @@ func (h *adminHandler) passkeyRegisterFinish(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	challengeID := r.URL.Query().Get("challenge_id")
-	name := r.URL.Query().Get("name")
+	challengeID := headerOrQuery(r, "X-Challenge-ID", "challenge_id")
+	name := headerOrQuery(r, "X-Passkey-Name", "name")
 	if challengeID == "" {
 		http.Error(w, "challenge_id required", http.StatusBadRequest)
 		return
@@ -961,6 +971,14 @@ func (h *adminHandler) verifyAdminPassword(r *http.Request) error {
 		return errors.New("incorrect password")
 	}
 	return nil
+}
+
+// headerOrQuery reads a value from the request header first, falling back to query param.
+func headerOrQuery(r *http.Request, header, query string) string {
+	if v := r.Header.Get(header); v != "" {
+		return v
+	}
+	return r.URL.Query().Get(query)
 }
 
 // Ensure *adminHandler satisfies compile-time checks.

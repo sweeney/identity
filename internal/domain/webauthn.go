@@ -16,6 +16,8 @@ type WebAuthnCredential struct {
 	Transports      []string // e.g. ["internal", "hybrid"]
 	BackupEligible  bool
 	BackupState     bool
+	UserPresent     bool
+	UserVerified    bool
 	Name            string // user-provided label
 	CreatedAt       time.Time
 	LastUsedAt      time.Time
@@ -50,6 +52,10 @@ type WebAuthnChallenge struct {
 type WebAuthnChallengeRepository interface {
 	Create(ch *WebAuthnChallenge) error
 	GetByID(id string) (*WebAuthnChallenge, error)
+	// Consume atomically reads and deletes a challenge in a single transaction,
+	// preventing TOCTOU race conditions where two concurrent requests could both
+	// consume the same challenge.
+	Consume(id string) (*WebAuthnChallenge, error)
 	Delete(id string) error
 	DeleteExpired() error
 }

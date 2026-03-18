@@ -40,6 +40,21 @@ func (m *MockWebAuthnChallengeRepository) EXPECT() *MockWebAuthnChallengeReposit
 	return m.recorder
 }
 
+// Consume mocks base method.
+func (m *MockWebAuthnChallengeRepository) Consume(id string) (*domain.WebAuthnChallenge, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Consume", id)
+	ret0, _ := ret[0].(*domain.WebAuthnChallenge)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Consume indicates an expected call of Consume.
+func (mr *MockWebAuthnChallengeRepositoryMockRecorder) Consume(id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Consume", reflect.TypeOf((*MockWebAuthnChallengeRepository)(nil).Consume), id)
+}
+
 // Create mocks base method.
 func (m *MockWebAuthnChallengeRepository) Create(ch *domain.WebAuthnChallenge) error {
 	m.ctrl.T.Helper()

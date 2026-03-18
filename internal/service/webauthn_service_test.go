@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -104,7 +105,7 @@ func TestWebAuthnService_FinishRegistration_ChallengeNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, _, _, challengeRepo := newTestWebAuthnService(t, ctrl)
 
-	challengeRepo.EXPECT().GetByID("bad-id").Return(nil, domain.ErrNotFound)
+	challengeRepo.EXPECT().Consume("bad-id").Return(nil, domain.ErrNotFound)
 
 	_, err := svc.FinishRegistration("user-123", "bad-id", "", nil)
 	assert.ErrorIs(t, err, service.ErrWebAuthnInvalidChallenge)
@@ -118,8 +119,7 @@ func TestWebAuthnService_FinishRegistration_WrongUser(t *testing.T) {
 		ID: "ch-1", UserID: "other-user", Type: "registration",
 		SessionData: "{}", ExpiresAt: time.Now().Add(time.Minute),
 	}
-	challengeRepo.EXPECT().GetByID("ch-1").Return(ch, nil)
-	challengeRepo.EXPECT().Delete("ch-1").Return(nil)
+	challengeRepo.EXPECT().Consume("ch-1").Return(ch, nil)
 
 	_, err := svc.FinishRegistration("user-123", "ch-1", "", nil)
 	assert.ErrorIs(t, err, service.ErrWebAuthnInvalidChallenge)
@@ -133,8 +133,7 @@ func TestWebAuthnService_FinishRegistration_Expired(t *testing.T) {
 		ID: "ch-1", UserID: "user-123", Type: "registration",
 		SessionData: "{}", ExpiresAt: time.Now().Add(-time.Minute),
 	}
-	challengeRepo.EXPECT().GetByID("ch-1").Return(ch, nil)
-	challengeRepo.EXPECT().Delete("ch-1").Return(nil)
+	challengeRepo.EXPECT().Consume("ch-1").Return(ch, nil)
 
 	_, err := svc.FinishRegistration("user-123", "ch-1", "", nil)
 	assert.ErrorIs(t, err, service.ErrWebAuthnInvalidChallenge)
@@ -148,8 +147,7 @@ func TestWebAuthnService_FinishRegistration_WrongType(t *testing.T) {
 		ID: "ch-1", UserID: "user-123", Type: "authentication",
 		SessionData: "{}", ExpiresAt: time.Now().Add(time.Minute),
 	}
-	challengeRepo.EXPECT().GetByID("ch-1").Return(ch, nil)
-	challengeRepo.EXPECT().Delete("ch-1").Return(nil)
+	challengeRepo.EXPECT().Consume("ch-1").Return(ch, nil)
 
 	_, err := svc.FinishRegistration("user-123", "ch-1", "", nil)
 	assert.ErrorIs(t, err, service.ErrWebAuthnInvalidChallenge)
@@ -173,31 +171,69 @@ func TestWebAuthnService_BeginLogin_DiscoverableFlow(t *testing.T) {
 
 func TestWebAuthnService_BeginLogin_WithUsername(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, userRepo, credRepo, challengeRepo := newTestWebAuthnService(t, ctrl)
+	svc, userRepo, _, challengeRepo := newTestWebAuthnService(t, ctrl)
 
 	user := activeUser()
 	userRepo.EXPECT().GetByUsername("alice").Return(user, nil)
-	creds := []*domain.WebAuthnCredential{
-		{ID: "c1", UserID: user.ID, CredentialID: []byte("cid-1"), PublicKey: []byte("key"), AttestationType: "none"},
-	}
-	credRepo.EXPECT().ListByUserID(user.ID).Return(creds, nil)
 	challengeRepo.EXPECT().Create(gomock.Any()).Return(nil)
 
 	assertion, _, err := svc.BeginLogin("alice")
 	require.NoError(t, err)
-	assert.NotEmpty(t, assertion.Response.AllowedCredentials)
+	// Uses discoverable flow to prevent username enumeration — no allowCredentials
+	assert.Empty(t, assertion.Response.AllowedCredentials)
 }
 
 func TestWebAuthnService_BeginLogin_NoCredentials(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, userRepo, credRepo, _ := newTestWebAuthnService(t, ctrl)
+	svc, userRepo, _, challengeRepo := newTestWebAuthnService(t, ctrl)
 
 	user := activeUser()
 	userRepo.EXPECT().GetByUsername("alice").Return(user, nil)
-	credRepo.EXPECT().ListByUserID(user.ID).Return(nil, nil)
+	challengeRepo.EXPECT().Create(gomock.Any()).Return(nil)
 
-	_, _, err := svc.BeginLogin("alice")
-	assert.ErrorIs(t, err, service.ErrWebAuthnNoCredentials)
+	// User with no passkeys should still get a discoverable challenge (not an error)
+	// to prevent username enumeration
+	assertion, challengeID, err := svc.BeginLogin("alice")
+	require.NoError(t, err)
+	assert.NotNil(t, assertion)
+	assert.NotEmpty(t, challengeID)
+	assert.Empty(t, assertion.Response.AllowedCredentials)
+}
+
+func TestWebAuthnService_BeginLogin_ResponsesIndistinguishable(t *testing.T) {
+	// Verify that existing user (with or without passkeys) and non-existing user
+	// all produce indistinguishable responses to prevent username enumeration.
+	ctrl := gomock.NewController(t)
+	svc, userRepo, _, challengeRepo := newTestWebAuthnService(t, ctrl)
+
+	challengeRepo.EXPECT().Create(gomock.Any()).Return(nil).Times(3)
+
+	// Case 1: non-existing user
+	userRepo.EXPECT().GetByUsername("ghost").Return(nil, domain.ErrNotFound)
+	resp1, id1, err1 := svc.BeginLogin("ghost")
+	require.NoError(t, err1)
+
+	// Case 2: existing user, no passkeys
+	user := activeUser()
+	userRepo.EXPECT().GetByUsername("alice").Return(user, nil)
+	resp2, id2, err2 := svc.BeginLogin("alice")
+	require.NoError(t, err2)
+
+	// Case 3: discoverable (no username)
+	resp3, id3, err3 := svc.BeginLogin("")
+	require.NoError(t, err3)
+
+	// All three should return non-empty challenge IDs and empty allowCredentials
+	assert.NotEmpty(t, id1)
+	assert.NotEmpty(t, id2)
+	assert.NotEmpty(t, id3)
+	assert.Empty(t, resp1.Response.AllowedCredentials)
+	assert.Empty(t, resp2.Response.AllowedCredentials)
+	assert.Empty(t, resp3.Response.AllowedCredentials)
+
+	// All should have the same rpId
+	assert.Equal(t, resp1.Response.RelyingPartyID, resp2.Response.RelyingPartyID)
+	assert.Equal(t, resp2.Response.RelyingPartyID, resp3.Response.RelyingPartyID)
 }
 
 func TestWebAuthnService_BeginLogin_UnknownUser_FakeChallenge(t *testing.T) {
@@ -220,7 +256,7 @@ func TestWebAuthnService_FinishLogin_ChallengeNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, _, _, challengeRepo := newTestWebAuthnService(t, ctrl)
 
-	challengeRepo.EXPECT().GetByID("bad").Return(nil, domain.ErrNotFound)
+	challengeRepo.EXPECT().Consume("bad").Return(nil, domain.ErrNotFound)
 
 	_, err := svc.FinishLogin("bad", nil, "", "")
 	assert.ErrorIs(t, err, service.ErrWebAuthnInvalidChallenge)
@@ -234,8 +270,7 @@ func TestWebAuthnService_FinishLogin_Expired(t *testing.T) {
 		ID: "ch-1", Type: "authentication",
 		SessionData: "{}", ExpiresAt: time.Now().Add(-time.Minute),
 	}
-	challengeRepo.EXPECT().GetByID("ch-1").Return(ch, nil)
-	challengeRepo.EXPECT().Delete("ch-1").Return(nil)
+	challengeRepo.EXPECT().Consume("ch-1").Return(ch, nil)
 
 	_, err := svc.FinishLogin("ch-1", nil, "", "")
 	assert.ErrorIs(t, err, service.ErrWebAuthnInvalidChallenge)
@@ -249,8 +284,7 @@ func TestWebAuthnService_FinishLogin_WrongType(t *testing.T) {
 		ID: "ch-1", Type: "registration",
 		SessionData: "{}", ExpiresAt: time.Now().Add(time.Minute),
 	}
-	challengeRepo.EXPECT().GetByID("ch-1").Return(ch, nil)
-	challengeRepo.EXPECT().Delete("ch-1").Return(nil)
+	challengeRepo.EXPECT().Consume("ch-1").Return(ch, nil)
 
 	_, err := svc.FinishLogin("ch-1", nil, "", "")
 	assert.ErrorIs(t, err, service.ErrWebAuthnInvalidChallenge)
@@ -264,8 +298,7 @@ func TestWebAuthnService_FinishLogin_InvalidSessionData(t *testing.T) {
 		ID: "ch-1", Type: "authentication",
 		SessionData: "not-json", ExpiresAt: time.Now().Add(time.Minute),
 	}
-	challengeRepo.EXPECT().GetByID("ch-1").Return(ch, nil)
-	challengeRepo.EXPECT().Delete("ch-1").Return(nil)
+	challengeRepo.EXPECT().Consume("ch-1").Return(ch, nil)
 
 	_, err := svc.FinishLogin("ch-1", nil, "", "")
 	assert.Error(t, err)
@@ -357,6 +390,32 @@ func TestWebAuthnService_DeleteCredential_WrongUser(t *testing.T) {
 
 	err := svc.DeleteCredential("user-123", "other-users-cred")
 	assert.ErrorIs(t, err, service.ErrWebAuthnCredentialNotFound)
+}
+
+// --- BeginRegistration credential limit ---
+
+func TestWebAuthnService_BeginRegistration_CredentialLimitReached(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, userRepo, credRepo, _ := newTestWebAuthnService(t, ctrl)
+
+	user := activeUser()
+	userRepo.EXPECT().GetByID("user-123").Return(user, nil)
+
+	// Return 25 existing credentials (the default limit)
+	creds := make([]*domain.WebAuthnCredential, 25)
+	for i := range creds {
+		creds[i] = &domain.WebAuthnCredential{
+			ID:              fmt.Sprintf("cred-%d", i),
+			CredentialID:    []byte(fmt.Sprintf("raw-cred-%d", i)),
+			PublicKey:       []byte("key"),
+			AttestationType: "none",
+			AAGUID:          make([]byte, 16),
+		}
+	}
+	credRepo.EXPECT().ListByUserID("user-123").Return(creds, nil)
+
+	_, _, err := svc.BeginRegistration("user-123")
+	assert.ErrorIs(t, err, service.ErrWebAuthnCredentialLimitReached)
 }
 
 // --- SessionData JSON round-trip ---

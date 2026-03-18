@@ -27,6 +27,8 @@ func (h *webauthnHandler) registerBegin(w http.ResponseWriter, r *http.Request) 
 		switch {
 		case errors.Is(err, service.ErrWebAuthnNotEnabled):
 			jsonError(w, http.StatusBadRequest, "webauthn_not_enabled", "passkeys are not enabled on this server")
+		case errors.Is(err, service.ErrWebAuthnCredentialLimitReached):
+			jsonError(w, http.StatusConflict, "webauthn_credential_limit", "maximum number of passkeys reached")
 		default:
 			jsonError(w, http.StatusInternalServerError, "internal_error", "failed to begin passkey registration")
 		}
@@ -39,11 +41,19 @@ func (h *webauthnHandler) registerBegin(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// headerOrQuery reads a value from the request header first, falling back to query param.
+func headerOrQuery(r *http.Request, header, query string) string {
+	if v := r.Header.Get(header); v != "" {
+		return v
+	}
+	return r.URL.Query().Get(query)
+}
+
 func (h *webauthnHandler) registerFinish(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
 
-	challengeID := r.URL.Query().Get("challenge_id")
-	name := r.URL.Query().Get("name")
+	challengeID := headerOrQuery(r, "X-Challenge-ID", "challenge_id")
+	name := headerOrQuery(r, "X-Passkey-Name", "name")
 
 	if challengeID == "" {
 		jsonError(w, http.StatusBadRequest, "validation_error", "challenge_id is required")
@@ -98,7 +108,7 @@ func (h *webauthnHandler) loginBegin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *webauthnHandler) loginFinish(w http.ResponseWriter, r *http.Request) {
-	challengeID := r.URL.Query().Get("challenge_id")
+	challengeID := headerOrQuery(r, "X-Challenge-ID", "challenge_id")
 	deviceHint := ""
 
 	if challengeID == "" {

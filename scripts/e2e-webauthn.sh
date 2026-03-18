@@ -111,13 +111,19 @@ check "No allowCredentials (discoverable)" "" "$ALLOW_CREDS"
 echo ""
 echo "=== 2. WebAuthn Login Begin (username, no passkeys) ==="
 
+# Should return 200 with a discoverable challenge (same as unknown user)
+# to prevent username enumeration
 STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/webauthn/login/begin" \
   -H "Content-Type: application/json" -d '{"username":"passkeyuser"}')
-check "User with no passkeys = 400" "400" "$STATUS"
+check "User with no passkeys = 200" "200" "$STATUS"
 
 RESP=$(curl -s -X POST "$BASE/api/v1/webauthn/login/begin" \
   -H "Content-Type: application/json" -d '{"username":"passkeyuser"}')
-check "Error = webauthn_no_credentials" "webauthn_no_credentials" "$(echo "$RESP" | jq -r '.error')"
+NO_CREDS_CH=$(echo "$RESP" | jq -r '.challenge_id')
+check_not_empty "Returns challenge_id for user with no passkeys" "$NO_CREDS_CH"
+# Verify no allowCredentials (indistinguishable from unknown user)
+ALLOW_CREDS=$(echo "$RESP" | jq -r '.publicKey.allowCredentials // empty')
+check "No allowCredentials (no passkeys)" "" "$ALLOW_CREDS"
 
 # ── 3. WebAuthn Login Begin — Unknown User ────────────────────────
 

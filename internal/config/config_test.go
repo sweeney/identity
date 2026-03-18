@@ -151,8 +151,8 @@ func TestLoad_WebAuthnCustomPort(t *testing.T) {
 	assert.Contains(t, cfg.WebAuthnRPOrigins, "http://localhost:4000")
 }
 
-func TestLoad_WebAuthnMergesCORSOrigins(t *testing.T) {
-	// CORS origins are automatically merged into WebAuthn origins
+func TestLoad_WebAuthnDoesNotMergeCORSOrigins(t *testing.T) {
+	// CORS origins should NOT be merged into WebAuthn origins (configured independently)
 	t.Setenv("IDENTITY_ENV", "development")
 	t.Setenv("CORS_ORIGINS", "http://localhost:9093,http://localhost:3000")
 
@@ -160,36 +160,8 @@ func TestLoad_WebAuthnMergesCORSOrigins(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, cfg.WebAuthnRPOrigins, "http://localhost:8181")
-	assert.Contains(t, cfg.WebAuthnRPOrigins, "http://localhost:9093")
-	assert.Contains(t, cfg.WebAuthnRPOrigins, "http://localhost:3000")
-}
-
-func TestLoad_WebAuthnMergesCORSOrigins_NoDuplicates(t *testing.T) {
-	t.Setenv("IDENTITY_ENV", "development")
-	t.Setenv("CORS_ORIGINS", "http://localhost:8181") // same as default
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-
-	count := 0
-	for _, o := range cfg.WebAuthnRPOrigins {
-		if o == "http://localhost:8181" {
-			count++
-		}
-	}
-	assert.Equal(t, 1, count, "should not duplicate origins")
-}
-
-func TestLoad_WebAuthnMergesCORSOrigins_Production(t *testing.T) {
-	t.Setenv("IDENTITY_ENV", "production")
-	t.Setenv("WEBAUTHN_RP_ID", "swee.net")
-	t.Setenv("CORS_ORIGINS", "https://app.swee.net")
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-
-	assert.Contains(t, cfg.WebAuthnRPOrigins, "https://swee.net")    // derived default
-	assert.Contains(t, cfg.WebAuthnRPOrigins, "https://app.swee.net") // from CORS
+	assert.NotContains(t, cfg.WebAuthnRPOrigins, "http://localhost:9093")
+	assert.NotContains(t, cfg.WebAuthnRPOrigins, "http://localhost:3000")
 }
 
 func TestLoad_JWTPrevSecret(t *testing.T) {

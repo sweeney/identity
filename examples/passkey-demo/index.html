@@ -234,9 +234,12 @@ async function passkeyLogin() {
     },
   };
 
-  const finishResp = await fetch(API + `/api/v1/webauthn/login/finish?challenge_id=${challengeId}`, {
+  const finishResp = await fetch(API + '/api/v1/webauthn/login/finish', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Challenge-ID': challengeId,
+    },
     body: JSON.stringify(assertionJSON),
   });
 
@@ -307,13 +310,17 @@ async function registerPasskey() {
   }
 
   const passkeyName = document.getElementById('passkey-name').value.trim();
-  const nameParam = passkeyName ? `&name=${encodeURIComponent(passkeyName)}` : '';
-  const finishResp = await fetch(API + `/api/v1/webauthn/register/finish?challenge_id=${challengeId}${nameParam}`, {
+  const registerFinishHeaders = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${accessToken}`,
+    'X-Challenge-ID': challengeId,
+  };
+  if (passkeyName) {
+    registerFinishHeaders['X-Passkey-Name'] = passkeyName;
+  }
+  const finishResp = await fetch(API + '/api/v1/webauthn/register/finish', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`,
-    },
+    headers: registerFinishHeaders,
     body: JSON.stringify(credentialJSON),
   });
 

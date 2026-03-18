@@ -194,15 +194,22 @@ func TestWebAuthnLoginBegin_NoCredentials(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	webauthnSvc := mocks.NewMockWebAuthnServicer(ctrl)
 
-	webauthnSvc.EXPECT().BeginLogin("bob").Return(nil, "", service.ErrWebAuthnNoCredentials)
+	// User with no passkeys now gets a discoverable challenge (not an error)
+	// to prevent username enumeration
+	assertion := &protocol.CredentialAssertion{
+		Response: protocol.PublicKeyCredentialRequestOptions{
+			Challenge: []byte("disc-challenge"),
+		},
+	}
+	webauthnSvc.EXPECT().BeginLogin("bob").Return(assertion, "disc-ch-1", nil)
 
 	h := api.NewRouter(newTestIssuer(t), nil, nil, webauthnSvc, "")
 	rr := postJSON(t, h, "/api/v1/webauthn/login/begin", map[string]string{"username": "bob"})
 
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-	var resp map[string]string
+	assert.Equal(t, http.StatusOK, rr.Code)
+	var resp map[string]any
 	decodeJSON(t, rr, &resp)
-	assert.Equal(t, "webauthn_no_credentials", resp["error"])
+	assert.Equal(t, "disc-ch-1", resp["challenge_id"])
 }
 
 // --- POST /api/v1/webauthn/login/finish ---

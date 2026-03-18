@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS webauthn_credentials (
     transports       TEXT,   -- JSON array: ["internal","hybrid"]
     backup_eligible  INTEGER NOT NULL DEFAULT 0 CHECK(backup_eligible IN (0, 1)),
     backup_state     INTEGER NOT NULL DEFAULT 0 CHECK(backup_state IN (0, 1)),
+    user_present     INTEGER NOT NULL DEFAULT 1 CHECK(user_present IN (0, 1)),
+    user_verified    INTEGER NOT NULL DEFAULT 0 CHECK(user_verified IN (0, 1)),
     name             TEXT NOT NULL DEFAULT '',
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     last_used_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

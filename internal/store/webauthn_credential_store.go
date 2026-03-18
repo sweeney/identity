@@ -28,8 +28,8 @@ func (s *WebAuthnCredentialStore) Create(cred *domain.WebAuthnCredential) error 
 	}
 
 	_, err = s.db.DB().Exec(
-		`INSERT INTO webauthn_credentials (id, user_id, credential_id, public_key, attestation_type, aaguid, sign_count, transports, backup_eligible, backup_state, name, created_at, last_used_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO webauthn_credentials (id, user_id, credential_id, public_key, attestation_type, aaguid, sign_count, transports, backup_eligible, backup_state, user_present, user_verified, name, created_at, last_used_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		cred.ID,
 		cred.UserID,
 		cred.CredentialID,
@@ -40,6 +40,8 @@ func (s *WebAuthnCredentialStore) Create(cred *domain.WebAuthnCredential) error 
 		string(transports),
 		boolToInt(cred.BackupEligible),
 		boolToInt(cred.BackupState),
+		boolToInt(cred.UserPresent),
+		boolToInt(cred.UserVerified),
 		cred.Name,
 		formatTime(cred.CreatedAt),
 		formatTime(cred.LastUsedAt),
@@ -55,7 +57,7 @@ func (s *WebAuthnCredentialStore) Create(cred *domain.WebAuthnCredential) error 
 
 func (s *WebAuthnCredentialStore) GetByCredentialID(credentialID []byte) (*domain.WebAuthnCredential, error) {
 	row := s.db.DB().QueryRow(
-		`SELECT id, user_id, credential_id, public_key, attestation_type, aaguid, sign_count, transports, backup_eligible, backup_state, name, created_at, last_used_at
+		`SELECT id, user_id, credential_id, public_key, attestation_type, aaguid, sign_count, transports, backup_eligible, backup_state, user_present, user_verified, name, created_at, last_used_at
 		 FROM webauthn_credentials WHERE credential_id = ?`, credentialID,
 	)
 	return scanWebAuthnCredential(row)
@@ -63,7 +65,7 @@ func (s *WebAuthnCredentialStore) GetByCredentialID(credentialID []byte) (*domai
 
 func (s *WebAuthnCredentialStore) ListByUserID(userID string) ([]*domain.WebAuthnCredential, error) {
 	rows, err := s.db.DB().Query(
-		`SELECT id, user_id, credential_id, public_key, attestation_type, aaguid, sign_count, transports, backup_eligible, backup_state, name, created_at, last_used_at
+		`SELECT id, user_id, credential_id, public_key, attestation_type, aaguid, sign_count, transports, backup_eligible, backup_state, user_present, user_verified, name, created_at, last_used_at
 		 FROM webauthn_credentials WHERE user_id = ? ORDER BY created_at`, userID,
 	)
 	if err != nil {
@@ -151,12 +153,13 @@ func scanWebAuthnCredential(row *sql.Row) (*domain.WebAuthnCredential, error) {
 	var c domain.WebAuthnCredential
 	var transports, createdAt, lastUsedAt string
 	var aaguid []byte
-	var backupEligible, backupState int
+	var backupEligible, backupState, userPresent, userVerified int
 
 	err := row.Scan(
 		&c.ID, &c.UserID, &c.CredentialID, &c.PublicKey,
 		&c.AttestationType, &aaguid, &c.SignCount,
 		&transports, &backupEligible, &backupState,
+		&userPresent, &userVerified,
 		&c.Name, &createdAt, &lastUsedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -169,6 +172,8 @@ func scanWebAuthnCredential(row *sql.Row) (*domain.WebAuthnCredential, error) {
 	c.AAGUID = aaguid
 	c.BackupEligible = backupEligible == 1
 	c.BackupState = backupState == 1
+	c.UserPresent = userPresent == 1
+	c.UserVerified = userVerified == 1
 	if transports != "" {
 		json.Unmarshal([]byte(transports), &c.Transports) //nolint:errcheck
 	}
@@ -181,12 +186,13 @@ func scanWebAuthnCredentialRow(rows *sql.Rows) (*domain.WebAuthnCredential, erro
 	var c domain.WebAuthnCredential
 	var transports, createdAt, lastUsedAt string
 	var aaguid []byte
-	var backupEligible, backupState int
+	var backupEligible, backupState, userPresent, userVerified int
 
 	err := rows.Scan(
 		&c.ID, &c.UserID, &c.CredentialID, &c.PublicKey,
 		&c.AttestationType, &aaguid, &c.SignCount,
 		&transports, &backupEligible, &backupState,
+		&userPresent, &userVerified,
 		&c.Name, &createdAt, &lastUsedAt,
 	)
 	if err != nil {
@@ -196,6 +202,8 @@ func scanWebAuthnCredentialRow(rows *sql.Rows) (*domain.WebAuthnCredential, erro
 	c.AAGUID = aaguid
 	c.BackupEligible = backupEligible == 1
 	c.BackupState = backupState == 1
+	c.UserPresent = userPresent == 1
+	c.UserVerified = userVerified == 1
 	if transports != "" {
 		json.Unmarshal([]byte(transports), &c.Transports) //nolint:errcheck
 	}

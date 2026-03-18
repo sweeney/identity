@@ -32,8 +32,8 @@ func DomainCredentialToWebAuthn(c *domain.WebAuthnCredential) webauthn.Credentia
 		PublicKey:       c.PublicKey,
 		AttestationType: c.AttestationType,
 		Flags: webauthn.CredentialFlags{
-			UserPresent:    true,
-			UserVerified:   true,
+			UserPresent:    c.UserPresent,
+			UserVerified:   c.UserVerified,
 			BackupEligible: c.BackupEligible,
 			BackupState:    c.BackupState,
 		},
