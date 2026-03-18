@@ -3,18 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{block "title" .}}Identity{{end}} — Identity</title>
+    <title>{{block "title" .}}Identity{{end}} — {{if .SiteName}}{{.SiteName}}{{else}}Identity{{end}}</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <main class="container">
         {{if not .HideNav}}
         <nav>
-            <a href="/admin/" class="brand">id.swee.net</a>
+            <a href="/admin/" class="brand">{{if .SiteName}}{{.SiteName}}{{else}}Identity{{end}}</a>
             <div class="links">
                 <a href="/admin/">Dashboard</a>
                 <a href="/admin/users">Users</a>
                 <a href="/admin/oauth">OAuth Clients</a>
+                <a href="/admin/passkeys">Passkeys</a>
                 <a href="/admin/audit">Audit Log</a>
                 <form method="POST" action="/admin/logout" style="display:inline">
                     <input type="hidden" name="_csrf" value="{{.CSRFToken}}">

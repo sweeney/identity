@@ -44,6 +44,9 @@ type Config struct {
 	AdminUsername string
 	AdminPassword string
 
+	// Site name: human-readable name shown in UI (nav, OAuth login, etc.)
+	SiteName string
+
 	// Proxy trust: "cloudflare" trusts CF-Connecting-IP header, "" trusts nothing
 	TrustProxy string
 
@@ -52,6 +55,11 @@ type Config struct {
 
 	// Rate limiting
 	RateLimitDisabled bool
+
+	// WebAuthn / Passkeys
+	WebAuthnRPID          string   // Relying Party ID (domain, e.g. "swee.net")
+	WebAuthnRPDisplayName string   // Human-readable RP name shown in browser prompts
+	WebAuthnRPOrigins     []string // Allowed origins (e.g. "https://id.swee.net")
 
 	// Cloudflare R2 (S3-compatible backup storage)
 	R2AccountID       string
@@ -111,6 +119,12 @@ func Load() (*Config, error) {
 		cfg.DBPath = v
 	}
 
+	// SITE_NAME: human-readable name for the identity service (shown in UI)
+	cfg.SiteName = os.Getenv("SITE_NAME")
+	if cfg.SiteName == "" {
+		cfg.SiteName = "Identity"
+	}
+
 	// TRUST_PROXY: "cloudflare" trusts CF-Connecting-IP, anything else means use RemoteAddr
 	if v := os.Getenv("TRUST_PROXY"); v == "cloudflare" {
 		cfg.TrustProxy = "cloudflare"
@@ -131,6 +145,47 @@ func Load() (*Config, error) {
 		cfg.RateLimitDisabled = true
 	}
 
+	// WebAuthn: auto-configure from environment or derive from IDENTITY_ENV
+	cfg.WebAuthnRPID = os.Getenv("WEBAUTHN_RP_ID")
+	cfg.WebAuthnRPDisplayName = os.Getenv("WEBAUTHN_RP_DISPLAY_NAME")
+	if cfg.WebAuthnRPDisplayName == "" {
+		cfg.WebAuthnRPDisplayName = "Identity Service"
+	}
+	if v := os.Getenv("WEBAUTHN_RP_ORIGINS"); v != "" {
+		for _, o := range strings.Split(v, ",") {
+			o = strings.TrimSpace(o)
+			if o != "" {
+				cfg.WebAuthnRPOrigins = append(cfg.WebAuthnRPOrigins, o)
+			}
+		}
+	}
+	// In development, default to localhost if no RP ID is set.
+	if cfg.WebAuthnRPID == "" && cfg.Env == EnvDevelopment {
+		cfg.WebAuthnRPID = "localhost"
+		if len(cfg.WebAuthnRPOrigins) == 0 {
+			cfg.WebAuthnRPOrigins = []string{fmt.Sprintf("http://localhost:%d", cfg.Port)}
+		}
+	}
+	// Derive origin from RP ID if not explicitly set
+	if cfg.WebAuthnRPID != "" && len(cfg.WebAuthnRPOrigins) == 0 {
+		cfg.WebAuthnRPOrigins = []string{"https://" + cfg.WebAuthnRPID}
+	}
+	// Merge CORS origins into WebAuthn origins — if you trust an origin for
+	// CORS, it should also be allowed to perform WebAuthn ceremonies. This
+	// avoids hardcoding port lists and keeps configuration in one place.
+	if cfg.WebAuthnRPID != "" && len(cfg.CORSOrigins) > 0 {
+		existing := make(map[string]bool, len(cfg.WebAuthnRPOrigins))
+		for _, o := range cfg.WebAuthnRPOrigins {
+			existing[o] = true
+		}
+		for _, o := range cfg.CORSOrigins {
+			if !existing[o] {
+				cfg.WebAuthnRPOrigins = append(cfg.WebAuthnRPOrigins, o)
+				existing[o] = true
+			}
+		}
+	}
+
 	// R2 config — optional at load time (service runs without backup if unset, logs a warning)
 	cfg.R2AccountID = os.Getenv("R2_ACCOUNT_ID")
 	cfg.R2AccessKeyID = os.Getenv("R2_ACCESS_KEY_ID")
@@ -147,6 +202,11 @@ func Load() (*Config, error) {
 // IsProduction returns true if running in production mode.
 func (c *Config) IsProduction() bool {
 	return c.Env == EnvProduction
+}
+
+// WebAuthnConfigured reports whether WebAuthn/passkeys are configured.
+func (c *Config) WebAuthnConfigured() bool {
+	return c.WebAuthnRPID != ""
 }
 
 // R2Configured reports whether all R2 credentials are present.

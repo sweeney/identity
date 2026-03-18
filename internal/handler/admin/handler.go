@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -47,9 +48,11 @@ type adminHandler struct {
 	cfg          Config
 	authSvc      service.AuthServicer
 	userSvc      service.UserServicer
+	webauthnSvc  service.WebAuthnServicer
 	oauthClients domain.OAuthClientRepository
 	auditRepo    domain.AuditRepository
 	backupSvc    domain.BackupService
+	tokenIssuer  *auth.TokenIssuer
 	tmpl         *tmplSet
 }
 
@@ -188,6 +191,7 @@ func (h *adminHandler) render(w http.ResponseWriter, r *http.Request, page strin
 		data = map[string]any{}
 	}
 	data["CSRFToken"] = h.csrfToken(r)
+	data["SiteName"] = h.cfg.SiteName
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.render(w, page, data); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -241,6 +245,53 @@ func (h *adminHandler) loginPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
+
+	// Prompt to register a passkey if the browser supports WebAuthn and user has none
+	if r.FormValue("webauthn_supported") == "1" && h.shouldPromptPasskey(userID) {
+		http.Redirect(w, r, "/admin/passkeys/prompt?next=/admin/", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/admin/", http.StatusSeeOther)
+}
+
+// loginPasskey accepts an access_token (from a WebAuthn login) and creates an admin session.
+func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
+	accessToken := r.FormValue("access_token")
+	if accessToken == "" {
+		h.render(w, r, "login.html", map[string]any{
+			"HideNav": true,
+			"Error":   "Passkey authentication failed",
+		})
+		return
+	}
+
+	claims, err := h.tokenIssuer.Parse(accessToken)
+	if err != nil {
+		h.render(w, r, "login.html", map[string]any{
+			"HideNav": true,
+			"Error":   "Invalid token",
+		})
+		return
+	}
+
+	user, err := h.userSvc.GetByID(claims.UserID)
+	if err != nil || user.Role != domain.RoleAdmin {
+		ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
+		h.recordAuditWithDetail(domain.EventLoginFailure, claims.UserID, claims.Username, ip, "passkey: insufficient role")
+		h.render(w, r, "login.html", map[string]any{
+			"HideNav": true,
+			"Error":   "Admin access required",
+		})
+		return
+	}
+
+	ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
+	h.recordAuditWithDetail(domain.EventPasskeyLoginSuccess, user.ID, user.Username, ip, "admin UI passkey login")
+
+	if err := h.setSession(w, user.Username); err != nil {
+		http.Error(w, "session error", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, "/admin/", http.StatusSeeOther)
 }
 
@@ -250,6 +301,128 @@ func (h *adminHandler) logout(w http.ResponseWriter, r *http.Request) {
 	ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
 	h.recordAudit(domain.EventLogout, "", username, ip)
 	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+}
+
+// shouldPromptPasskey returns true if WebAuthn is enabled and the user has no passkeys.
+func (h *adminHandler) shouldPromptPasskey(userID string) bool {
+	if h.webauthnSvc == nil {
+		return false
+	}
+	creds, err := h.webauthnSvc.ListCredentials(userID)
+	if err != nil {
+		return false
+	}
+	return len(creds) == 0
+}
+
+func (h *adminHandler) passkeyPrompt(w http.ResponseWriter, r *http.Request) {
+	next := r.URL.Query().Get("next")
+	if next == "" {
+		next = "/admin/"
+	}
+	h.render(w, r, "passkey_prompt.html", map[string]any{
+		"HideNav": true,
+		"SkipURL": next,
+	})
+}
+
+// --- Passkeys ---
+
+func (h *adminHandler) passkeys(w http.ResponseWriter, r *http.Request) {
+	username := h.sessionUsername(r)
+	user, err := h.userSvc.GetByUsername(username)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusInternalServerError)
+		return
+	}
+
+	if h.webauthnSvc == nil {
+		h.render(w, r, "passkeys.html", map[string]any{"Credentials": nil})
+		return
+	}
+
+	creds, err := h.webauthnSvc.ListCredentials(user.ID)
+	if err != nil {
+		http.Error(w, "failed to list passkeys", http.StatusInternalServerError)
+		return
+	}
+
+	h.render(w, r, "passkeys.html", map[string]any{
+		"Credentials": creds,
+	})
+}
+
+func (h *adminHandler) passkeyDelete(w http.ResponseWriter, r *http.Request) {
+	username := h.sessionUsername(r)
+	user, err := h.userSvc.GetByUsername(username)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusInternalServerError)
+		return
+	}
+
+	credID := r.PathValue("id")
+	if h.webauthnSvc != nil {
+		h.webauthnSvc.DeleteCredential(user.ID, credID) //nolint:errcheck
+	}
+	http.Redirect(w, r, "/admin/passkeys", http.StatusSeeOther)
+}
+
+// passkeyRegisterBegin starts a WebAuthn registration ceremony for the admin user.
+// Returns JSON (not HTML) — consumed by the passkey-register.js script.
+func (h *adminHandler) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
+	username := h.sessionUsername(r)
+	user, err := h.userSvc.GetByUsername(username)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusInternalServerError)
+		return
+	}
+
+	if h.webauthnSvc == nil {
+		http.Error(w, "passkeys not enabled", http.StatusBadRequest)
+		return
+	}
+
+	creation, challengeID, err := h.webauthnSvc.BeginRegistration(user.ID)
+	if err != nil {
+		http.Error(w, "failed to begin registration", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+		"publicKey":    creation.Response,
+		"challenge_id": challengeID,
+	})
+}
+
+// passkeyRegisterFinish completes a WebAuthn registration ceremony for the admin user.
+func (h *adminHandler) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
+	username := h.sessionUsername(r)
+	user, err := h.userSvc.GetByUsername(username)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusInternalServerError)
+		return
+	}
+
+	challengeID := r.URL.Query().Get("challenge_id")
+	name := r.URL.Query().Get("name")
+	if challengeID == "" {
+		http.Error(w, "challenge_id required", http.StatusBadRequest)
+		return
+	}
+
+	if h.webauthnSvc == nil {
+		http.Error(w, "passkeys not enabled", http.StatusBadRequest)
+		return
+	}
+
+	_, err = h.webauthnSvc.FinishRegistration(user.ID, challengeID, name, r)
+	if err != nil {
+		http.Error(w, "registration failed", http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
 }
 
 // --- Dashboard ---
@@ -348,12 +521,26 @@ func (h *adminHandler) usersEditGet(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	h.render(w, r, "user_form.html", map[string]any{
+	data := map[string]any{
 		"FormAction":        "/admin/users/" + id + "/edit",
 		"User":              user,
 		"SelectedRole":      string(user.Role),
 		"MinPasswordLength": auth.MinPasswordLength,
-	})
+	}
+	if h.webauthnSvc != nil {
+		passkeys, _ := h.webauthnSvc.ListCredentials(user.ID)
+		data["Passkeys"] = passkeys
+	}
+	h.render(w, r, "user_form.html", data)
+}
+
+func (h *adminHandler) userPasskeyDelete(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	credID := r.PathValue("credID")
+	if h.webauthnSvc != nil {
+		h.webauthnSvc.DeleteCredential(userID, credID) //nolint:errcheck
+	}
+	http.Redirect(w, r, "/admin/users/"+userID+"/edit", http.StatusSeeOther)
 }
 
 func (h *adminHandler) usersEditPost(w http.ResponseWriter, r *http.Request) {

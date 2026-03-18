@@ -1,0 +1,44 @@
+{{define "title"}}Passkeys{{end}}
+{{define "content"}}
+<h2>Passkeys</h2>
+<p>Passkeys let you sign in with biometrics (Touch ID, Face ID, Windows Hello) instead of a password.</p>
+
+{{if .Credentials}}
+<table>
+    <thead>
+        <tr><th>Name</th><th>Created</th><th>Last Used</th><th></th></tr>
+    </thead>
+    <tbody>
+        {{range .Credentials}}
+        <tr>
+            <td>{{if .Name}}{{.Name}}{{else}}<em>unnamed</em>{{end}}</td>
+            <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+            <td>{{.LastUsedAt.Format "2006-01-02 15:04"}}</td>
+            <td>
+                <form method="POST" action="/admin/passkeys/{{.ID}}/delete" style="display:inline">
+                    <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                    <button type="submit" class="btn-danger btn-small">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<p style="margin:1rem 0;color:var(--text-muted)">No passkeys registered yet.</p>
+{{end}}
+
+<div style="margin-top:2rem">
+    <h3>Register a new passkey</h3>
+    <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.5rem">
+        <input type="text" id="passkey-name" placeholder="Name (e.g. MacBook Pro)" style="flex:1">
+        <button id="register-btn" type="button" style="display:none">Register Passkey</button>
+    </div>
+    <p id="no-webauthn" style="display:none;margin-top:0.5rem;color:var(--danger)">
+        Your browser does not support passkeys.
+    </p>
+</div>
+
+<script src="/static/webauthn.js"></script>
+<script src="/static/passkey-register.js"></script>
+{{end}}

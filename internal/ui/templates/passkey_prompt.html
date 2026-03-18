@@ -1,0 +1,25 @@
+{{define "title"}}Set up a passkey{{end}}
+{{define "content"}}
+<div class="login-box">
+    <h2>Sign in faster next time</h2>
+    <p>You can set up a passkey to sign in with Touch ID, Face ID, or Windows Hello instead of typing your password.</p>
+
+    <div id="register-section"
+         data-begin-url="{{if .OAuthFlow}}/oauth/passkey-prompt/register/begin{{else}}/admin/passkeys/register/begin{{end}}"
+         data-finish-url="{{if .OAuthFlow}}/oauth/passkey-prompt/register/finish{{else}}/admin/passkeys/register/finish{{end}}">
+        <div class="passkey-prompt-input">
+            <input type="text" id="passkey-name" placeholder="Name this passkey (e.g. MacBook Pro)">
+        </div>
+        <button id="register-btn" type="button">Set up passkey</button>
+        <p id="register-status"></p>
+    </div>
+
+    <div id="skip-section">
+        {{if .SkipURL}}
+        <a href="{{.SkipURL}}" class="btn btn-secondary" id="skip-link">Not now</a>
+        {{end}}
+    </div>
+</div>
+<script src="/static/webauthn.js"></script>
+<script src="/static/passkey-prompt.js"></script>
+{{end}}

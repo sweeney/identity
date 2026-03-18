@@ -19,7 +19,11 @@ import (
 )
 
 func newTestRouter(svc service.OAuthServicer) http.Handler {
-	return oauth.NewRouter(svc, "")
+	return oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+}
+
+func newTestRouterWithAuth(svc service.OAuthServicer, authSvc service.AuthServicer) http.Handler {
+	return oauth.NewRouter(svc, "", nil, authSvc, nil, "", "")
 }
 
 func getAuthorize(t *testing.T, h http.Handler, params map[string]string) *httptest.ResponseRecorder {
@@ -101,16 +105,22 @@ func TestAuthorizeGet_MissingChallenge(t *testing.T) {
 
 // --- POST /oauth/authorize ---
 
-func TestAuthorizePost_Success(t *testing.T) {
-	ctrl := gomock.NewController(t)
+func authorizePostMocks(ctrl *gomock.Controller) (*mocks.MockOAuthServicer, *mocks.MockAuthServicer) {
 	svc := mocks.NewMockOAuthServicer(ctrl)
-
+	authSvc := mocks.NewMockAuthServicer(ctrl)
 	client := &domain.OAuthClient{ID: "client-1", Name: "My App"}
 	svc.EXPECT().ValidateAuthorizeRequest("client-1", "https://myapp.example.com/callback").Return(client, nil)
-	svc.EXPECT().Authorize("client-1", "https://myapp.example.com/callback", "alice", "password", "challenge-abc", gomock.Any()).
+	authSvc.EXPECT().AuthorizeUser("alice", "password", gomock.Any()).Return("user-alice", nil)
+	svc.EXPECT().AuthorizeByUserID("client-1", "https://myapp.example.com/callback", "user-alice", "alice", "challenge-abc", gomock.Any()).
 		Return("raw-code-xyz", nil)
+	return svc, authSvc
+}
 
-	h := newTestRouter(svc)
+func TestAuthorizePost_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, authSvc := authorizePostMocks(ctrl)
+
+	h := newTestRouterWithAuth(svc, authSvc)
 	rr := postForm(t, h, "/oauth/authorize", url.Values{
 		"client_id":    {"client-1"},
 		"redirect_uri": {"https://myapp.example.com/callback"},
@@ -128,14 +138,9 @@ func TestAuthorizePost_Success(t *testing.T) {
 
 func TestAuthorizePost_StateWithSpecialChars(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc := mocks.NewMockOAuthServicer(ctrl)
+	svc, authSvc := authorizePostMocks(ctrl)
 
-	client := &domain.OAuthClient{ID: "client-1", Name: "My App"}
-	svc.EXPECT().ValidateAuthorizeRequest("client-1", "https://myapp.example.com/callback").Return(client, nil)
-	svc.EXPECT().Authorize("client-1", "https://myapp.example.com/callback", "alice", "password", "challenge-abc", gomock.Any()).
-		Return("raw-code-xyz", nil)
-
-	h := newTestRouter(svc)
+	h := newTestRouterWithAuth(svc, authSvc)
 	rr := postForm(t, h, "/oauth/authorize", url.Values{
 		"client_id":      {"client-1"},
 		"redirect_uri":   {"https://myapp.example.com/callback"},
@@ -154,14 +159,9 @@ func TestAuthorizePost_StateWithSpecialChars(t *testing.T) {
 
 func TestAuthorizePost_StateWithSpaces(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc := mocks.NewMockOAuthServicer(ctrl)
+	svc, authSvc := authorizePostMocks(ctrl)
 
-	client := &domain.OAuthClient{ID: "client-1", Name: "My App"}
-	svc.EXPECT().ValidateAuthorizeRequest("client-1", "https://myapp.example.com/callback").Return(client, nil)
-	svc.EXPECT().Authorize("client-1", "https://myapp.example.com/callback", "alice", "password", "challenge-abc", gomock.Any()).
-		Return("raw-code-xyz", nil)
-
-	h := newTestRouter(svc)
+	h := newTestRouterWithAuth(svc, authSvc)
 	rr := postForm(t, h, "/oauth/authorize", url.Values{
 		"client_id":      {"client-1"},
 		"redirect_uri":   {"https://myapp.example.com/callback"},
@@ -180,14 +180,9 @@ func TestAuthorizePost_StateWithSpaces(t *testing.T) {
 
 func TestAuthorizePost_EmptyState(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc := mocks.NewMockOAuthServicer(ctrl)
+	svc, authSvc := authorizePostMocks(ctrl)
 
-	client := &domain.OAuthClient{ID: "client-1", Name: "My App"}
-	svc.EXPECT().ValidateAuthorizeRequest("client-1", "https://myapp.example.com/callback").Return(client, nil)
-	svc.EXPECT().Authorize("client-1", "https://myapp.example.com/callback", "alice", "password", "challenge-abc", gomock.Any()).
-		Return("raw-code-xyz", nil)
-
-	h := newTestRouter(svc)
+	h := newTestRouterWithAuth(svc, authSvc)
 	rr := postForm(t, h, "/oauth/authorize", url.Values{
 		"client_id":      {"client-1"},
 		"redirect_uri":   {"https://myapp.example.com/callback"},
@@ -351,7 +346,7 @@ func TestTokenEndpoint_UnsupportedGrantType(t *testing.T) {
 }
 
 func TestNewRouter_NilService_Returns404(t *testing.T) {
-	h := oauth.NewRouter(nil, "")
+	h := oauth.NewRouter(nil, "", nil, nil, nil, "", "")
 	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

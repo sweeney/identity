@@ -45,5 +45,33 @@
         <a href="/admin/users" class="btn btn-secondary">Cancel</a>
     </div>
 </form>
+{{if .User}}
+{{if .Passkeys}}
+<h3>Passkeys</h3>
+<table>
+    <thead>
+        <tr><th>Name</th><th>Created</th><th>Last Used</th><th></th></tr>
+    </thead>
+    <tbody>
+        {{range .Passkeys}}
+        <tr>
+            <td>{{if .Name}}{{.Name}}{{else}}<em>unnamed</em>{{end}}</td>
+            <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+            <td>{{.LastUsedAt.Format "2006-01-02 15:04"}}</td>
+            <td>
+                <form method="POST" action="/admin/users/{{$.User.ID}}/passkeys/{{.ID}}/delete">
+                    <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                    <button type="submit" class="btn-danger btn-small">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<h3>Passkeys</h3>
+<p>No passkeys registered for this user.</p>
+{{end}}
+{{end}}
 <script src="/static/user-form.js"></script>
 {{end}}

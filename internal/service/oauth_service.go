@@ -100,6 +100,41 @@ func (s *OAuthService) Authorize(clientID, redirectURI, username, password, code
 	return rawCode, nil
 }
 
+// AuthorizeByUserID issues an authorization code for a pre-authenticated user (e.g. via passkey).
+// username is included in the audit event for readability; pass "" if unknown.
+func (s *OAuthService) AuthorizeByUserID(clientID, redirectURI, userID, username, codeChallenge, ip string) (string, error) {
+	rawCode, err := generateRawToken()
+	if err != nil {
+		return "", fmt.Errorf("generate code: %w", err)
+	}
+
+	now := time.Now().UTC()
+	authCode := &domain.AuthCode{
+		ID:            uuid.New().String(),
+		CodeHash:      HashToken(rawCode),
+		ClientID:      clientID,
+		UserID:        userID,
+		RedirectURI:   redirectURI,
+		CodeChallenge: codeChallenge,
+		IssuedAt:      now,
+		ExpiresAt:     now.Add(s.codeTTL),
+	}
+
+	if err := s.codes.Create(authCode); err != nil {
+		return "", fmt.Errorf("store auth code: %w", err)
+	}
+
+	s.record(&domain.AuthEvent{
+		EventType: domain.EventOAuthAuthorizeSuccess,
+		UserID:    userID,
+		Username:  username,
+		ClientID:  clientID,
+		IPAddress: ip,
+	})
+
+	return rawCode, nil
+}
+
 // ExchangeCode validates the authorization code and PKCE, then issues tokens.
 func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier string) (*LoginResult, error) {
 	codeHash := HashToken(rawCode)

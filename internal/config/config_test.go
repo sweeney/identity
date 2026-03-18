@@ -90,6 +90,108 @@ func TestLoad_RateLimitDisabledInDevelopment(t *testing.T) {
 	assert.False(t, cfg.IsProduction())
 }
 
+func TestLoad_WebAuthnDefaultsInDevelopment(t *testing.T) {
+	// In development mode with no WEBAUTHN_RP_ID set, defaults to localhost
+	t.Setenv("IDENTITY_ENV", "development")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.True(t, cfg.WebAuthnConfigured())
+	assert.Equal(t, "localhost", cfg.WebAuthnRPID)
+	assert.Equal(t, "Identity Service", cfg.WebAuthnRPDisplayName)
+	assert.Contains(t, cfg.WebAuthnRPOrigins, "http://localhost:8181")
+}
+
+func TestLoad_WebAuthnExplicitConfig(t *testing.T) {
+	t.Setenv("IDENTITY_ENV", "production")
+	t.Setenv("WEBAUTHN_RP_ID", "swee.net")
+	t.Setenv("WEBAUTHN_RP_DISPLAY_NAME", "Sweeney Identity")
+	t.Setenv("WEBAUTHN_RP_ORIGINS", "https://id.swee.net,https://other.swee.net")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.True(t, cfg.WebAuthnConfigured())
+	assert.Equal(t, "swee.net", cfg.WebAuthnRPID)
+	assert.Equal(t, "Sweeney Identity", cfg.WebAuthnRPDisplayName)
+	assert.Equal(t, []string{"https://id.swee.net", "https://other.swee.net"}, cfg.WebAuthnRPOrigins)
+}
+
+func TestLoad_WebAuthnDerivedOrigin(t *testing.T) {
+	// When RP ID is set but origins are not, derive from RP ID
+	t.Setenv("IDENTITY_ENV", "production")
+	t.Setenv("WEBAUTHN_RP_ID", "example.com")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"https://example.com"}, cfg.WebAuthnRPOrigins)
+}
+
+func TestLoad_WebAuthnDisabledInProduction(t *testing.T) {
+	// In production with no WEBAUTHN_RP_ID, passkeys are disabled
+	t.Setenv("IDENTITY_ENV", "production")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.False(t, cfg.WebAuthnConfigured())
+	assert.Empty(t, cfg.WebAuthnRPID)
+}
+
+func TestLoad_WebAuthnCustomPort(t *testing.T) {
+	// In dev mode with custom port, that port is included in origins
+	t.Setenv("IDENTITY_ENV", "development")
+	t.Setenv("PORT", "4000")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.Contains(t, cfg.WebAuthnRPOrigins, "http://localhost:4000")
+}
+
+func TestLoad_WebAuthnMergesCORSOrigins(t *testing.T) {
+	// CORS origins are automatically merged into WebAuthn origins
+	t.Setenv("IDENTITY_ENV", "development")
+	t.Setenv("CORS_ORIGINS", "http://localhost:9093,http://localhost:3000")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.Contains(t, cfg.WebAuthnRPOrigins, "http://localhost:8181")
+	assert.Contains(t, cfg.WebAuthnRPOrigins, "http://localhost:9093")
+	assert.Contains(t, cfg.WebAuthnRPOrigins, "http://localhost:3000")
+}
+
+func TestLoad_WebAuthnMergesCORSOrigins_NoDuplicates(t *testing.T) {
+	t.Setenv("IDENTITY_ENV", "development")
+	t.Setenv("CORS_ORIGINS", "http://localhost:8181") // same as default
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	count := 0
+	for _, o := range cfg.WebAuthnRPOrigins {
+		if o == "http://localhost:8181" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "should not duplicate origins")
+}
+
+func TestLoad_WebAuthnMergesCORSOrigins_Production(t *testing.T) {
+	t.Setenv("IDENTITY_ENV", "production")
+	t.Setenv("WEBAUTHN_RP_ID", "swee.net")
+	t.Setenv("CORS_ORIGINS", "https://app.swee.net")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.Contains(t, cfg.WebAuthnRPOrigins, "https://swee.net")    // derived default
+	assert.Contains(t, cfg.WebAuthnRPOrigins, "https://app.swee.net") // from CORS
+}
+
 func TestLoad_JWTPrevSecret(t *testing.T) {
 	t.Setenv("JWT_SECRET", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=")
 	t.Setenv("JWT_SECRET_PREV", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=")

@@ -1,10 +1,10 @@
 {{define "title"}}Sign in{{end}}
 {{define "content"}}
-<div style="max-width:420px;margin:4rem auto">
+<div class="login-box">
     <h2>Sign in to {{.ClientName}}</h2>
-    <p><small>You are signing in to <strong>{{.ClientName}}</strong> using your Identity account.</small></p>
+    <p><small>You are signing in to <strong>{{.ClientName}}</strong> using your {{if .SiteName}}{{.SiteName}}{{else}}Identity{{end}} account.</small></p>
     {{if .Error}}<p class="flash-error">{{.Error}}</p>{{end}}
-    <form method="POST" action="/oauth/authorize">
+    <form method="POST" action="/oauth/authorize" id="login-form">
         <input type="hidden" name="client_id" value="{{.ClientID}}">
         <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
         <input type="hidden" name="state" value="{{.State}}">
@@ -12,7 +12,7 @@
         <input type="hidden" name="code_challenge_method" value="S256">
         <label>
             Username
-            <input type="text" name="username" value="{{.Username}}" autofocus required autocomplete="username">
+            <input type="text" name="username" id="login-username" value="{{.Username}}" autofocus required autocomplete="username webauthn">
         </label>
         <label>
             Password
@@ -20,5 +20,17 @@
         </label>
         <button type="submit">Sign in</button>
     </form>
+    <div id="passkey-divider" class="passkey-divider passkey-hidden">
+        <span class="passkey-divider-line"></span>
+        <span class="passkey-divider-text">or</span>
+        <span class="passkey-divider-line"></span>
+    </div>
+    <button id="passkey-btn" type="button" class="btn-secondary passkey-hidden passkey-btn-full"
+        data-client-id="{{.ClientID}}"
+        data-redirect-uri="{{.RedirectURI}}"
+        data-state="{{.State}}"
+        data-code-challenge="{{.CodeChallenge}}">Sign in with passkey</button>
 </div>
+<script src="/static/webauthn.js"></script>
+<script src="/static/passkey-login.js"></script>
 {{end}}

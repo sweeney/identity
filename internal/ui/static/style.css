@@ -159,3 +159,14 @@ article, .card {
 .mt-0 { margin-top: 0; }
 .mb-0 { margin-bottom: 0; }
 .nowrap { white-space: nowrap; }
+
+/* Passkey login */
+.login-box { max-width: 420px; margin: 4rem auto; }
+.passkey-hidden { display: none; }
+.passkey-divider { text-align: center; margin: 1.5rem 0 1rem; color: var(--text-muted); font-size: 0.85rem; }
+.passkey-divider-line { display: inline-block; border-top: 1px solid var(--border); width: 30%; vertical-align: middle; }
+.passkey-divider-text { padding: 0 0.75rem; }
+.passkey-btn-full { width: 100%; }
+.passkey-prompt-input { margin-bottom: 1rem; }
+#skip-section { margin-top: 1.5rem; }
+#register-status { margin-top: 0.5rem; font-size: 0.9rem; }

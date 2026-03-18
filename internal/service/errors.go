@@ -11,6 +11,13 @@ var (
 	ErrWeakPassword          = errors.New("password too weak")
 	ErrCannotDeleteLastAdmin = errors.New("cannot delete last admin")
 
+	// WebAuthn errors
+	ErrWebAuthnNotEnabled     = errors.New("webauthn not enabled")
+	ErrWebAuthnInvalidChallenge = errors.New("webauthn invalid challenge")
+	ErrWebAuthnVerificationFailed = errors.New("webauthn verification failed")
+	ErrWebAuthnNoCredentials  = errors.New("webauthn no credentials")
+	ErrWebAuthnCredentialNotFound = errors.New("webauthn credential not found")
+
 	// OAuth errors
 	ErrUnknownClient          = errors.New("unknown client")
 	ErrInvalidRedirectURI     = errors.New("invalid redirect uri")
