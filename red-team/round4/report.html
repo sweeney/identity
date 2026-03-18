@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Red Team Report — Round 4 (Final) — id.swee.net</title>
+<style>
+  :root {
+    --bg: #0a0a0f; --bg2: #12121a; --bg3: #1a1a26; --border: #2a2a3a;
+    --text: #c8c8d4; --text-dim: #6a6a7a; --accent: #7b68ee;
+    --red: #ff4757; --orange: #ffa502; --yellow: #eccc68;
+    --green: #2ed573; --cyan: #70a1ff;
+    --mono: 'SF Mono','Fira Code','JetBrains Mono','Cascadia Code',Consolas,monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { font-family: var(--mono); font-size: 14px; line-height: 1.7; background: var(--bg); color: var(--text); max-width: 960px; margin: 0 auto; padding: 40px 24px 100px; }
+  h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; }
+  h1 { font-size: 22px; color: #fff; margin-bottom: 8px; }
+  h2 { font-size: 16px; color: var(--accent); margin-top: 48px; margin-bottom: 16px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  p { margin-bottom: 12px; }
+  .subtitle { color: var(--text-dim); margin-bottom: 24px; }
+  .meta { color: var(--text-dim); font-size: 12px; margin-bottom: 32px; }
+  .meta span { margin-right: 20px; }
+  .sev { display: inline-block; padding: 1px 8px; border-radius: 3px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+  .sev-low { background: rgba(236,204,104,0.12); color: var(--yellow); border: 1px solid rgba(236,204,104,0.3); }
+  .sev-info { background: rgba(112,161,255,0.1); color: var(--cyan); border: 1px solid rgba(112,161,255,0.2); }
+  .fixed { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; background: rgba(46,213,115,0.08); color: var(--green); border: 1px solid rgba(46,213,115,0.2); margin-left: 6px; }
+  .pass-badge { display: inline-block; padding: 4px 16px; border-radius: 4px; font-size: 14px; font-weight: 700; letter-spacing: 0.05em; background: rgba(46,213,115,0.12); color: var(--green); border: 2px solid rgba(46,213,115,0.3); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 12.5px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.1em; }
+  tr:hover td { background: rgba(123,104,238,0.04); }
+  .finding { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 20px 24px; margin: 16px 0 24px; }
+  .finding-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .finding-title { color: #fff; font-weight: 600; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .good-list { list-style: none; padding: 0; }
+  .good-list li { padding: 4px 0; }
+  .good-list li::before { content: "[+] "; color: var(--green); font-weight: 700; }
+  .chart { display: flex; gap: 24px; margin: 16px 0 24px; flex-wrap: wrap; }
+  .chart-bar { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .chart-val { font-size: 28px; font-weight: 700; color: #fff; }
+  .chart-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; }
+  .chart-sub { font-size: 10px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<h1>// RED TEAM REPORT &mdash; ROUND 4 (FINAL)</h1>
+<p class="subtitle">id.swee.net &mdash; Identity &amp; Auth Server</p>
+<div class="meta">
+  <span>target: https://id.swee.net/</span>
+  <span>source: github.com/sweeney/identity</span><br>
+  <span>date: 2026-03-18</span>
+  <span>stack: Go / SQLite / OAuth 2.0+PKCE / JWT / Cloudflare</span>
+</div>
+
+<div style="text-align: center; margin: 32px 0;">
+  <span class="pass-badge">ASSESSMENT: PASS</span>
+  <p style="color: var(--text-dim); font-size: 12px; margin-top: 12px;">
+    0 HIGH &bull; 0 MEDIUM &bull; All previous findings resolved
+  </p>
+</div>
+
+<h2>// Round 3 Fix Verification</h2>
+
+<table>
+  <tr><th>#</th><th>R3 Finding</th><th>Status</th></tr>
+  <tr><td>1</td><td>Rate limiter bypass (dual ExtractClientIP)</td><td><span class="fixed">FIXED</span> code + live</td></tr>
+  <tr><td>2</td><td>POST /oauth/authorize missing strict rate limit</td><td><span class="fixed">FIXED</span> code + live</td></tr>
+  <tr><td>3</td><td>OAuth client edit not covered by re-auth</td><td><span class="fixed">FIXED</span> code</td></tr>
+  <tr><td>4</td><td>Visitor map unbounded</td><td><span class="fixed">FIXED</span> capped at 100k</td></tr>
+  <tr><td>5</td><td>RATE_LIMIT_DISABLED no prod guard</td><td><span class="fixed">FIXED</span> overridden in prod</td></tr>
+  <tr><td>6</td><td>RotateToken test sequential</td><td><span class="fixed">FIXED</span> 10-goroutine concurrent test</td></tr>
+</table>
+
+<h2>// Live Server Verification</h2>
+
+<table>
+  <tr><th>Check</th><th>Result</th></tr>
+  <tr><td>Rate limit /api/v1/auth/login</td><td><span class="fixed">WORKING</span> 429 after 5 requests</td></tr>
+  <tr><td>Rate limit POST /oauth/authorize</td><td><span class="fixed">WORKING</span> same threshold as login</td></tr>
+  <tr><td>Rate limit POST /admin/login</td><td><span class="fixed">WORKING</span> unified bucket</td></tr>
+  <tr><td>Proxy header bypass (XFF, X-Real-IP, etc.)</td><td><span class="fixed">NOT EXPLOITABLE</span></td></tr>
+  <tr><td>CF-Connecting-IP spoofing</td><td><span class="fixed">BLOCKED</span> Cloudflare 403</td></tr>
+  <tr><td>CORS</td><td><span class="fixed">CORRECT</span> no reflection</td></tr>
+  <tr><td>Error messages</td><td><span class="fixed">GENERIC</span> no enumeration</td></tr>
+  <tr><td>CSP</td><td><span class="fixed">STRONG</span> form-action 'self'</td></tr>
+  <tr><td>Security headers</td><td><span class="fixed">ALL PRESENT</span></td></tr>
+</table>
+
+<h2>// Remaining Observations</h2>
+
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">HSTS max-age 30 days live</span>
+  </div>
+  <p>Code shows <code>max-age=63072000</code> but live server returns <code>max-age=2592000</code>.
+    Likely deployment lag or Cloudflare override. Not a code bug. Missing
+    <code>includeSubDomains</code> and <code>preload</code>.</p>
+</div>
+
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-info">INFO</span>
+    <span class="finding-title">Hardening suggestions (not exploitable)</span>
+  </div>
+  <table>
+    <tr><td>No <code>Permissions-Policy</code> header</td><td>Defense-in-depth</td></tr>
+    <tr><td>No <code>Cache-Control: no-store</code> on auth pages</td><td>Browser may cache login forms</td></tr>
+  </table>
+</div>
+
+<h2>// Trajectory Across All Rounds</h2>
+
+<div class="chart">
+  <div class="chart-bar">
+    <div class="chart-val">13</div>
+    <div class="chart-label">Round 1</div>
+    <div class="chart-sub">1 HIGH</div>
+  </div>
+  <div class="chart-bar" style="color: var(--text-dim); font-size: 24px; padding-top: 8px;">&rarr;</div>
+  <div class="chart-bar">
+    <div class="chart-val">15</div>
+    <div class="chart-label">Round 2</div>
+    <div class="chart-sub">1 HIGH</div>
+  </div>
+  <div class="chart-bar" style="color: var(--text-dim); font-size: 24px; padding-top: 8px;">&rarr;</div>
+  <div class="chart-bar">
+    <div class="chart-val">6</div>
+    <div class="chart-label">Round 3</div>
+    <div class="chart-sub">1 HIGH</div>
+  </div>
+  <div class="chart-bar" style="color: var(--text-dim); font-size: 24px; padding-top: 8px;">&rarr;</div>
+  <div class="chart-bar">
+    <div class="chart-val" style="color: var(--green);">3</div>
+    <div class="chart-label">Round 4</div>
+    <div class="chart-sub" style="color: var(--green);">0 HIGH</div>
+  </div>
+</div>
+
+<h2>// What's Solid</h2>
+
+<ul class="good-list">
+  <li><strong>No SQL injection</strong> &mdash; parameterized queries throughout</li>
+  <li><strong>No XSS</strong> &mdash; Go template auto-escaping, strong CSP</li>
+  <li><strong>No CORS abuse</strong> &mdash; proper allowlist, no origin reflection</li>
+  <li><strong>PKCE enforced</strong> &mdash; S256 required, no downgrade</li>
+  <li><strong>Token rotation</strong> &mdash; atomic TOCTOU-safe transaction, concurrent test coverage</li>
+  <li><strong>Theft detection</strong> &mdash; family-based revocation working correctly</li>
+  <li><strong>Rate limiting</strong> &mdash; per-IP, strict on all credential endpoints, proxy-header-resistant, bounded map</li>
+  <li><strong>Admin re-auth</strong> &mdash; password required for delete, role change, deactivation, OAuth client edit</li>
+  <li><strong>CSRF</strong> &mdash; HMAC tokens on all state-changing endpoints, constant-time comparison</li>
+  <li><strong>Session security</strong> &mdash; HttpOnly, Secure, SameSite=Strict, 2-hour TTL</li>
+  <li><strong>Audit logging</strong> &mdash; comprehensive, including OAuth client CRUD</li>
+  <li><strong>DB permissions</strong> &mdash; umask(0077) before creation</li>
+  <li><strong>Secret management</strong> &mdash; no journal logging, file-based initial password, rotation supported</li>
+  <li><strong>IP extraction</strong> &mdash; single shared function, respects TRUST_PROXY config</li>
+  <li><strong>Production guards</strong> &mdash; RATE_LIMIT_DISABLED overridden in production</li>
+</ul>
+
+<hr>
+<p class="meta" style="margin-top: 32px;">
+  Generated by Red Team &bull; Round 4 (Final) &bull; 2026-03-18
+</p>
+
+</body>
+</html>
