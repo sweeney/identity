@@ -35,6 +35,10 @@
         <input type="checkbox" name="is_active" value="1" {{if .User.IsActive}}checked{{end}}>
         Active
     </label>
+    <label>
+        Your admin password <small>(required when changing role or active status)</small>
+        <input type="password" name="admin_password">
+    </label>
     {{end}}
     <div class="flex-row">
         <button type="submit">{{if .User}}Save Changes{{else}}Create User{{end}}</button>

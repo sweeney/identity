@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Red Team Report — Round 2 — id.swee.net</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --bg2: #12121a;
+    --bg3: #1a1a26;
+    --border: #2a2a3a;
+    --text: #c8c8d4;
+    --text-dim: #6a6a7a;
+    --accent: #7b68ee;
+    --red: #ff4757;
+    --orange: #ffa502;
+    --yellow: #eccc68;
+    --green: #2ed573;
+    --cyan: #70a1ff;
+    --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.7;
+    background: var(--bg);
+    color: var(--text);
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 24px 100px;
+  }
+  h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; }
+  h1 { font-size: 22px; color: #fff; margin-bottom: 8px; }
+  h2 {
+    font-size: 16px;
+    color: var(--accent);
+    margin-top: 48px;
+    margin-bottom: 16px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 14px; color: #fff; margin: 24px 0 8px; }
+  p { margin-bottom: 12px; }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .subtitle { color: var(--text-dim); margin-bottom: 24px; }
+  .meta { color: var(--text-dim); font-size: 12px; margin-bottom: 32px; }
+  .meta span { margin-right: 20px; }
+
+  .sev {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .sev-high { background: rgba(255,71,87,0.15); color: var(--red); border: 1px solid rgba(255,71,87,0.3); }
+  .sev-med  { background: rgba(255,165,2,0.12); color: var(--orange); border: 1px solid rgba(255,165,2,0.3); }
+  .sev-low  { background: rgba(236,204,104,0.12); color: var(--yellow); border: 1px solid rgba(236,204,104,0.3); }
+  .sev-info { background: rgba(112,161,255,0.1); color: var(--cyan); border: 1px solid rgba(112,161,255,0.2); }
+  .sev-good { background: rgba(46,213,115,0.1); color: var(--green); border: 1px solid rgba(46,213,115,0.2); }
+
+  .confirmed {
+    display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;
+    background: rgba(46,213,115,0.12); color: var(--green); border: 1px solid rgba(46,213,115,0.25); margin-left: 6px;
+  }
+  .code-only {
+    display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;
+    background: rgba(112,161,255,0.1); color: var(--cyan); border: 1px solid rgba(112,161,255,0.2); margin-left: 6px;
+  }
+  .fixed {
+    display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;
+    background: rgba(46,213,115,0.08); color: var(--green); border: 1px solid rgba(46,213,115,0.2); margin-left: 6px;
+  }
+  .unfixed {
+    display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;
+    background: rgba(255,71,87,0.1); color: var(--red); border: 1px solid rgba(255,71,87,0.25); margin-left: 6px;
+  }
+
+  pre {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    overflow-x: auto;
+    margin: 12px 0 20px;
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+  code { font-family: var(--mono); font-size: 12.5px; }
+  .code-comment { color: #5a5a6a; }
+  .code-keyword { color: var(--accent); }
+  .code-string { color: var(--green); }
+  .code-danger { color: var(--red); font-weight: 700; }
+  .code-highlight { background: rgba(255,71,87,0.08); display: block; margin: 0 -16px; padding: 0 16px; border-left: 3px solid var(--red); }
+
+  .ascii {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    overflow-x: auto;
+    margin: 12px 0 20px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-dim);
+    white-space: pre;
+  }
+  .ascii .attacker { color: var(--red); }
+  .ascii .victim { color: var(--cyan); }
+  .ascii .server { color: var(--green); }
+  .ascii .arrow { color: var(--yellow); }
+  .ascii .label { color: #fff; }
+  .ascii .data { color: var(--orange); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 20px;
+    font-size: 12.5px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    color: var(--text-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+  }
+  tr:hover td { background: rgba(123,104,238,0.04); }
+  td:first-child { white-space: nowrap; }
+
+  .finding {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 16px 0 24px;
+  }
+  .finding-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .finding-title { color: #fff; font-weight: 600; }
+  .finding .location {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+
+  .remediation {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    border-radius: 0 6px 6px 0;
+    padding: 16px 20px;
+    margin: 12px 0 20px;
+  }
+  .remediation h4 {
+    color: var(--green);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+  }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  .toc {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 24px;
+    margin: 20px 0 32px;
+  }
+  .toc-title { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
+  .toc ul { list-style: none; padding: 0; }
+  .toc li { padding: 3px 0; }
+
+  .good-list { list-style: none; padding: 0; }
+  .good-list li { padding: 4px 0; }
+  .good-list li::before { content: "[+] "; color: var(--green); font-weight: 700; }
+
+  .bad-list { list-style: none; padding: 0; }
+  .bad-list li { padding: 4px 0; }
+  .bad-list li::before { content: "[!] "; color: var(--red); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<h1>// RED TEAM REPORT &mdash; ROUND 2</h1>
+<p class="subtitle">id.swee.net &mdash; Identity &amp; Auth Server</p>
+
+<div class="meta">
+  <span>target: https://id.swee.net/</span>
+  <span>source: github.com/sweeney/identity</span><br>
+  <span>date: 2026-03-18</span>
+  <span>stack: Go / SQLite / OAuth 2.0+PKCE / JWT / Cloudflare</span><br>
+  <span>round 1 archive: archive/2026-03-18-round1/</span>
+</div>
+
+<!-- =========================================================== -->
+<h2>// Round 1 Remediation Status</h2>
+
+<table>
+  <tr><th>#</th><th>Round 1 Finding</th><th>Status</th></tr>
+  <tr><td>1</td><td>Wildcard CORS origin reflection</td><td><span class="fixed">FIXED</span></td></tr>
+  <tr><td>2</td><td>No rate limiting on auth endpoints</td><td><span class="unfixed">NOT FIXED</span></td></tr>
+  <tr><td>3</td><td>Timing-based username enumeration</td><td><span class="fixed">FIXED</span></td></tr>
+  <tr><td>4</td><td>Admin session not validated against user state</td><td><span class="fixed">FIXED</span></td></tr>
+  <tr><td>5</td><td>No CSRF on OAuth authorize POST</td><td><span class="fixed">FIXED</span></td></tr>
+  <tr><td>6</td><td>State parameter not URL-encoded</td><td><span class="fixed">FIXED</span></td></tr>
+  <tr><td>7</td><td>CSP allows unsafe-inline</td><td><span class="fixed">FIXED</span></td></tr>
+</table>
+
+<!-- =========================================================== -->
+<h2>// Vulnerability Summary</h2>
+
+<table>
+  <tr><th>#</th><th>Severity</th><th>Vulnerability</th><th>Source</th><th>PoC</th></tr>
+  <tr>
+    <td>1</td>
+    <td><span class="sev sev-high">HIGH</span></td>
+    <td>Refresh token rotation race condition (TOCTOU)</td>
+    <td><span class="code-only">Code</span></td>
+    <td>token-rotation-race.py</td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td><span class="sev sev-med">MEDIUM</span></td>
+    <td>No rate limiting &mdash; still absent</td>
+    <td><span class="confirmed">Live</span></td>
+    <td>(R1 PoC works)</td>
+  </tr>
+  <tr>
+    <td>3</td>
+    <td><span class="sev sev-med">MEDIUM</span></td>
+    <td>CF-Connecting-IP trusted unconditionally</td>
+    <td><span class="code-only">Code</span></td>
+    <td>ip-spoof.sh</td>
+  </tr>
+  <tr>
+    <td>4</td>
+    <td><span class="sev sev-med">MEDIUM</span></td>
+    <td>Auth code error oracle leaks code state</td>
+    <td><span class="code-only">Code</span> <span class="confirmed">Live</span></td>
+    <td>error-oracle.sh</td>
+  </tr>
+  <tr>
+    <td>5</td>
+    <td><span class="sev sev-med">MEDIUM</span></td>
+    <td>Admin password logged to systemd journal</td>
+    <td><span class="code-only">Code</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td>6</td>
+    <td><span class="sev sev-med">MEDIUM</span></td>
+    <td>No re-auth for destructive admin operations</td>
+    <td><span class="code-only">Code</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td>7</td>
+    <td><span class="sev sev-med">MEDIUM</span></td>
+    <td>OAuth client deletion not audit-logged</td>
+    <td><span class="code-only">Code</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td>8</td>
+    <td><span class="sev sev-low">LOW-MED</span></td>
+    <td>Rotate() comment/code mismatch (BEGIN IMMEDIATE)</td>
+    <td><span class="code-only">Code</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td>9</td>
+    <td><span class="sev sev-low">LOW-MED</span></td>
+    <td>DB file permissions race on startup</td>
+    <td><span class="code-only">Code</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td>10</td>
+    <td><span class="sev sev-low">LOW-MED</span></td>
+    <td>HSTS max-age 30 days, no includeSubDomains/preload</td>
+    <td><span class="confirmed">Live</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td>11</td>
+    <td><span class="sev sev-low">LOW</span></td>
+    <td>8-hour admin session TTL</td>
+    <td><span class="code-only">Code</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td>12</td>
+    <td><span class="sev sev-low">LOW</span></td>
+    <td>No form-action directive in CSP</td>
+    <td><span class="confirmed">Live</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td>13</td>
+    <td><span class="sev sev-low">LOW</span></td>
+    <td>Deterministic CSRF token (HMAC of session)</td>
+    <td><span class="code-only">Code</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td>14</td>
+    <td><span class="sev sev-low">LOW</span></td>
+    <td>Access tokens valid after logout (15 min)</td>
+    <td><span class="code-only">Code</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td>15</td>
+    <td><span class="sev sev-info">INFO</span></td>
+    <td>Auth code TOCTOU (mitigated by MarkUsed WHERE)</td>
+    <td><span class="code-only">Code</span></td>
+    <td>authcode-race.py</td>
+  </tr>
+</table>
+
+<!-- =========================================================== -->
+<h2>// Detailed Findings</h2>
+
+<!-- Finding 1 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-high">HIGH</span>
+    <span class="finding-title">1. Refresh Token Rotation Race Condition (TOCTOU)</span>
+    <span class="code-only">Code</span>
+  </div>
+  <div class="location">
+    internal/service/auth_service.go:150-192 &bull;
+    internal/store/token_store.go:57-91
+  </div>
+
+  <p>The <code>Refresh()</code> function reads the token via <code>GetByHash()</code> and checks
+    <code>tok.IsRevoked</code> <strong>outside</strong> of any transaction. It then calls
+    <code>issueTokens()</code> &rarr; <code>Rotate()</code> which starts its own transaction.
+    Two concurrent requests can both read the token as not-revoked before either begins its write transaction.</p>
+
+  <div class="ascii"><span class="label">Race Timeline:</span>
+
+  <span class="victim">Goroutine A</span>: GetByHash(hash) <span class="arrow">&rarr;</span> tok.IsRevoked == false  <span class="code-comment">[releases DB conn]</span>
+  <span class="attacker">Goroutine B</span>: GetByHash(hash) <span class="arrow">&rarr;</span> tok.IsRevoked == false  <span class="code-comment">[releases DB conn]</span>
+  <span class="victim">Goroutine A</span>: Rotate(old, newA) <span class="arrow">&rarr;</span> <span class="server">UPDATE is_revoked=1, INSERT newA, COMMIT</span>
+  <span class="attacker">Goroutine B</span>: Rotate(old, newB) <span class="arrow">&rarr;</span> <span class="data">UPDATE is_revoked=1 (no-op), INSERT newB, COMMIT</span>
+
+  <span class="label">Result:</span> <span class="code-danger">TWO valid refresh tokens from the same parent</span>
+  <span class="label">        Theft detection is defeated &mdash; neither token triggers family compromise</span></div>
+
+  <p>Despite <code>SetMaxOpenConns(1)</code> serializing SQL calls, Go goroutines interleave between
+    SQL operations. The <code>Rotate()</code> transaction only protects the revoke+insert pair,
+    not the preceding read+validate.</p>
+
+  <p><strong>Compounding factor:</strong> The comment on line 56 of <code>token_store.go</code> claims
+    "BEGIN IMMEDIATE transaction" but the code uses plain <code>Begin()</code> which is
+    <code>DEFERRED</code> in SQLite.</p>
+
+<pre><span class="code-comment">// auth_service.go:150-192 — Refresh()</span>
+<span class="code-keyword">func</span> (s *AuthService) Refresh(rawRefreshToken <span class="code-keyword">string</span>) (*LoginResult, <span class="code-keyword">error</span>) {
+    tokenHash := HashToken(rawRefreshToken)
+
+<span class="code-highlight">    tok, err := s.tokens.GetByHash(tokenHash)   <span class="code-comment">// READ — outside any transaction</span></span>
+    <span class="code-comment">// ...</span>
+<span class="code-highlight">    <span class="code-keyword">if</span> tok.IsRevoked {                           <span class="code-comment">// CHECK — stale by race time</span></span>
+        <span class="code-keyword">return</span> <span class="code-keyword">nil</span>, ErrTokenFamilyCompromised
+    }
+    <span class="code-comment">// ... validate expiry, user active ...</span>
+
+<span class="code-highlight">    <span class="code-keyword">return</span> s.issueTokens(user, loginArgs{        <span class="code-comment">// WRITE — Rotate() starts its own tx</span></span>
+        oldTokenID: tok.ID,
+        familyID:   tok.FamilyID,
+    })
+}</pre>
+
+<pre><span class="code-comment">// token_store.go:56-58 — Rotate()</span>
+<span class="code-comment">// Rotate atomically revokes oldTokenID and inserts newToken within a single</span>
+<span class="code-comment">// BEGIN IMMEDIATE transaction to prevent concurrent refresh races.</span>
+<span class="code-keyword">func</span> (s *TokenStore) Rotate(oldTokenID <span class="code-keyword">string</span>, newToken *domain.RefreshToken) <span class="code-keyword">error</span> {
+<span class="code-highlight">    tx, err := s.db.DB().Begin()  <span class="code-comment">// ← plain Begin(), NOT BEGIN IMMEDIATE</span></span></pre>
+
+  <p><strong>Impact:</strong> An attacker who intercepts a refresh token can race the legitimate
+    user's refresh request. If both succeed, the attacker has their own valid token chain
+    that won't trigger <code>token_family_compromised</code> when used.</p>
+
+  <div class="remediation">
+    <h4>Recommended Fix</h4>
+    <p>Move the <code>GetByHash</code> + <code>IsRevoked</code> check into the <code>Rotate</code>
+      transaction so the entire read-validate-rotate sequence is atomic. Also change
+      <code>Begin()</code> to <code>BEGIN IMMEDIATE</code> to match the documented intent.</p>
+  </div>
+</div>
+
+<!-- Finding 2 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-med">MEDIUM</span>
+    <span class="finding-title">2. No Rate Limiting — Still Present</span>
+    <span class="confirmed">Live</span>
+  </div>
+  <div class="location">All routers &mdash; no rate limiting middleware exists</div>
+
+  <p>Confirmed live: 8 rapid sequential POST requests to <code>/api/v1/auth/login</code> all
+    returned HTTP 401 with no 429, no <code>Retry-After</code>, no <code>X-RateLimit-*</code>
+    headers, no delay escalation.</p>
+
+  <p>This was finding #2 in Round 1. It remains unfixed.</p>
+
+  <div class="remediation">
+    <h4>Recommended Fix</h4>
+    <p>Add per-IP rate limiting middleware, especially on <code>/api/v1/auth/login</code>,
+      <code>/admin/login</code>, <code>/oauth/authorize</code>, and <code>/oauth/token</code>.
+      Return 429 with <code>Retry-After</code> header after threshold.</p>
+  </div>
+</div>
+
+<!-- Finding 3 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-med">MEDIUM</span>
+    <span class="finding-title">3. CF-Connecting-IP Trusted Unconditionally</span>
+    <span class="code-only">Code</span>
+  </div>
+  <div class="location">
+    internal/handler/api/auth.go:142-145 &bull;
+    internal/handler/oauth/handler.go:264-267 &bull;
+    internal/handler/admin/handler.go:213-220
+  </div>
+
+  <p>All three <code>extractClientIP</code> functions blindly trust the
+    <code>CF-Connecting-IP</code> header:</p>
+
+<pre><span class="code-keyword">func</span> extractClientIP(r *http.Request) <span class="code-keyword">string</span> {
+<span class="code-highlight">    <span class="code-keyword">if</span> cf := r.Header.Get(<span class="code-string">"CF-Connecting-IP"</span>); cf != <span class="code-string">""</span> {</span>
+<span class="code-highlight">        <span class="code-keyword">return</span> cf</span>
+    }
+    host, _, _ := net.SplitHostPort(r.RemoteAddr)
+    <span class="code-keyword">return</span> host
+}</pre>
+
+  <p><strong>Impact:</strong> If the server is ever reachable directly (bypassing Cloudflare Tunnel),
+    an attacker can forge all audit log IP addresses. Even with Cloudflare in place, the code
+    has no verification that the request actually traversed Cloudflare.</p>
+
+  <p>Through the current Cloudflare Tunnel deployment, CF overwrites this header with the real
+    client IP, providing partial protection. But the trust model is fragile.</p>
+
+  <div class="remediation">
+    <h4>Recommended Fix</h4>
+    <p>Only trust <code>CF-Connecting-IP</code> when a config flag confirms Cloudflare is in the
+      request path. Validate against Cloudflare's published IP ranges, or rely on
+      <code>RemoteAddr</code> as the default.</p>
+  </div>
+</div>
+
+<!-- Finding 4 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-med">MEDIUM</span>
+    <span class="finding-title">4. Auth Code Error Oracle</span>
+    <span class="code-only">Code</span> <span class="confirmed">Live</span>
+  </div>
+  <div class="location">internal/handler/oauth/handler.go:186-193</div>
+
+  <p>The <code>/oauth/token</code> endpoint returns distinct error messages that allow an attacker
+    to determine auth code state:</p>
+
+  <table>
+    <tr><th>Code State</th><th>error_description</th></tr>
+    <tr><td>Never existed</td><td>"The authorization code is invalid."</td></tr>
+    <tr><td>Already used</td><td>"The authorization code has already been used."</td></tr>
+    <tr><td>Expired</td><td>"The authorization code has expired."</td></tr>
+  </table>
+
+  <p><strong>Impact:</strong> Attacker can determine whether a code was ever valid, detect
+    if a race attack succeeded, and infer timing of code issuance.</p>
+
+  <div class="remediation">
+    <h4>Recommended Fix</h4>
+    <p>Return a single generic message for all auth code failures:
+      <code>"The authorization code is invalid or has expired."</code></p>
+  </div>
+</div>
+
+<!-- Finding 5 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-med">MEDIUM</span>
+    <span class="finding-title">5. Admin Password Logged to systemd Journal</span>
+    <span class="code-only">Code</span>
+  </div>
+  <div class="location">cmd/server/seed.go:48-56 &bull; deploy/install.sh:97</div>
+
+  <p>On first run without explicit credentials, the auto-generated admin password is
+    printed to stdout via <code>log.Printf</code>:</p>
+
+<pre><span class="code-highlight">log.Printf(<span class="code-string">"  Password: %s"</span>, password)  <span class="code-comment">// persists in journald</span></span></pre>
+
+  <p>The install script tells operators to retrieve it via
+    <code>sudo journalctl -u identity | grep Password</code>. The password persists in the
+    journal with default retention, accessible to any user with journal read access.</p>
+
+  <div class="remediation">
+    <h4>Recommended Fix</h4>
+    <p>Write the initial password to a temporary file with 0600 permissions, or require
+      setting it via environment variable. Delete the file after first admin login.</p>
+  </div>
+</div>
+
+<!-- Finding 6 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-med">MEDIUM</span>
+    <span class="finding-title">6. No Re-authentication for Destructive Admin Operations</span>
+    <span class="code-only">Code</span>
+  </div>
+  <div class="location">internal/handler/admin/handler.go (multiple handlers)</div>
+
+  <p>An admin session (8-hour JWT cookie) grants unrestricted access to all destructive
+    operations without requiring password re-entry:</p>
+
+  <ul class="bad-list">
+    <li>Delete any user (including other admins)</li>
+    <li>Delete any OAuth client</li>
+    <li>Modify user roles and active status</li>
+    <li>Trigger database backups</li>
+  </ul>
+
+  <p><strong>Impact:</strong> A stolen admin session cookie (XSS, network sniffing, physical access)
+    gives an attacker 8 hours of full administrative control.</p>
+
+  <div class="remediation">
+    <h4>Recommended Fix</h4>
+    <p>Require password confirmation for: user deletion, role changes, OAuth client deletion,
+      and any operation that could lock out other admins.</p>
+  </div>
+</div>
+
+<!-- Finding 7 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-med">MEDIUM</span>
+    <span class="finding-title">7. OAuth Client Deletion Not Audit-Logged</span>
+    <span class="code-only">Code</span>
+  </div>
+  <div class="location">internal/handler/admin/handler.go:560-568</div>
+
+  <p>When deleting an OAuth client, no audit event is recorded. Compare to user deletion
+    which calls <code>h.userSvc.Delete(id, h.auditMeta(r))</code>. A compromised admin
+    could delete OAuth clients &mdash; breaking downstream applications &mdash; without
+    leaving any trace in the audit log.</p>
+
+<pre><span class="code-keyword">func</span> (h *adminHandler) oauthDeletePost(w http.ResponseWriter, r *http.Request) {
+    id := r.PathValue(<span class="code-string">"id"</span>)
+<span class="code-highlight">    <span class="code-comment">// No audit event recorded</span></span>
+    <span class="code-keyword">if</span> err := h.oauthClients.Delete(id); err != <span class="code-keyword">nil</span> { ... }
+    http.Redirect(w, r, <span class="code-string">"/admin/oauth"</span>, http.StatusSeeOther)
+}</pre>
+
+  <div class="remediation">
+    <h4>Recommended Fix</h4>
+    <p>Add an audit event before the redirect:
+      <code>h.recordEvent(domain.EventOAuthClientDeleted, ...)</code></p>
+  </div>
+</div>
+
+<!-- Finding 8-10 LOW-MED -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW-MED</span>
+    <span class="finding-title">8&ndash;10. Infrastructure Gaps</span>
+  </div>
+
+  <table>
+    <tr><th>#</th><th>Finding</th><th>Location</th></tr>
+    <tr>
+      <td>8</td>
+      <td><strong>Rotate() comment/code mismatch</strong> &mdash; comment says BEGIN IMMEDIATE,
+        code uses plain Begin() (DEFERRED)</td>
+      <td>token_store.go:56-58</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td><strong>DB file permissions race</strong> &mdash; database created with 0644 umask,
+        chmod to 0600 happens after migrations have written sensitive data</td>
+      <td>db/db.go:23-49</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><strong>HSTS still weak</strong> &mdash; max-age=2592000 (30 days), missing
+        includeSubDomains and preload. Recommended: max-age=31536000</td>
+      <td>main.go (live confirmed)</td>
+    </tr>
+  </table>
+</div>
+
+<!-- Findings 11-14 LOW -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">11&ndash;14. Low-Severity Findings</span>
+  </div>
+
+  <table>
+    <tr><th>#</th><th>Finding</th><th>Location</th></tr>
+    <tr>
+      <td>11</td>
+      <td><strong>8-hour admin session TTL</strong> &mdash; excessive for security-critical
+        admin interface; 1&ndash;2 hours recommended</td>
+      <td>handler.go:44</td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td><strong>No form-action in CSP</strong> &mdash; forms could submit to external
+        origins; add <code>form-action 'self'</code></td>
+      <td>main.go:334</td>
+    </tr>
+    <tr>
+      <td>13</td>
+      <td><strong>Deterministic CSRF tokens</strong> &mdash; HMAC(session_secret+"csrf",
+        session_cookie) means a leaked session implies a leaked CSRF token</td>
+      <td>handler.go:159-166</td>
+    </tr>
+    <tr>
+      <td>14</td>
+      <td><strong>Access tokens valid after logout</strong> &mdash; JWT remains valid for up
+        to 15 minutes; no token revocation list</td>
+      <td>auth.go:108-121</td>
+    </tr>
+  </table>
+</div>
+
+<!-- Finding 15 INFO -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-info">INFO</span>
+    <span class="finding-title">15. Auth Code Exchange TOCTOU (Mitigated)</span>
+  </div>
+  <div class="location">
+    internal/service/oauth_service.go:104-139 &bull;
+    internal/store/oauth_code_store.go:51-64
+  </div>
+
+  <p>Same TOCTOU pattern as the refresh token race: <code>GetByHash</code> +
+    <code>UsedAt == nil</code> check outside transaction, then <code>MarkUsed</code> separately.
+    However, <code>MarkUsed</code> uses <code>WHERE used_at IS NULL</code> and checks
+    <code>RowsAffected</code>, so the second concurrent request correctly fails at the DB level.</p>
+
+  <p>This is a defence-in-depth success. The DB-level check catches the race. Documented here
+    because the pattern is fragile &mdash; removing the <code>RowsAffected</code> check would
+    reopen the vulnerability.</p>
+</div>
+
+<!-- =========================================================== -->
+<h2>// What's Improved Since Round 1</h2>
+
+<ul class="good-list">
+  <li><strong>CORS</strong> &mdash; proper allowlist replacing wildcard origin reflection</li>
+  <li><strong>CSP</strong> &mdash; removed unsafe-inline, added frame-ancestors 'none'</li>
+  <li><strong>Admin sessions</strong> &mdash; re-validate user existence, active status, and admin role on every request</li>
+  <li><strong>CSRF</strong> &mdash; added to OAuth authorize and all admin state-changing endpoints</li>
+  <li><strong>URL encoding</strong> &mdash; state parameter properly escaped with url.QueryEscape()</li>
+  <li><strong>Timing</strong> &mdash; dummy bcrypt hash at cost 12 closes the enumeration side-channel</li>
+  <li><strong>New tests</strong> &mdash; security_headers_test.go, admin_test.go, oauth handler_test.go</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2>// Exploit Files</h2>
+
+<pre>exploits/
+├── token-rotation-race.py   <span class="code-comment"># Async refresh token race condition PoC</span>
+├── authcode-race.py          <span class="code-comment"># Auth code exchange race attempt (mitigated)</span>
+├── ip-spoof.sh               <span class="code-comment"># CF-Connecting-IP audit log spoofing</span>
+└── error-oracle.sh           <span class="code-comment"># OAuth error message information leak</span></pre>
+
+<!-- =========================================================== -->
+<h2>// Recommended Priority</h2>
+
+<table>
+  <tr><th>Priority</th><th>Action</th><th>Effort</th></tr>
+  <tr>
+    <td>1</td>
+    <td><span class="sev sev-high">HIGH</span> Fix token rotation race &mdash; atomic read+validate+rotate</td>
+    <td>Medium</td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td><span class="sev sev-med">MED</span> Add rate limiting (still unfixed from R1)</td>
+    <td>Medium</td>
+  </tr>
+  <tr>
+    <td>3</td>
+    <td><span class="sev sev-med">MED</span> Validate CF-Connecting-IP source</td>
+    <td>Low</td>
+  </tr>
+  <tr>
+    <td>4</td>
+    <td><span class="sev sev-med">MED</span> Unify auth code error messages</td>
+    <td>Low</td>
+  </tr>
+  <tr>
+    <td>5</td>
+    <td><span class="sev sev-med">MED</span> Stop logging admin password to journal</td>
+    <td>Low</td>
+  </tr>
+  <tr>
+    <td>6</td>
+    <td><span class="sev sev-med">MED</span> Re-auth for destructive admin ops</td>
+    <td>Medium</td>
+  </tr>
+  <tr>
+    <td>7</td>
+    <td><span class="sev sev-med">MED</span> Audit-log OAuth client deletion</td>
+    <td>Low</td>
+  </tr>
+  <tr>
+    <td>8</td>
+    <td><span class="sev sev-low">LOW</span> Fix Rotate() to use BEGIN IMMEDIATE</td>
+    <td>Low</td>
+  </tr>
+  <tr>
+    <td>9</td>
+    <td><span class="sev sev-low">LOW</span> Fix DB permissions race on startup</td>
+    <td>Low</td>
+  </tr>
+  <tr>
+    <td>10</td>
+    <td><span class="sev sev-low">LOW</span> Increase HSTS max-age to 1 year + preload</td>
+    <td>Low</td>
+  </tr>
+</table>
+
+<hr>
+<p class="meta" style="margin-top: 32px;">
+  Generated by Red Team &bull; Round 2 &bull; 2026-03-18
+</p>
+
+</body>
+</html>

@@ -93,7 +93,7 @@ func TestListUsers_AdminSuccess(t *testing.T) {
 	users := []*domain.User{sampleUser("1"), sampleUser("2")}
 	userSvc.EXPECT().List().Return(users, nil)
 
-	h := api.NewRouter(issuer, nil, userSvc)
+	h := api.NewRouter(issuer, nil, userSvc, "")
 	rr := authGet(t, h, "/api/v1/users", adminToken(t, issuer))
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -104,13 +104,13 @@ func TestListUsers_AdminSuccess(t *testing.T) {
 
 func TestListUsers_NonAdminForbidden(t *testing.T) {
 	issuer := newTestIssuer(t)
-	h := api.NewRouter(issuer, nil, nil)
+	h := api.NewRouter(issuer, nil, nil, "")
 	rr := authGet(t, h, "/api/v1/users", userToken(t, issuer, "u1"))
 	assert.Equal(t, http.StatusForbidden, rr.Code)
 }
 
 func TestListUsers_Unauthenticated(t *testing.T) {
-	h := api.NewRouter(newTestIssuer(t), nil, nil)
+	h := api.NewRouter(newTestIssuer(t), nil, nil, "")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -127,7 +127,7 @@ func TestCreateUser_AdminSuccess(t *testing.T) {
 	created := sampleUser("new-1")
 	userSvc.EXPECT().Create("newuser", "New User", "strongpassword1", domain.RoleUser, gomock.Any()).Return(created, nil)
 
-	h := api.NewRouter(issuer, nil, userSvc)
+	h := api.NewRouter(issuer, nil, userSvc, "")
 	rr := postJSONAuth(t, h, "/api/v1/users", map[string]string{
 		"username":     "newuser",
 		"display_name": "New User",
@@ -145,7 +145,7 @@ func TestCreateUser_DuplicateUsername(t *testing.T) {
 
 	userSvc.EXPECT().Create(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrConflict)
 
-	h := api.NewRouter(issuer, nil, userSvc)
+	h := api.NewRouter(issuer, nil, userSvc, "")
 	rr := postJSONAuth(t, h, "/api/v1/users", map[string]string{
 		"username": "existing", "display_name": "Existing", "password": "strongpassword1", "role": "user",
 	}, adminToken(t, issuer))
@@ -163,7 +163,7 @@ func TestCreateUser_UserLimitReached(t *testing.T) {
 
 	userSvc.EXPECT().Create(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrUserLimitReached)
 
-	h := api.NewRouter(issuer, nil, userSvc)
+	h := api.NewRouter(issuer, nil, userSvc, "")
 	rr := postJSONAuth(t, h, "/api/v1/users", map[string]string{
 		"username": "u", "display_name": "U", "password": "strongpassword1", "role": "user",
 	}, adminToken(t, issuer))
@@ -183,7 +183,7 @@ func TestGetUser_AdminCanGetAnyUser(t *testing.T) {
 
 	userSvc.EXPECT().GetByID("u-999").Return(sampleUser("u-999"), nil)
 
-	h := api.NewRouter(issuer, nil, userSvc)
+	h := api.NewRouter(issuer, nil, userSvc, "")
 	rr := authGet(t, h, "/api/v1/users/u-999", adminToken(t, issuer))
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
@@ -195,14 +195,14 @@ func TestGetUser_UserCanGetSelf(t *testing.T) {
 
 	userSvc.EXPECT().GetByID("user-123").Return(sampleUser("user-123"), nil)
 
-	h := api.NewRouter(issuer, nil, userSvc)
+	h := api.NewRouter(issuer, nil, userSvc, "")
 	rr := authGet(t, h, "/api/v1/users/user-123", userToken(t, issuer, "user-123"))
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
 func TestGetUser_UserCannotGetOther(t *testing.T) {
 	issuer := newTestIssuer(t)
-	h := api.NewRouter(issuer, nil, nil)
+	h := api.NewRouter(issuer, nil, nil, "")
 	// user-123 tries to get user-456
 	rr := authGet(t, h, "/api/v1/users/user-456", userToken(t, issuer, "user-123"))
 	assert.Equal(t, http.StatusForbidden, rr.Code)
@@ -215,7 +215,7 @@ func TestGetUser_NotFound(t *testing.T) {
 
 	userSvc.EXPECT().GetByID("ghost").Return(nil, domain.ErrNotFound)
 
-	h := api.NewRouter(issuer, nil, userSvc)
+	h := api.NewRouter(issuer, nil, userSvc, "")
 	rr := authGet(t, h, "/api/v1/users/ghost", adminToken(t, issuer))
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
@@ -231,7 +231,7 @@ func TestUpdateUser_AdminSuccess(t *testing.T) {
 	updated.DisplayName = "Updated Name"
 	userSvc.EXPECT().Update("u-1", gomock.Any(), gomock.Any()).Return(updated, nil)
 
-	h := api.NewRouter(issuer, nil, userSvc)
+	h := api.NewRouter(issuer, nil, userSvc, "")
 	rr := putJSONAuth(t, h, "/api/v1/users/u-1", map[string]string{
 		"display_name": "Updated Name",
 	}, adminToken(t, issuer))
@@ -248,7 +248,7 @@ func TestDeleteUser_AdminSuccess(t *testing.T) {
 
 	userSvc.EXPECT().Delete("u-del", gomock.Any()).Return(nil)
 
-	h := api.NewRouter(issuer, nil, userSvc)
+	h := api.NewRouter(issuer, nil, userSvc, "")
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/u-del", nil)
 	req.Header.Set("Authorization", "Bearer "+adminToken(t, issuer))
 	rr := httptest.NewRecorder()
@@ -264,7 +264,7 @@ func TestDeleteUser_LastAdmin(t *testing.T) {
 
 	userSvc.EXPECT().Delete("admin-1", gomock.Any()).Return(service.ErrCannotDeleteLastAdmin)
 
-	h := api.NewRouter(issuer, nil, userSvc)
+	h := api.NewRouter(issuer, nil, userSvc, "")
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/admin-1", nil)
 	req.Header.Set("Authorization", "Bearer "+adminToken(t, issuer))
 	rr := httptest.NewRecorder()

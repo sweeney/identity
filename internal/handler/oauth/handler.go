@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
-	"net"
 	"net/http"
 	"net/url"
 
+	"github.com/sweeney/identity/internal/httputil"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/ui"
 )
@@ -29,8 +29,9 @@ func (ts *tmplSet) render(w http.ResponseWriter, page string, data any) error {
 }
 
 type oauthHandler struct {
-	svc  service.OAuthServicer
-	tmpl *tmplSet
+	svc        service.OAuthServicer
+	tmpl       *tmplSet
+	trustProxy string
 }
 
 func (h *oauthHandler) render(w http.ResponseWriter, page string, data any) {
@@ -122,7 +123,7 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawCode, err := h.svc.Authorize(clientID, redirectURI, username, password, codeChallenge, extractClientIP(r))
+	rawCode, err := h.svc.Authorize(clientID, redirectURI, username, password, codeChallenge, httputil.ExtractClientIP(r, h.trustProxy))
 	if err != nil {
 		// Re-render login form with error
 		errMsg := "Invalid username or password."
@@ -183,12 +184,10 @@ func (h *oauthHandler) tokenAuthCode(w http.ResponseWriter, r *http.Request) {
 	result, err := h.svc.ExchangeCode(clientID, code, redirectURI, codeVerifier)
 	if err != nil {
 		switch {
-		case errors.Is(err, service.ErrInvalidAuthCode):
-			oauthError(w, "invalid_grant", "The authorization code is invalid.")
-		case errors.Is(err, service.ErrAuthCodeAlreadyUsed):
-			oauthError(w, "invalid_grant", "The authorization code has already been used.")
-		case errors.Is(err, service.ErrAuthCodeExpired):
-			oauthError(w, "invalid_grant", "The authorization code has expired.")
+		case errors.Is(err, service.ErrInvalidAuthCode),
+			errors.Is(err, service.ErrAuthCodeAlreadyUsed),
+			errors.Is(err, service.ErrAuthCodeExpired):
+			oauthError(w, "invalid_grant", "The authorization code is invalid or has expired.")
 		case errors.Is(err, service.ErrPKCEVerificationFailed):
 			oauthError(w, "invalid_grant", "PKCE verification failed.")
 		case errors.Is(err, service.ErrAccountDisabled):
@@ -261,13 +260,3 @@ func jsonOK(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v) //nolint:errcheck
 }
 
-func extractClientIP(r *http.Request) string {
-	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" {
-		return cf
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"html/template"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
+	"github.com/sweeney/identity/internal/httputil"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/ui"
 )
@@ -41,7 +41,7 @@ func (ts *tmplSet) render(w http.ResponseWriter, page string, data any) error {
 }
 
 const sessionCookieName = "admin_session"
-const sessionTTL = 8 * time.Hour
+const sessionTTL = 2 * time.Hour
 
 type adminHandler struct {
 	cfg          Config
@@ -210,14 +210,7 @@ func (h *adminHandler) loginPost(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 
-	ip := r.Header.Get("CF-Connecting-IP")
-	if ip == "" {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		ip = host
-	}
+	ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
 
 	userID, err := h.authSvc.AuthorizeUser(username, password, ip)
 	if err != nil {
@@ -254,14 +247,7 @@ func (h *adminHandler) loginPost(w http.ResponseWriter, r *http.Request) {
 func (h *adminHandler) logout(w http.ResponseWriter, r *http.Request) {
 	username := h.sessionUsername(r)
 	h.clearSession(w)
-	ip := r.Header.Get("CF-Connecting-IP")
-	if ip == "" {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		ip = host
-	}
+	ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
 	h.recordAudit(domain.EventLogout, "", username, ip)
 	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 }
@@ -393,6 +379,26 @@ func (h *adminHandler) usersEditPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Require password re-authentication when role or active status changes.
+	roleChanging := input.Role != nil && *input.Role != user.Role
+	activeChanging := input.IsActive != nil && *input.IsActive != user.IsActive
+	if roleChanging || activeChanging {
+		if err := h.verifyAdminPassword(r); err != nil {
+			selectedRole := string(user.Role)
+			if input.Role != nil {
+				selectedRole = string(*input.Role)
+			}
+			h.render(w, r, "user_form.html", map[string]any{
+				"FormAction":        "/admin/users/" + id + "/edit",
+				"User":              user,
+				"SelectedRole":      selectedRole,
+				"MinPasswordLength": auth.MinPasswordLength,
+				"Error":             "Incorrect password. Password confirmation is required to change role or active status.",
+			})
+			return
+		}
+	}
+
 	_, err = h.userSvc.Update(id, input, h.auditMeta(r))
 	if err != nil {
 		h.render(w, r, "user_form.html", map[string]any{
@@ -421,6 +427,20 @@ func (h *adminHandler) usersDeleteGet(w http.ResponseWriter, r *http.Request) {
 
 func (h *adminHandler) usersDeletePost(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+
+	if err := h.verifyAdminPassword(r); err != nil {
+		user, lookupErr := h.userSvc.GetByID(id)
+		if lookupErr != nil {
+			http.NotFound(w, r)
+			return
+		}
+		h.render(w, r, "confirm_delete.html", map[string]any{
+			"User":  user,
+			"Error": "Incorrect password. Please try again.",
+		})
+		return
+	}
+
 	if err := h.userSvc.Delete(id, h.auditMeta(r)); err != nil {
 		log.Printf("admin ui error: %v", err)
 		http.Error(w, "An unexpected error occurred.", http.StatusInternalServerError)
@@ -493,6 +513,8 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	meta := h.auditMeta(r)
+	h.recordAuditWithDetail(domain.EventOAuthClientCreated, "", meta.ActorUsername, meta.IPAddress, "created OAuth client "+id)
 	http.Redirect(w, r, "/admin/oauth", http.StatusSeeOther)
 }
 
@@ -539,6 +561,8 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	meta := h.auditMeta(r)
+	h.recordAuditWithDetail(domain.EventOAuthClientUpdated, "", meta.ActorUsername, meta.IPAddress, "updated OAuth client "+id)
 	http.Redirect(w, r, "/admin/oauth", http.StatusSeeOther)
 }
 
@@ -559,11 +583,30 @@ func (h *adminHandler) oauthDeleteGet(w http.ResponseWriter, r *http.Request) {
 
 func (h *adminHandler) oauthDeletePost(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+
+	if err := h.verifyAdminPassword(r); err != nil {
+		client, lookupErr := h.oauthClients.GetByID(id)
+		if lookupErr != nil {
+			http.NotFound(w, r)
+			return
+		}
+		h.render(w, r, "confirm_delete.html", map[string]any{
+			"Client":     client,
+			"DeletePath": "/admin/oauth/" + id + "/delete",
+			"CancelPath": "/admin/oauth",
+			"ItemName":   "OAuth client " + client.Name,
+			"Error":      "Incorrect password. Please try again.",
+		})
+		return
+	}
+
 	if err := h.oauthClients.Delete(id); err != nil {
 		log.Printf("admin ui error: %v", err)
 		http.Error(w, "An unexpected error occurred.", http.StatusInternalServerError)
 		return
 	}
+	meta := h.auditMeta(r)
+	h.recordAuditWithDetail(domain.EventOAuthClientDeleted, "", meta.ActorUsername, meta.IPAddress, "deleted OAuth client "+id)
 	http.Redirect(w, r, "/admin/oauth", http.StatusSeeOther)
 }
 
@@ -698,18 +741,30 @@ func timeAgo(t time.Time) string {
 
 // auditMeta builds an AuditMeta from an admin request.
 func (h *adminHandler) auditMeta(r *http.Request) service.AuditMeta {
-	ip := r.Header.Get("CF-Connecting-IP")
-	if ip == "" {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		ip = host
-	}
+	ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
 	return service.AuditMeta{
 		ActorUsername: h.sessionUsername(r),
 		IPAddress:     ip,
 	}
+}
+
+// verifyAdminPassword validates the current admin's password from the request form field "admin_password".
+// It returns nil on success or an error if the password is missing or incorrect.
+func (h *adminHandler) verifyAdminPassword(r *http.Request) error {
+	password := r.FormValue("admin_password")
+	if password == "" {
+		return errors.New("password confirmation required")
+	}
+	username := h.sessionUsername(r)
+	if username == "" {
+		return errors.New("no active session")
+	}
+	ip := h.auditMeta(r).IPAddress
+	_, err := h.authSvc.AuthorizeUser(username, password, ip)
+	if err != nil {
+		return errors.New("incorrect password")
+	}
+	return nil
 }
 
 // Ensure *adminHandler satisfies compile-time checks.

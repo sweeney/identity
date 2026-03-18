@@ -72,7 +72,9 @@ RESP=$(curl -s -D- -o /dev/null -X POST "$BASE/admin/login" \
 check_contains "Login redirects" "303" "$RESP"
 COOKIE=$(echo "$RESP" | grep -i 'set-cookie' | head -1 | sed 's/.*admin_session=//;s/;.*//')
 check_contains "Session cookie set" "eyJ" "$COOKIE"
-check_contains "Cookie has Secure flag" "Secure" "$RESP"
+if [[ "$BASE" == https://* ]]; then
+  check_contains "Cookie has Secure flag" "Secure" "$RESP"
+fi
 
 # ── 3. CSRF protection ───────────────────────────────────────────────
 
@@ -317,7 +319,7 @@ echo ""
 echo "=== 15. Delete OAuth client ==="
 STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b "admin_session=$COOKIE" \
   -X POST "$BASE/admin/oauth/testapp/delete" \
-  -d "_csrf=$CSRF" \
+  -d "_csrf=$CSRF&admin_password=adminpassword1" \
   -H "Content-Type: application/x-www-form-urlencoded")
 check "Delete client = 303" "303" "$STATUS"
 BODY=$(curl -s -b "admin_session=$COOKIE" "$BASE/admin/oauth")

@@ -272,7 +272,7 @@ func TestAdminUsers_Delete_Success(t *testing.T) {
 	session := loginSession(t, handler)
 
 	csrf := csrfTokenFor(session.Value)
-	form := url.Values{"_csrf": {csrf}}
+	form := url.Values{"_csrf": {csrf}, "admin_password": {adminPass}}
 	req := httptest.NewRequest(http.MethodPost, "/admin/users/u-del/delete", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(session)
@@ -280,6 +280,50 @@ func TestAdminUsers_Delete_Success(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusSeeOther, rr.Code)
+}
+
+func TestAdminUsers_Delete_WrongPassword(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	userSvc.EXPECT().GetByID("u-del").Return(&domain.User{
+		ID: "u-del", Username: "victim", Role: domain.RoleUser, IsActive: true,
+	}, nil)
+
+	handler := newRouter(t, userSvc)
+	session := loginSession(t, handler)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{"_csrf": {csrf}, "admin_password": {"wrongpassword"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/u-del/delete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Incorrect password")
+}
+
+func TestAdminUsers_Delete_MissingPassword(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	userSvc.EXPECT().GetByID("u-del").Return(&domain.User{
+		ID: "u-del", Username: "victim", Role: domain.RoleUser, IsActive: true,
+	}, nil)
+
+	handler := newRouter(t, userSvc)
+	session := loginSession(t, handler)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{"_csrf": {csrf}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/u-del/delete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Incorrect password")
 }
 
 // --- Logout ---
@@ -306,7 +350,7 @@ func TestAdminLogout(t *testing.T) {
 // mintTestSession creates a session JWT matching how the admin handler mints sessions.
 func mintTestSession(username string) string {
 	claims := jwt.RegisteredClaims{
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(8 * time.Hour)),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(2 * time.Hour)),
 		Subject:   username,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -399,6 +443,241 @@ func TestAdminRequireSession_ClearsSessionOnFailure(t *testing.T) {
 		}
 	}
 	assert.True(t, sessionCleared, "admin_session cookie should be cleared (MaxAge=-1 or empty value)")
+}
+
+// --- OAuth Client Audit Logging ---
+
+// newRouterWithOAuth builds a router that exposes the OAuth client and audit mocks
+// so tests can set expectations and verify audit events.
+func newRouterWithOAuth(t *testing.T) (http.Handler, *mocks.MockOAuthClientRepository, *mocks.MockAuditRepository) {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	oauthClients := mocks.NewMockOAuthClientRepository(ctrl)
+	auditRepo := mocks.NewMockAuditRepository(ctrl)
+	auditRepo.EXPECT().List(gomock.Any()).Return(nil, nil).AnyTimes()
+
+	authSvc.EXPECT().AuthorizeUser(adminUser, adminPass, gomock.Any()).Return("admin-id", nil).AnyTimes()
+	authSvc.EXPECT().AuthorizeUser(gomock.Any(), gomock.Any(), gomock.Any()).Return("", service.ErrInvalidCredentials).AnyTimes()
+	userSvc.EXPECT().GetByID("admin-id").Return(&domain.User{
+		ID: "admin-id", Username: adminUser, Role: domain.RoleAdmin, IsActive: true,
+	}, nil).AnyTimes()
+	userSvc.EXPECT().GetByUsername(adminUser).Return(&domain.User{
+		ID: "admin-id", Username: adminUser, Role: domain.RoleAdmin, IsActive: true,
+	}, nil).AnyTimes()
+	// Allow login audit event
+	auditRepo.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
+
+	handler := admin.NewRouter(admin.Config{
+		SessionSecret: testSessionSecret,
+	}, authSvc, userSvc, oauthClients, auditRepo, nil)
+	return handler, oauthClients, auditRepo
+}
+
+func TestOAuthClientCreate_AuditLogged(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+
+	oauthClients.EXPECT().Create(gomock.Any()).Return(nil)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":         {csrf},
+		"id":            {"test-client"},
+		"name":          {"Test Client"},
+		"redirect_uris": {"https://example.com/callback"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+	assert.Equal(t, "/admin/oauth", rr.Header().Get("Location"))
+}
+
+func TestOAuthClientEdit_AuditLogged(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+
+	existingClient := &domain.OAuthClient{
+		ID:           "test-client",
+		Name:         "Old Name",
+		RedirectURIs: []string{"https://example.com/callback"},
+	}
+	oauthClients.EXPECT().GetByID("test-client").Return(existingClient, nil)
+	oauthClients.EXPECT().Update(gomock.Any()).Return(nil)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":         {csrf},
+		"name":          {"New Name"},
+		"redirect_uris": {"https://example.com/callback"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+	assert.Equal(t, "/admin/oauth", rr.Header().Get("Location"))
+}
+
+func TestOAuthClientDelete_AuditLogged(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+
+	oauthClients.EXPECT().Delete("test-client").Return(nil)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{"_csrf": {csrf}, "admin_password": {adminPass}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/delete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+	assert.Equal(t, "/admin/oauth", rr.Header().Get("Location"))
+}
+
+func TestOAuthClientDelete_WrongPassword(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+
+	oauthClients.EXPECT().GetByID("test-client").Return(&domain.OAuthClient{
+		ID: "test-client", Name: "Test Client", RedirectURIs: []string{"https://example.com/callback"},
+	}, nil)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{"_csrf": {csrf}, "admin_password": {"wrongpassword"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/delete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Incorrect password")
+}
+
+// --- Edit User Re-authentication ---
+
+func TestAdminUsers_Edit_RoleChange_RequiresPassword(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	// The handler calls GetByID to load the current user state
+	userSvc.EXPECT().GetByID("u-edit").Return(&domain.User{
+		ID: "u-edit", Username: "alice", Role: domain.RoleUser, IsActive: true,
+	}, nil)
+
+	handler := newRouter(t, userSvc)
+	session := loginSession(t, handler)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":     {csrf},
+		"role":      {"admin"}, // changing from user to admin
+		"is_active": {"1"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/u-edit/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	// Should re-render form with error because no admin_password provided
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Incorrect password")
+}
+
+func TestAdminUsers_Edit_RoleChange_WithPassword(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	userSvc.EXPECT().GetByID("u-edit").Return(&domain.User{
+		ID: "u-edit", Username: "alice", Role: domain.RoleUser, IsActive: true,
+	}, nil)
+	userSvc.EXPECT().Update("u-edit", gomock.Any(), gomock.Any()).Return(&domain.User{
+		ID: "u-edit", Username: "alice", Role: domain.RoleAdmin, IsActive: true,
+	}, nil)
+
+	handler := newRouter(t, userSvc)
+	session := loginSession(t, handler)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":          {csrf},
+		"role":           {"admin"},
+		"is_active":      {"1"},
+		"admin_password": {adminPass},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/u-edit/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+	assert.Equal(t, "/admin/users", rr.Header().Get("Location"))
+}
+
+func TestAdminUsers_Edit_DeactivateUser_RequiresPassword(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	userSvc.EXPECT().GetByID("u-edit").Return(&domain.User{
+		ID: "u-edit", Username: "alice", Role: domain.RoleUser, IsActive: true,
+	}, nil)
+
+	handler := newRouter(t, userSvc)
+	session := loginSession(t, handler)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf": {csrf},
+		"role":  {"user"},
+		// is_active not set => false, which is a change from true
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/u-edit/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Incorrect password")
+}
+
+func TestAdminUsers_Edit_DisplayNameOnly_NoPasswordRequired(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	userSvc.EXPECT().GetByID("u-edit").Return(&domain.User{
+		ID: "u-edit", Username: "alice", Role: domain.RoleUser, IsActive: true,
+	}, nil)
+	userSvc.EXPECT().Update("u-edit", gomock.Any(), gomock.Any()).Return(&domain.User{
+		ID: "u-edit", Username: "alice", DisplayName: "Alice Updated", Role: domain.RoleUser, IsActive: true,
+	}, nil)
+
+	handler := newRouter(t, userSvc)
+	session := loginSession(t, handler)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":        {csrf},
+		"display_name": {"Alice Updated"},
+		"role":         {"user"}, // same role
+		"is_active":    {"1"},    // same active status
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/u-edit/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+	assert.Equal(t, "/admin/users", rr.Header().Get("Location"))
 }
 
 // --- Backup Security ---

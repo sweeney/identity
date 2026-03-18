@@ -104,6 +104,141 @@ func TestTokenStore_Rotate_ReplacesOldWithNew(t *testing.T) {
 	assert.False(t, gotNew.IsRevoked)
 }
 
+func TestTokenStore_RotateToken_AtomicSuccess(t *testing.T) {
+	database := openTestDB(t)
+	us := store.NewUserStore(database)
+	ts := store.NewTokenStore(database)
+
+	u := seedUser(t, us, "atomic-alice")
+	old := newToken(u.ID, "family-atomic", "rawtoken-atomic-old")
+	require.NoError(t, ts.Create(old))
+
+	newTok := &domain.RefreshToken{
+		ID:         "tok-atomic-new",
+		TokenHash:  sha256hex("rawtoken-atomic-new"),
+		DeviceHint: "test device",
+		IssuedAt:   time.Now().UTC(),
+		LastUsedAt: time.Now().UTC(),
+		ExpiresAt:  time.Now().UTC().Add(30 * 24 * time.Hour),
+	}
+
+	// RotateToken should atomically read, validate, revoke old, insert new
+	gotOld, err := ts.RotateToken(sha256hex("rawtoken-atomic-old"), newTok)
+	require.NoError(t, err)
+	assert.Equal(t, old.ID, gotOld.ID)
+	assert.Equal(t, u.ID, gotOld.UserID)
+	assert.False(t, gotOld.IsRevoked) // was not revoked when read
+
+	// New token should have inherited fields from old
+	assert.Equal(t, u.ID, newTok.UserID)
+	assert.Equal(t, "family-atomic", newTok.FamilyID)
+	assert.Equal(t, old.ID, newTok.ParentTokenID)
+
+	// Old token should now be revoked in the DB
+	gotOldDB, err := ts.GetByHash(sha256hex("rawtoken-atomic-old"))
+	require.NoError(t, err)
+	assert.True(t, gotOldDB.IsRevoked)
+
+	// New token should exist and be valid
+	gotNew, err := ts.GetByHash(sha256hex("rawtoken-atomic-new"))
+	require.NoError(t, err)
+	assert.False(t, gotNew.IsRevoked)
+	assert.Equal(t, u.ID, gotNew.UserID)
+	assert.Equal(t, "family-atomic", gotNew.FamilyID)
+}
+
+func TestTokenStore_RotateToken_NotFound(t *testing.T) {
+	database := openTestDB(t)
+	ts := store.NewTokenStore(database)
+
+	newTok := &domain.RefreshToken{
+		ID:         "tok-nf-new",
+		TokenHash:  sha256hex("rawtoken-nf-new"),
+		IssuedAt:   time.Now().UTC(),
+		LastUsedAt: time.Now().UTC(),
+		ExpiresAt:  time.Now().UTC().Add(30 * 24 * time.Hour),
+	}
+
+	_, err := ts.RotateToken(sha256hex("nonexistent-token"), newTok)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestTokenStore_RotateToken_AlreadyRevoked(t *testing.T) {
+	database := openTestDB(t)
+	us := store.NewUserStore(database)
+	ts := store.NewTokenStore(database)
+
+	u := seedUser(t, us, "atomic-bob")
+	old := newToken(u.ID, "family-revoked", "rawtoken-revoked-test")
+	require.NoError(t, ts.Create(old))
+
+	// Revoke the token first
+	require.NoError(t, ts.RevokeByID(old.ID))
+
+	newTok := &domain.RefreshToken{
+		ID:         "tok-revoked-new",
+		TokenHash:  sha256hex("rawtoken-revoked-new"),
+		IssuedAt:   time.Now().UTC(),
+		LastUsedAt: time.Now().UTC(),
+		ExpiresAt:  time.Now().UTC().Add(30 * 24 * time.Hour),
+	}
+
+	// RotateToken should return ErrTokenAlreadyRevoked and the old token
+	gotOld, err := ts.RotateToken(sha256hex("rawtoken-revoked-test"), newTok)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrTokenAlreadyRevoked)
+	assert.NotNil(t, gotOld)
+	assert.Equal(t, old.ID, gotOld.ID)
+	assert.True(t, gotOld.IsRevoked)
+
+	// New token should NOT have been inserted
+	_, err = ts.GetByHash(sha256hex("rawtoken-revoked-new"))
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestTokenStore_RotateToken_PreventsConcurrentDoubleRotation(t *testing.T) {
+	database := openTestDB(t)
+	us := store.NewUserStore(database)
+	ts := store.NewTokenStore(database)
+
+	u := seedUser(t, us, "atomic-charlie")
+	old := newToken(u.ID, "family-race", "rawtoken-race")
+	require.NoError(t, ts.Create(old))
+
+	// First rotation should succeed
+	newTok1 := &domain.RefreshToken{
+		ID:         "tok-race-1",
+		TokenHash:  sha256hex("rawtoken-race-new1"),
+		IssuedAt:   time.Now().UTC(),
+		LastUsedAt: time.Now().UTC(),
+		ExpiresAt:  time.Now().UTC().Add(30 * 24 * time.Hour),
+	}
+	gotOld, err := ts.RotateToken(sha256hex("rawtoken-race"), newTok1)
+	require.NoError(t, err)
+	assert.Equal(t, old.ID, gotOld.ID)
+
+	// Second rotation of same token should fail with ErrTokenAlreadyRevoked
+	newTok2 := &domain.RefreshToken{
+		ID:         "tok-race-2",
+		TokenHash:  sha256hex("rawtoken-race-new2"),
+		IssuedAt:   time.Now().UTC(),
+		LastUsedAt: time.Now().UTC(),
+		ExpiresAt:  time.Now().UTC().Add(30 * 24 * time.Hour),
+	}
+	gotOld2, err := ts.RotateToken(sha256hex("rawtoken-race"), newTok2)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrTokenAlreadyRevoked)
+	assert.NotNil(t, gotOld2)
+	assert.True(t, gotOld2.IsRevoked)
+
+	// Only the first new token should exist
+	_, err = ts.GetByHash(sha256hex("rawtoken-race-new1"))
+	assert.NoError(t, err)
+	_, err = ts.GetByHash(sha256hex("rawtoken-race-new2"))
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
 func TestTokenStore_RevokeFamilyByHash(t *testing.T) {
 	database := openTestDB(t)
 	us := store.NewUserStore(database)

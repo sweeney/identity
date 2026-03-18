@@ -19,7 +19,7 @@ import (
 )
 
 func newTestRouter(svc service.OAuthServicer) http.Handler {
-	return oauth.NewRouter(svc)
+	return oauth.NewRouter(svc, "")
 }
 
 func getAuthorize(t *testing.T, h http.Handler, params map[string]string) *httptest.ResponseRecorder {
@@ -280,6 +280,42 @@ func TestTokenEndpoint_AuthCode_InvalidGrant(t *testing.T) {
 	var body map[string]string
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 	assert.Equal(t, "invalid_grant", body["error"])
+	assert.Equal(t, "The authorization code is invalid or has expired.", body["error_description"])
+}
+
+func TestTokenEndpoint_AuthCode_UnifiedErrorMessage(t *testing.T) {
+	// All three auth code error types must return the same message to prevent
+	// an attacker from distinguishing invalid, already-used, and expired codes.
+	errs := []error{
+		service.ErrInvalidAuthCode,
+		service.ErrAuthCodeAlreadyUsed,
+		service.ErrAuthCodeExpired,
+	}
+
+	for _, svcErr := range errs {
+		t.Run(svcErr.Error(), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			svc := mocks.NewMockOAuthServicer(ctrl)
+			svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(nil, svcErr)
+
+			h := newTestRouter(svc)
+			rr := postForm(t, h, "/oauth/token", url.Values{
+				"grant_type":    {"authorization_code"},
+				"client_id":     {"client-1"},
+				"code":          {"some-code"},
+				"redirect_uri":  {"https://myapp.example.com/callback"},
+				"code_verifier": {"verifier"},
+			})
+
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+			var body map[string]string
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+			assert.Equal(t, "invalid_grant", body["error"])
+			assert.Equal(t, "The authorization code is invalid or has expired.", body["error_description"],
+				"error for %v must be identical to prevent oracle attack", svcErr)
+		})
+	}
 }
 
 func TestTokenEndpoint_RefreshToken_Success(t *testing.T) {
@@ -315,7 +351,7 @@ func TestTokenEndpoint_UnsupportedGrantType(t *testing.T) {
 }
 
 func TestNewRouter_NilService_Returns404(t *testing.T) {
-	h := oauth.NewRouter(nil)
+	h := oauth.NewRouter(nil, "")
 	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

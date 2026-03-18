@@ -147,35 +147,58 @@ func (s *AuthService) IssueTokensForUser(userID string) (*LoginResult, error) {
 }
 
 // Refresh validates a refresh token and issues a new token pair via rotation.
+// The read-validate-revoke-insert sequence is performed atomically within a
+// single transaction by RotateToken, preventing the TOCTOU race condition
+// where concurrent requests could both observe the token as valid.
 func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
 	tokenHash := HashToken(rawRefreshToken)
 
-	tok, err := s.tokens.GetByHash(tokenHash)
+	// Build the new token before entering the atomic rotation so we can
+	// pass it in. We need a temporary UserID/FamilyID — these will be set
+	// from the old token inside issueTokensAtomic.
+	rawRefresh, err := generateRawToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate refresh token: %w", err)
+	}
+
+	now := time.Now().UTC()
+	newTok := &domain.RefreshToken{
+		ID:         uuid.New().String(),
+		TokenHash:  HashToken(rawRefresh),
+		IssuedAt:   now,
+		LastUsedAt: now,
+		ExpiresAt:  now.Add(s.refreshTokenTTL),
+	}
+
+	// Atomically: read old token, check not revoked, revoke it, insert new token.
+	oldTok, err := s.tokens.RotateToken(tokenHash, newTok)
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil, ErrInvalidRefreshToken
 	}
-	if err != nil {
-		return nil, fmt.Errorf("get token: %w", err)
-	}
-
-	// Token reuse detected — potential theft, invalidate entire family
-	if tok.IsRevoked {
+	if errors.Is(err, domain.ErrTokenAlreadyRevoked) {
+		// Token reuse detected — potential theft, invalidate entire family
 		s.record(&domain.AuthEvent{
 			EventType: domain.EventTokenFamilyCompromised,
-			UserID:    tok.UserID,
-			Username:  s.lookupUsername(tok.UserID),
+			UserID:    oldTok.UserID,
+			Username:  s.lookupUsername(oldTok.UserID),
 		})
 		if rErr := s.tokens.RevokeFamilyByHash(tokenHash); rErr != nil {
 			_ = rErr
 		}
 		return nil, ErrTokenFamilyCompromised
 	}
+	if err != nil {
+		return nil, fmt.Errorf("rotate token: %w", err)
+	}
 
-	if time.Now().After(tok.ExpiresAt) {
+	// Post-rotation checks: expiry and user status.
+	// The token has already been revoked atomically; if these fail the old
+	// token is consumed (which is correct — the client must re-login).
+	if time.Now().After(oldTok.ExpiresAt) {
 		return nil, ErrRefreshTokenExpired
 	}
 
-	user, err := s.users.GetByID(tok.UserID)
+	user, err := s.users.GetByID(oldTok.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
@@ -184,11 +207,25 @@ func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
 		return nil, ErrAccountDisabled
 	}
 
-	return s.issueTokens(user, loginArgs{
-		oldTokenID: tok.ID,
-		familyID:   tok.FamilyID,
-		deviceHint: tok.DeviceHint,
-	})
+	// Mint the access token now that we know the user is valid.
+	claims := domain.TokenClaims{
+		UserID:   user.ID,
+		Username: user.Username,
+		Role:     user.Role,
+		IsActive: user.IsActive,
+	}
+
+	accessToken, err := s.issuer.Mint(claims)
+	if err != nil {
+		return nil, fmt.Errorf("mint access token: %w", err)
+	}
+
+	return &LoginResult{
+		AccessToken:  accessToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    900,
+		RefreshToken: rawRefresh,
+	}, nil
 }
 
 // Logout revokes a specific refresh token, or all tokens for the user if

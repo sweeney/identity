@@ -142,7 +142,7 @@ func TestSecurityHeaders_CSP(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
-	expected := "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
+	expected := "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'"
 	assert.Equal(t, expected, rr.Header().Get("Content-Security-Policy"))
 }
 
@@ -183,7 +183,7 @@ func TestSecurityHeaders_HSTS(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
-	assert.NotEmpty(t, rr.Header().Get("Strict-Transport-Security"))
+	assert.Equal(t, "max-age=63072000; includeSubDomains; preload", rr.Header().Get("Strict-Transport-Security"))
 }
 
 func TestSecurityHeaders_ReferrerPolicy(t *testing.T) {

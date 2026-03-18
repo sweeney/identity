@@ -21,6 +21,7 @@ import (
 	"github.com/sweeney/identity/internal/handler/admin"
 	apihandler "github.com/sweeney/identity/internal/handler/api"
 	oauthhandler "github.com/sweeney/identity/internal/handler/oauth"
+	"github.com/sweeney/identity/internal/ratelimit"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/spec"
 	"github.com/sweeney/identity/internal/store"
@@ -257,14 +258,43 @@ func run() error {
 		}
 	}()
 
+	// Rate limiters
+	// Strict: 5 req/min (≈0.083/s) with burst of 5 for auth endpoints
+	// General: 30 req/min (0.5/s) with burst of 10 for all other endpoints
+	var authRateLimiter, generalRateLimiter *ratelimit.Limiter
+	if !cfg.RateLimitDisabled {
+		authRateLimiter = ratelimit.NewLimiter(5.0/60.0, 5)
+		generalRateLimiter = ratelimit.NewLimiter(30.0/60.0, 10)
+		log.Println("rate limiting enabled")
+	} else {
+		log.Println("rate limiting disabled (RATE_LIMIT_DISABLED)")
+	}
+
+	// wrapAuth applies the strict rate limiter to a handler if rate limiting is enabled.
+	wrapAuth := func(h http.Handler) http.Handler {
+		if authRateLimiter != nil {
+			return authRateLimiter.Middleware(h)
+		}
+		return h
+	}
+
 	// HTTP mux
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", apihandler.NewRouter(issuer, authSvc, userSvc))
-	mux.Handle("/oauth/", oauthhandler.NewRouter(oauthSvc))
-	mux.Handle("/admin/", admin.NewRouter(admin.Config{
+	apiRouter := apihandler.NewRouter(issuer, authSvc, userSvc, cfg.TrustProxy)
+
+	// Auth endpoints get strict rate limiting; wrap only the login path
+	// and let the rest of the API router handle other /api/v1/ paths.
+	mux.Handle("POST /api/v1/auth/login", wrapAuth(apiRouter))
+	mux.Handle("/api/v1/", apiRouter)
+	mux.Handle("POST /oauth/token", wrapAuth(oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy)))
+	mux.Handle("/oauth/", oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy))
+	adminRouter := admin.NewRouter(admin.Config{
 		SessionSecret: secrets.Current,
 		Production:    cfg.IsProduction(),
-	}, authSvc, userSvc, oauthClientStore, auditStore, backupMgr))
+		TrustProxy:    cfg.TrustProxy,
+	}, authSvc, userSvc, oauthClientStore, auditStore, backupMgr)
+	mux.Handle("POST /admin/login", wrapAuth(adminRouter))
+	mux.Handle("/admin/", adminRouter)
 	staticFS, _ := fs.Sub(ui.StaticFS, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	homeHTML, _ := ui.TemplateFS.ReadFile("templates/home.html")
@@ -290,9 +320,15 @@ func run() error {
 		w.Write(data)
 	})
 
+	// Build the handler chain: rate limit -> security headers -> mux
+	var handler http.Handler = securityHeaders(mux, cfg.CORSOrigins, cfg.Env == config.EnvDevelopment)
+	if generalRateLimiter != nil {
+		handler = generalRateLimiter.Middleware(handler)
+	}
+
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      securityHeaders(mux, cfg.CORSOrigins, cfg.Env == config.EnvDevelopment),
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -336,7 +372,8 @@ func securityHeaders(next http.Handler, allowedOrigins []string, devMode bool) h
 				"style-src 'self'; "+
 				"script-src 'self'; "+
 				"img-src 'self' data:; "+
-				"frame-ancestors 'none'")
+				"frame-ancestors 'none'; "+
+				"form-action 'self'")
 
 		// CORS for API and OAuth token endpoints (needed by SPA clients)
 		path := r.URL.Path

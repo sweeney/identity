@@ -138,3 +138,18 @@ func (mr *MockTokenRepositoryMockRecorder) Rotate(oldTokenID, newToken any) *gom
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rotate", reflect.TypeOf((*MockTokenRepository)(nil).Rotate), oldTokenID, newToken)
 }
+
+// RotateToken mocks base method.
+func (m *MockTokenRepository) RotateToken(oldTokenHash string, newToken *domain.RefreshToken) (*domain.RefreshToken, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RotateToken", oldTokenHash, newToken)
+	ret0, _ := ret[0].(*domain.RefreshToken)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RotateToken indicates an expected call of RotateToken.
+func (mr *MockTokenRepositoryMockRecorder) RotateToken(oldTokenHash, newToken any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RotateToken", reflect.TypeOf((*MockTokenRepository)(nil).RotateToken), oldTokenHash, newToken)
+}

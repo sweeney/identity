@@ -3,6 +3,7 @@
 package db_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -69,6 +70,27 @@ func TestOpen_WALModeEnabled(t *testing.T) {
 	err = database.DB().QueryRow("PRAGMA journal_mode").Scan(&mode)
 	require.NoError(t, err)
 	assert.Equal(t, "wal", mode)
+}
+
+func TestOpen_FilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.db")
+
+	database, err := db.Open(path)
+	require.NoError(t, err)
+	defer database.Close()
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	perm := info.Mode().Perm()
+	assert.Equal(t, fs.FileMode(0600), perm, "database file should be owner-only (0600), got %04o", perm)
+
+	// WAL file should also be restricted
+	walPath := path + "-wal"
+	if walInfo, err := os.Stat(walPath); err == nil {
+		walPerm := walInfo.Mode().Perm()
+		assert.Equal(t, fs.FileMode(0600), walPerm, "WAL file should be owner-only (0600), got %04o", walPerm)
+	}
 }
 
 func TestOpen_ForeignKeysEnabled(t *testing.T) {

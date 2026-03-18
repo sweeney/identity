@@ -11,4 +11,8 @@ var (
 
 	// ErrUserLimitReached is returned when the user count cap would be exceeded.
 	ErrUserLimitReached = errors.New("user limit reached")
+
+	// ErrTokenAlreadyRevoked is returned when a refresh token has already been revoked.
+	// This signals potential token theft (replay of a previously-used token).
+	ErrTokenAlreadyRevoked = errors.New("token already revoked")
 )

@@ -44,8 +44,14 @@ type Config struct {
 	AdminUsername string
 	AdminPassword string
 
+	// Proxy trust: "cloudflare" trusts CF-Connecting-IP header, "" trusts nothing
+	TrustProxy string
+
 	// CORS
 	CORSOrigins []string
+
+	// Rate limiting
+	RateLimitDisabled bool
 
 	// Cloudflare R2 (S3-compatible backup storage)
 	R2AccountID       string
@@ -105,6 +111,11 @@ func Load() (*Config, error) {
 		cfg.DBPath = v
 	}
 
+	// TRUST_PROXY: "cloudflare" trusts CF-Connecting-IP, anything else means use RemoteAddr
+	if v := os.Getenv("TRUST_PROXY"); v == "cloudflare" {
+		cfg.TrustProxy = "cloudflare"
+	}
+
 	// CORS_ORIGINS: comma-separated list of allowed origins (e.g. "https://app.example.com,https://other.example.com")
 	if v := os.Getenv("CORS_ORIGINS"); v != "" {
 		for _, o := range strings.Split(v, ",") {
@@ -113,6 +124,11 @@ func Load() (*Config, error) {
 				cfg.CORSOrigins = append(cfg.CORSOrigins, o)
 			}
 		}
+	}
+
+	// RATE_LIMIT_DISABLED: disable rate limiting (useful for dev/testing)
+	if v := os.Getenv("RATE_LIMIT_DISABLED"); v == "1" || v == "true" {
+		cfg.RateLimitDisabled = true
 	}
 
 	// R2 config — optional at load time (service runs without backup if unset, logs a warning)

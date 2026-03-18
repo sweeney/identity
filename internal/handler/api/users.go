@@ -8,11 +8,13 @@ import (
 
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
+	"github.com/sweeney/identity/internal/httputil"
 	"github.com/sweeney/identity/internal/service"
 )
 
 type userHandler struct {
-	svc service.UserServicer
+	svc        service.UserServicer
+	trustProxy string
 }
 
 type userResponse struct {
@@ -78,7 +80,7 @@ func (h *userHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	claims := auth.ClaimsFromContext(r.Context())
-	meta := service.AuditMeta{ActorUsername: claims.Username, IPAddress: extractClientIP(r)}
+	meta := service.AuditMeta{ActorUsername: claims.Username, IPAddress: httputil.ExtractClientIP(r, h.trustProxy)}
 	user, err := h.svc.Create(req.Username, req.DisplayName, req.Password, role, meta)
 	if err != nil {
 		switch {
@@ -147,7 +149,7 @@ func (h *userHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	claims := auth.ClaimsFromContext(r.Context())
-	meta := service.AuditMeta{ActorUsername: claims.Username, IPAddress: extractClientIP(r)}
+	meta := service.AuditMeta{ActorUsername: claims.Username, IPAddress: httputil.ExtractClientIP(r, h.trustProxy)}
 	user, err := h.svc.Update(id, input, meta)
 	if err != nil {
 		switch {
@@ -170,7 +172,7 @@ func (h *userHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	claims := auth.ClaimsFromContext(r.Context())
-	meta := service.AuditMeta{ActorUsername: claims.Username, IPAddress: extractClientIP(r)}
+	meta := service.AuditMeta{ActorUsername: claims.Username, IPAddress: httputil.ExtractClientIP(r, h.trustProxy)}
 	if err := h.svc.Delete(id, meta); err != nil {
 		switch {
 		case errors.Is(err, domain.ErrNotFound):

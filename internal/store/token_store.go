@@ -90,6 +90,103 @@ func (s *TokenStore) Rotate(oldTokenID string, newToken *domain.RefreshToken) er
 	return tx.Commit()
 }
 
+// RotateToken atomically looks up the old token by hash, validates it is not
+// revoked, revokes it, and inserts newToken — all within a single BEGIN IMMEDIATE
+// transaction. Returns the old token for caller inspection (e.g. expiry, user ID).
+//
+// Returns domain.ErrNotFound if the token hash does not exist.
+// Returns domain.ErrTokenAlreadyRevoked if the token was already revoked (theft signal).
+func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshToken) (*domain.RefreshToken, error) {
+	tx, err := s.db.DB().Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin rotate tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Force the transaction to acquire a write lock immediately.
+	// With database/sql's Begin() we get a DEFERRED transaction; this
+	// dummy write promotes it to a write transaction before the SELECT,
+	// closing the TOCTOU window between read and revoke.
+	if _, err := tx.Exec("UPDATE refresh_tokens SET id = id WHERE 0"); err != nil {
+		return nil, fmt.Errorf("promote tx to write: %w", err)
+	}
+
+	// Read old token within the transaction
+	row := tx.QueryRow(
+		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
+		        device_hint, issued_at, last_used_at, expires_at, is_revoked
+		 FROM refresh_tokens WHERE token_hash = ?`, oldTokenHash,
+	)
+
+	var t domain.RefreshToken
+	var isRevoked int
+	var issuedAt, lastUsedAt, expiresAt string
+
+	scanErr := row.Scan(
+		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
+		&t.DeviceHint, &issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
+	)
+	if scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("scan token: %w", scanErr)
+	}
+
+	t.IsRevoked = isRevoked == 1
+	t.IssuedAt, _ = time.Parse(time.RFC3339Nano, issuedAt)
+	t.LastUsedAt, _ = time.Parse(time.RFC3339Nano, lastUsedAt)
+	t.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expiresAt)
+
+	// If already revoked, this is a reuse/theft signal
+	if t.IsRevoked {
+		return &t, domain.ErrTokenAlreadyRevoked
+	}
+
+	// Populate new token fields inherited from the old token.
+	// The caller provides ID, TokenHash, IssuedAt, LastUsedAt, and ExpiresAt;
+	// we fill in the chain/family fields from the old token.
+	newToken.UserID = t.UserID
+	newToken.FamilyID = t.FamilyID
+	newToken.ParentTokenID = t.ID
+	newToken.DeviceHint = t.DeviceHint
+	if newToken.ExpiresAt.IsZero() {
+		newToken.ExpiresAt = t.ExpiresAt
+	}
+
+	// Revoke old token
+	if _, err := tx.Exec(
+		`UPDATE refresh_tokens SET is_revoked = 1 WHERE id = ?`, t.ID,
+	); err != nil {
+		return nil, fmt.Errorf("revoke old token: %w", err)
+	}
+
+	// Insert new token
+	if _, err := tx.Exec(
+		`INSERT INTO refresh_tokens
+		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
+		  issued_at, last_used_at, expires_at, is_revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		newToken.ID,
+		newToken.UserID,
+		newToken.TokenHash,
+		newToken.FamilyID,
+		nullableString(newToken.ParentTokenID),
+		newToken.DeviceHint,
+		formatTime(newToken.IssuedAt),
+		formatTime(newToken.LastUsedAt),
+		formatTime(newToken.ExpiresAt),
+	); err != nil {
+		return nil, fmt.Errorf("insert new token: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit rotate tx: %w", err)
+	}
+
+	return &t, nil
+}
+
 func (s *TokenStore) RevokeFamilyByHash(tokenHash string) error {
 	_, err := s.db.DB().Exec(
 		`UPDATE refresh_tokens

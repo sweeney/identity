@@ -9,11 +9,11 @@ import (
 
 // NewRouter builds the /api/v1 mux and wires all handlers.
 // userSvc or authSvc may be nil if not needed (used in tests to isolate handler groups).
-func NewRouter(issuer *auth.TokenIssuer, authSvc service.AuthServicer, userSvc service.UserServicer) http.Handler {
+func NewRouter(issuer *auth.TokenIssuer, authSvc service.AuthServicer, userSvc service.UserServicer, trustProxy string) http.Handler {
 	mux := http.NewServeMux()
 
-	ah := &authHandler{svc: authSvc}
-	uh := &userHandler{svc: userSvc}
+	ah := &authHandler{svc: authSvc, trustProxy: trustProxy}
+	uh := &userHandler{svc: userSvc, trustProxy: trustProxy}
 
 	// Auth endpoints — no JWT required except logout and me
 	mux.Handle("POST /api/v1/auth/login", http.HandlerFunc(ah.login))

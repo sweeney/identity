@@ -64,8 +64,8 @@ func setupE2EServer(t *testing.T) (http.Handler, *db.Database) {
 	require.NoError(t, err)
 
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", apihandler.NewRouter(issuer, authSvc, userSvc))
-	mux.Handle("/oauth/", oauthhandler.NewRouter(oauthSvc))
+	mux.Handle("/api/v1/", apihandler.NewRouter(issuer, authSvc, userSvc, ""))
+	mux.Handle("/oauth/", oauthhandler.NewRouter(oauthSvc, ""))
 	mux.Handle("/admin/", admin.NewRouter(admin.Config{
 		SessionSecret: e2eJWTSecret,
 	}, authSvc, userSvc, oauthClientStore, auditStore, backupMgr))

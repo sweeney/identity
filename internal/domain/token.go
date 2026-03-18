@@ -45,6 +45,13 @@ type TokenRepository interface {
 	// Uses BEGIN IMMEDIATE to prevent concurrent rotation races.
 	Rotate(oldTokenID string, newToken *RefreshToken) error
 
+	// RotateToken atomically validates the old token is not revoked, revokes it,
+	// and inserts the new token. Returns the old token for caller inspection,
+	// or an error if the token is not found, already revoked, etc.
+	// This prevents the TOCTOU race condition where concurrent refresh requests
+	// could both read the token as valid before either revokes it.
+	RotateToken(oldTokenHash string, newToken *RefreshToken) (*RefreshToken, error)
+
 	// RevokeFamilyByHash revokes all tokens sharing the family of the token with the given hash.
 	// Used when token reuse (theft) is detected.
 	RevokeFamilyByHash(tokenHash string) error

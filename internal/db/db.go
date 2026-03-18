@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"os"
+	"syscall"
 
 	_ "modernc.org/sqlite"
 )
@@ -20,6 +21,13 @@ type Database struct {
 // Open opens (or creates) a SQLite database at path, enables WAL mode and
 // foreign keys, and runs all pending migrations.
 func Open(path string) (*Database, error) {
+	// Set restrictive umask before creating the database file so it is
+	// never world-readable, even momentarily.
+	if path != ":memory:" {
+		oldMask := syscall.Umask(0077)
+		defer syscall.Umask(oldMask)
+	}
+
 	sqlDB, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)

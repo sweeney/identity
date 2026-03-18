@@ -56,6 +56,9 @@ const (
 	EventUserUpdated            = "user_updated"
 	EventUserDeleted            = "user_deleted"
 	EventUserDeactivated        = "user_deactivated"
+	EventOAuthClientCreated     = "oauth_client_created"
+	EventOAuthClientUpdated     = "oauth_client_updated"
+	EventOAuthClientDeleted     = "oauth_client_deleted"
 	EventBackupSuccess          = "backup_success"
 	EventBackupFailure          = "backup_failure"
 )

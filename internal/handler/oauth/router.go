@@ -10,7 +10,7 @@ import (
 
 // NewRouter builds the /oauth mux.
 // If svc is nil, all routes return 404 (no clients registered).
-func NewRouter(svc service.OAuthServicer) http.Handler {
+func NewRouter(svc service.OAuthServicer, trustProxy string) http.Handler {
 	if svc == nil {
 		return http.NotFoundHandler()
 	}
@@ -21,8 +21,9 @@ func NewRouter(svc service.OAuthServicer) http.Handler {
 	)
 
 	h := &oauthHandler{
-		svc:  svc,
-		tmpl: &tmplSet{base: baseTmpl, funcs: funcs},
+		svc:        svc,
+		tmpl:       &tmplSet{base: baseTmpl, funcs: funcs},
+		trustProxy: trustProxy,
 	}
 
 	mux := http.NewServeMux()

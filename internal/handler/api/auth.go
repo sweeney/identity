@@ -3,15 +3,16 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 
 	"github.com/sweeney/identity/internal/auth"
+	"github.com/sweeney/identity/internal/httputil"
 	"github.com/sweeney/identity/internal/service"
 )
 
 type authHandler struct {
-	svc service.AuthServicer
+	svc        service.AuthServicer
+	trustProxy string
 }
 
 type loginRequest struct {
@@ -39,7 +40,7 @@ func (h *authHandler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.svc.Login(req.Username, req.Password, req.DeviceHint, extractClientIP(r))
+	result, err := h.svc.Login(req.Username, req.Password, req.DeviceHint, httputil.ExtractClientIP(r, h.trustProxy))
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidCredentials):
@@ -137,15 +138,3 @@ func (h *authHandler) me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// extractClientIP returns the best-available client IP from the request.
-// Prefers CF-Connecting-IP (set by Cloudflare), falls back to RemoteAddr host.
-func extractClientIP(r *http.Request) string {
-	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" {
-		return cf
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}

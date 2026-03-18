@@ -65,7 +65,9 @@ Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expir
 ADMIN_USERNAME="admin" ADMIN_PASSWORD="<password>" ./bin/identity-server
 ```
 
-Optional env vars: `IDENTITY_ENV` (`development`|`production`), `PORT` (default 8181), `DB_PATH` (default `identity.db`), `JWT_SECRET` (overrides DB-managed secret), `CORS_ORIGINS` (comma-separated allowed origins for API CORS), `R2_*` for Cloudflare R2 backups.
+Optional env vars: `IDENTITY_ENV` (`development`|`production`), `PORT` (default 8181), `DB_PATH` (default `identity.db`), `JWT_SECRET` (overrides DB-managed secret), `CORS_ORIGINS` (comma-separated allowed origins for API CORS), `TRUST_PROXY` (`cloudflare` to trust `CF-Connecting-IP` header), `RATE_LIMIT_DISABLED` (`1` to disable rate limiting in dev/test), `R2_*` for Cloudflare R2 backups.
+
+On first run without `ADMIN_PASSWORD`, the generated password is written to `initial-password.txt` in the working directory (not logged to stdout). Delete the file after reading.
 
 ## Deploying
 
@@ -98,7 +100,9 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `internal/service/user_service.go` | User CRUD business logic |
 | `internal/auth/jwt.go` | JWT mint/parse, supports previous-secret fallback |
 | `internal/auth/middleware.go` | `RequireAuth` and `RequireAdmin` middleware |
-| `internal/store/token_store.go` | Token rotation with `BEGIN IMMEDIATE` transaction |
+| `internal/ratelimit/ratelimit.go` | Per-IP rate limiting middleware |
+| `internal/httputil/clientip.go` | Shared client IP extraction with proxy trust |
+| `internal/store/token_store.go` | Token rotation with atomic TOCTOU-safe transaction |
 | `internal/store/audit_store.go` | Audit event recording (also emits to stdout) |
 | `internal/domain/oauth.go` | OAuth types, auth event constants, repository interfaces |
 | `internal/spec/openapi.yaml` | OpenAPI 3.0 spec (served at `/openapi.json`) |
@@ -106,4 +110,4 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `cmd/server/backups.go` | `--list-backups` and `--restore-backup` CLI commands |
 | `deploy/` | systemd unit, env template, install script |
 | `examples/` | Three OAuth demo clients (server-side, SPA, BFF) |
-| `scripts/e2e.sh` | End-to-end test suite (59 checks) |
+| `scripts/e2e.sh` | End-to-end test suite (58 checks) |

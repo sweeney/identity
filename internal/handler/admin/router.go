@@ -13,6 +13,7 @@ import (
 type Config struct {
 	SessionSecret string
 	Production    bool
+	TrustProxy    string
 }
 
 // NewRouter builds the /admin mux.

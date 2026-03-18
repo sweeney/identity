@@ -58,7 +58,7 @@ func TestLoginHandler_Success(t *testing.T) {
 	}
 	authSvc.EXPECT().Login("alice", "correctpassword", "iPhone 15", gomock.Any()).Return(loginResult, nil)
 
-	h := api.NewRouter(newTestIssuer(t), authSvc, nil)
+	h := api.NewRouter(newTestIssuer(t), authSvc, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/login", map[string]string{
 		"username":    "alice",
 		"password":    "correctpassword",
@@ -81,7 +81,7 @@ func TestLoginHandler_InvalidCredentials(t *testing.T) {
 	authSvc := mocks.NewMockAuthServicer(ctrl)
 	authSvc.EXPECT().Login("alice", "wrong", "", gomock.Any()).Return(nil, service.ErrInvalidCredentials)
 
-	h := api.NewRouter(newTestIssuer(t), authSvc, nil)
+	h := api.NewRouter(newTestIssuer(t), authSvc, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/login", map[string]string{
 		"username": "alice",
 		"password": "wrong",
@@ -98,7 +98,7 @@ func TestLoginHandler_AccountDisabled(t *testing.T) {
 	authSvc := mocks.NewMockAuthServicer(ctrl)
 	authSvc.EXPECT().Login("alice", "correctpassword", "", gomock.Any()).Return(nil, service.ErrAccountDisabled)
 
-	h := api.NewRouter(newTestIssuer(t), authSvc, nil)
+	h := api.NewRouter(newTestIssuer(t), authSvc, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/login", map[string]string{
 		"username": "alice",
 		"password": "correctpassword",
@@ -111,7 +111,7 @@ func TestLoginHandler_AccountDisabled(t *testing.T) {
 }
 
 func TestLoginHandler_MalformedJSON(t *testing.T) {
-	h := api.NewRouter(newTestIssuer(t), nil, nil)
+	h := api.NewRouter(newTestIssuer(t), nil, nil, "")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString("{bad json"))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -121,7 +121,7 @@ func TestLoginHandler_MalformedJSON(t *testing.T) {
 }
 
 func TestLoginHandler_MissingFields(t *testing.T) {
-	h := api.NewRouter(newTestIssuer(t), nil, nil)
+	h := api.NewRouter(newTestIssuer(t), nil, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/login", map[string]string{"username": "alice"})
 	assert.Equal(t, http.StatusUnprocessableEntity, rr.Code)
 }
@@ -140,7 +140,7 @@ func TestRefreshHandler_Success(t *testing.T) {
 	}
 	authSvc.EXPECT().Refresh("old-refresh-token").Return(result, nil)
 
-	h := api.NewRouter(newTestIssuer(t), authSvc, nil)
+	h := api.NewRouter(newTestIssuer(t), authSvc, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/refresh", map[string]string{
 		"refresh_token": "old-refresh-token",
 	})
@@ -156,7 +156,7 @@ func TestRefreshHandler_InvalidToken(t *testing.T) {
 	authSvc := mocks.NewMockAuthServicer(ctrl)
 	authSvc.EXPECT().Refresh("bad-token").Return(nil, service.ErrInvalidRefreshToken)
 
-	h := api.NewRouter(newTestIssuer(t), authSvc, nil)
+	h := api.NewRouter(newTestIssuer(t), authSvc, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/refresh", map[string]string{"refresh_token": "bad-token"})
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
@@ -170,7 +170,7 @@ func TestRefreshHandler_FamilyCompromised(t *testing.T) {
 	authSvc := mocks.NewMockAuthServicer(ctrl)
 	authSvc.EXPECT().Refresh("stolen-token").Return(nil, service.ErrTokenFamilyCompromised)
 
-	h := api.NewRouter(newTestIssuer(t), authSvc, nil)
+	h := api.NewRouter(newTestIssuer(t), authSvc, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/refresh", map[string]string{"refresh_token": "stolen-token"})
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
@@ -190,7 +190,7 @@ func TestLogoutHandler_Success(t *testing.T) {
 	token, err := issuer.Mint(domain.TokenClaims{UserID: "user-123", Username: "alice", Role: domain.RoleUser, IsActive: true})
 	require.NoError(t, err)
 
-	h := api.NewRouter(issuer, authSvc, nil)
+	h := api.NewRouter(issuer, authSvc, nil, "")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", mustJSON(map[string]string{"refresh_token": "my-refresh-token"}))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -201,7 +201,7 @@ func TestLogoutHandler_Success(t *testing.T) {
 }
 
 func TestLogoutHandler_Unauthenticated(t *testing.T) {
-	h := api.NewRouter(newTestIssuer(t), nil, nil)
+	h := api.NewRouter(newTestIssuer(t), nil, nil, "")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", mustJSON(map[string]string{}))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -222,7 +222,7 @@ func TestMeHandler_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	h := api.NewRouter(issuer, nil, nil)
+	h := api.NewRouter(issuer, nil, nil, "")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()

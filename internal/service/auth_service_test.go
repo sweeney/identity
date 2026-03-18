@@ -213,9 +213,8 @@ func TestAuthService_Refresh_Success(t *testing.T) {
 	}
 
 	user := activeUser()
-	tokenRepo.EXPECT().GetByHash(tokenHash).Return(existingToken, nil)
+	tokenRepo.EXPECT().RotateToken(tokenHash, gomock.Any()).Return(existingToken, nil)
 	userRepo.EXPECT().GetByID("user-123").Return(user, nil)
-	tokenRepo.EXPECT().Rotate("tok-1", gomock.Any()).Return(nil)
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
@@ -232,7 +231,7 @@ func TestAuthService_Refresh_TokenNotFound(t *testing.T) {
 	backupSvc := mocks.NewMockBackupService(ctrl)
 
 	rawToken := "nonexistent-token-value-long-enough-here"
-	tokenRepo.EXPECT().GetByHash(service.HashToken(rawToken)).Return(nil, domain.ErrNotFound)
+	tokenRepo.EXPECT().RotateToken(service.HashToken(rawToken), gomock.Any()).Return(nil, domain.ErrNotFound)
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
@@ -259,7 +258,8 @@ func TestAuthService_Refresh_AlreadyRevoked_TriggersTheftDetection(t *testing.T)
 		IsRevoked: true, // already revoked — theft signal
 	}
 
-	tokenRepo.EXPECT().GetByHash(tokenHash).Return(revokedToken, nil)
+	// RotateToken returns the old token + ErrTokenAlreadyRevoked
+	tokenRepo.EXPECT().RotateToken(tokenHash, gomock.Any()).Return(revokedToken, domain.ErrTokenAlreadyRevoked)
 	// lookupUsername for audit
 	userRepo.EXPECT().GetByID("user-123").Return(activeUser(), nil).AnyTimes()
 	// Whole family must be invalidated
@@ -290,7 +290,8 @@ func TestAuthService_Refresh_Expired(t *testing.T) {
 		IsRevoked: false,
 	}
 
-	tokenRepo.EXPECT().GetByHash(tokenHash).Return(expiredToken, nil)
+	// RotateToken succeeds (token was valid), but caller checks expiry after
+	tokenRepo.EXPECT().RotateToken(tokenHash, gomock.Any()).Return(expiredToken, nil)
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
@@ -320,7 +321,7 @@ func TestAuthService_Refresh_DisabledUser(t *testing.T) {
 	disabledUser := activeUser()
 	disabledUser.IsActive = false
 
-	tokenRepo.EXPECT().GetByHash(tokenHash).Return(tok, nil)
+	tokenRepo.EXPECT().RotateToken(tokenHash, gomock.Any()).Return(tok, nil)
 	userRepo.EXPECT().GetByID("user-123").Return(disabledUser, nil)
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
