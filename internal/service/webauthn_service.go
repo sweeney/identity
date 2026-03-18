@@ -36,11 +36,12 @@ type WebAuthnServicer interface {
 // WebAuthnService handles passkey registration, authentication, and credential management.
 type WebAuthnService struct {
 	wa          *webauthn.WebAuthn
-	authSvc     *AuthService
-	users       domain.UserRepository
-	credentials domain.WebAuthnCredentialRepository
-	challenges  domain.WebAuthnChallengeRepository
-	audit       domain.AuditRepository
+	authSvc      *AuthService
+	users        domain.UserRepository
+	credentials  domain.WebAuthnCredentialRepository
+	challenges   domain.WebAuthnChallengeRepository
+	audit        domain.AuditRepository
+	backup       domain.BackupService
 	challengeTTL time.Duration
 }
 
@@ -52,6 +53,7 @@ func NewWebAuthnService(
 	credentials domain.WebAuthnCredentialRepository,
 	challenges domain.WebAuthnChallengeRepository,
 	audit domain.AuditRepository,
+	backup domain.BackupService,
 ) *WebAuthnService {
 	return &WebAuthnService{
 		wa:           wa,
@@ -60,6 +62,7 @@ func NewWebAuthnService(
 		credentials:  credentials,
 		challenges:   challenges,
 		audit:        audit,
+		backup:       backup,
 		challengeTTL: 120 * time.Second,
 	}
 }
@@ -192,6 +195,7 @@ func (s *WebAuthnService) FinishRegistration(userID, challengeID, name string, r
 	}
 
 	s.recordEvent(domain.EventPasskeyRegisterSuccess, userID, user.Username, "")
+	s.backup.TriggerAsync()
 	return domainCred, nil
 }
 
@@ -404,6 +408,7 @@ func (s *WebAuthnService) DeleteCredential(userID, credentialID string) error {
 
 	username := s.lookupUsername(userID)
 	s.recordEvent(domain.EventPasskeyDeleted, userID, username, "")
+	s.backup.TriggerAsync()
 	return nil
 }
 

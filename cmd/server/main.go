@@ -236,7 +236,7 @@ func run() error {
 		if waErr != nil {
 			return fmt.Errorf("webauthn: %w", waErr)
 		}
-		webauthnSvc = service.NewWebAuthnService(wa, authSvc, userStore, waCredStore, waChallengeStore, auditStore)
+		webauthnSvc = service.NewWebAuthnService(wa, authSvc, userStore, waCredStore, waChallengeStore, auditStore, backupMgr)
 		log.Printf("passkeys enabled (RP ID: %s, origins: %v)", cfg.WebAuthnRPID, cfg.WebAuthnRPOrigins)
 	} else {
 		log.Println("passkeys disabled (set WEBAUTHN_RP_ID to enable)")

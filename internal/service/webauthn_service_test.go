@@ -45,7 +45,7 @@ func newTestWebAuthnService(t *testing.T, ctrl *gomock.Controller) (
 	tokenRepo.EXPECT().Create(gomock.Any()).Return(nil).AnyTimes()
 	authSvc := service.NewAuthService(issuer, userRepo, tokenRepo, backupSvc, auditRepo, 30*24*time.Hour)
 
-	svc := service.NewWebAuthnService(wa, authSvc, userRepo, credRepo, challengeRepo, auditRepo)
+	svc := service.NewWebAuthnService(wa, authSvc, userRepo, credRepo, challengeRepo, auditRepo, backupSvc)
 	return svc, userRepo, credRepo, challengeRepo
 }
 
