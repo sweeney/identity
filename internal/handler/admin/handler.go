@@ -539,6 +539,15 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.verifyAdminPassword(r); err != nil {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction": "/admin/oauth/" + id + "/edit",
+			"Client":     client,
+			"Error":      "Incorrect password. Please try again.",
+		})
+		return
+	}
+
 	name := strings.TrimSpace(r.FormValue("name"))
 	rawURIs := r.FormValue("redirect_uris")
 

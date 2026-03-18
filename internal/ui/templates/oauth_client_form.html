@@ -23,6 +23,12 @@
         Redirect URIs <small>(one per line)</small>
         <textarea name="redirect_uris" rows="4" required placeholder="https://myapp.example.com/callback&#10;myapp://callback">{{if .Client}}{{range $i, $uri := .Client.RedirectURIs}}{{if $i}}&#10;{{end}}{{$uri}}{{end}}{{else}}{{.FormRedirectURIs}}{{end}}</textarea>
     </label>
+    {{if .Client}}
+    <label>
+        Admin Password
+        <input type="password" name="admin_password" required placeholder="Confirm your password to save changes">
+    </label>
+    {{end}}
     <div class="flex-row">
         <button type="submit">{{if .Client}}Save Changes{{else}}Create Client{{end}}</button>
         <a href="/admin/oauth" class="btn btn-secondary">Cancel</a>

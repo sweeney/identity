@@ -512,9 +512,10 @@ func TestOAuthClientEdit_AuditLogged(t *testing.T) {
 
 	csrf := csrfTokenFor(session.Value)
 	form := url.Values{
-		"_csrf":         {csrf},
-		"name":          {"New Name"},
-		"redirect_uris": {"https://example.com/callback"},
+		"_csrf":          {csrf},
+		"name":           {"New Name"},
+		"redirect_uris":  {"https://example.com/callback"},
+		"admin_password": {adminPass},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/edit", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

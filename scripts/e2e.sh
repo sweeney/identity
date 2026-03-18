@@ -105,7 +105,7 @@ check_contains "Client list shows testapp" "testapp" "$BODY"
 
 STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b "admin_session=$COOKIE" \
   -X POST "$BASE/admin/oauth/testapp/edit" \
-  -d "_csrf=$CSRF&name=Test+App+v2&redirect_uris=http://localhost:3000/callback" \
+  -d "_csrf=$CSRF&name=Test+App+v2&redirect_uris=http://localhost:3000/callback&admin_password=adminpassword1" \
   -H "Content-Type: application/x-www-form-urlencoded")
 check "Edit client = 303" "303" "$STATUS"
 BODY=$(curl -s -b "admin_session=$COOKIE" "$BASE/admin/oauth")

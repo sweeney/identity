@@ -261,10 +261,14 @@ func run() error {
 	// Rate limiters
 	// Strict: 5 req/min (≈0.083/s) with burst of 5 for auth endpoints
 	// General: 30 req/min (0.5/s) with burst of 10 for all other endpoints
+	if cfg.RateLimitDisabled && cfg.IsProduction() {
+		log.Println("WARNING: RATE_LIMIT_DISABLED ignored in production")
+		cfg.RateLimitDisabled = false
+	}
 	var authRateLimiter, generalRateLimiter *ratelimit.Limiter
 	if !cfg.RateLimitDisabled {
-		authRateLimiter = ratelimit.NewLimiter(5.0/60.0, 5)
-		generalRateLimiter = ratelimit.NewLimiter(30.0/60.0, 10)
+		authRateLimiter = ratelimit.NewLimiter(5.0/60.0, 5, cfg.TrustProxy)
+		generalRateLimiter = ratelimit.NewLimiter(30.0/60.0, 10, cfg.TrustProxy)
 		log.Println("rate limiting enabled")
 	} else {
 		log.Println("rate limiting disabled (RATE_LIMIT_DISABLED)")
@@ -286,8 +290,12 @@ func run() error {
 	// and let the rest of the API router handle other /api/v1/ paths.
 	mux.Handle("POST /api/v1/auth/login", wrapAuth(apiRouter))
 	mux.Handle("/api/v1/", apiRouter)
-	mux.Handle("POST /oauth/token", wrapAuth(oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy)))
-	mux.Handle("/oauth/", oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy))
+	// All auth endpoints that accept credentials must use the strict rate limiter:
+	//   POST /api/v1/auth/login, POST /oauth/token, POST /oauth/authorize, POST /admin/login
+	oauthRouter := oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy)
+	mux.Handle("POST /oauth/token", wrapAuth(oauthRouter))
+	mux.Handle("POST /oauth/authorize", wrapAuth(oauthRouter))
+	mux.Handle("/oauth/", oauthRouter)
 	adminRouter := admin.NewRouter(admin.Config{
 		SessionSecret: secrets.Current,
 		Production:    cfg.IsProduction(),

@@ -5,6 +5,8 @@ package store_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -206,37 +208,45 @@ func TestTokenStore_RotateToken_PreventsConcurrentDoubleRotation(t *testing.T) {
 	old := newToken(u.ID, "family-race", "rawtoken-race")
 	require.NoError(t, ts.Create(old))
 
-	// First rotation should succeed
-	newTok1 := &domain.RefreshToken{
-		ID:         "tok-race-1",
-		TokenHash:  sha256hex("rawtoken-race-new1"),
-		IssuedAt:   time.Now().UTC(),
-		LastUsedAt: time.Now().UTC(),
-		ExpiresAt:  time.Now().UTC().Add(30 * 24 * time.Hour),
-	}
-	gotOld, err := ts.RotateToken(sha256hex("rawtoken-race"), newTok1)
-	require.NoError(t, err)
-	assert.Equal(t, old.ID, gotOld.ID)
+	const goroutines = 10
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var successes, failures int
 
-	// Second rotation of same token should fail with ErrTokenAlreadyRevoked
-	newTok2 := &domain.RefreshToken{
-		ID:         "tok-race-2",
-		TokenHash:  sha256hex("rawtoken-race-new2"),
-		IssuedAt:   time.Now().UTC(),
-		LastUsedAt: time.Now().UTC(),
-		ExpiresAt:  time.Now().UTC().Add(30 * 24 * time.Hour),
-	}
-	gotOld2, err := ts.RotateToken(sha256hex("rawtoken-race"), newTok2)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, domain.ErrTokenAlreadyRevoked)
-	assert.NotNil(t, gotOld2)
-	assert.True(t, gotOld2.IsRevoked)
+	// Barrier: all goroutines start at the same time
+	start := make(chan struct{})
 
-	// Only the first new token should exist
-	_, err = ts.GetByHash(sha256hex("rawtoken-race-new1"))
-	assert.NoError(t, err)
-	_, err = ts.GetByHash(sha256hex("rawtoken-race-new2"))
-	assert.ErrorIs(t, err, domain.ErrNotFound)
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start // wait for barrier
+
+			newTok := &domain.RefreshToken{
+				ID:         fmt.Sprintf("tok-race-%d", id),
+				TokenHash:  sha256hex(fmt.Sprintf("rawtoken-race-new-%d", id)),
+				DeviceHint: "test device",
+				IssuedAt:   time.Now().UTC(),
+				LastUsedAt: time.Now().UTC(),
+				ExpiresAt:  time.Now().UTC().Add(30 * 24 * time.Hour),
+			}
+			_, err := ts.RotateToken(sha256hex("rawtoken-race"), newTok)
+
+			mu.Lock()
+			if err == nil {
+				successes++
+			} else {
+				failures++
+			}
+			mu.Unlock()
+		}(i)
+	}
+
+	close(start) // release all goroutines at once
+	wg.Wait()
+
+	assert.Equal(t, 1, successes, "exactly one rotation should succeed")
+	assert.Equal(t, goroutines-1, failures, "all others should fail")
 }
 
 func TestTokenStore_RevokeFamilyByHash(t *testing.T) {

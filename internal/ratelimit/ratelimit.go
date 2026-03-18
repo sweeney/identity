@@ -3,11 +3,11 @@ package ratelimit
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/sweeney/identity/internal/httputil"
 	"golang.org/x/time/rate"
 )
 
@@ -19,22 +19,32 @@ type visitor struct {
 
 // Limiter provides per-IP rate limiting middleware.
 type Limiter struct {
-	mu       sync.Mutex
-	visitors map[string]*visitor
-	rate     rate.Limit
-	burst    int
-	now      func() time.Time // for testing
+	mu          sync.Mutex
+	visitors    map[string]*visitor
+	rate        rate.Limit
+	burst       int
+	trustProxy  string
+	maxVisitors int
+	now         func() time.Time // for testing
 }
 
-// NewLimiter creates a rate limiter.
+// NewLimiter creates a rate limiter with a default max of 100,000 tracked visitors.
 // r is the rate in requests per second, burst is the maximum burst size.
+// trustProxy controls whether proxy headers (e.g. CF-Connecting-IP) are trusted for IP extraction.
 // Stale entries are cleaned up every 3 minutes.
-func NewLimiter(r float64, burst int) *Limiter {
+func NewLimiter(r float64, burst int, trustProxy string) *Limiter {
+	return NewLimiterWithMaxVisitors(r, burst, trustProxy, 100000)
+}
+
+// NewLimiterWithMaxVisitors creates a rate limiter with a configurable max visitor cap.
+func NewLimiterWithMaxVisitors(r float64, burst int, trustProxy string, maxVisitors int) *Limiter {
 	l := &Limiter{
-		visitors: make(map[string]*visitor),
-		rate:     rate.Limit(r),
-		burst:    burst,
-		now:      time.Now,
+		visitors:    make(map[string]*visitor),
+		rate:        rate.Limit(r),
+		burst:       burst,
+		trustProxy:  trustProxy,
+		maxVisitors: maxVisitors,
+		now:         time.Now,
 	}
 	go l.cleanupLoop()
 	return l
@@ -46,14 +56,24 @@ func (l *Limiter) getVisitor(ip string) *rate.Limiter {
 	defer l.mu.Unlock()
 
 	v, exists := l.visitors[ip]
-	if !exists {
-		limiter := rate.NewLimiter(l.rate, l.burst)
-		l.visitors[ip] = &visitor{limiter: limiter, lastSeen: l.now()}
-		return limiter
+	if exists {
+		v.lastSeen = l.now()
+		return v.limiter
 	}
 
-	v.lastSeen = l.now()
-	return v.limiter
+	// Enforce max visitors
+	if len(l.visitors) >= l.maxVisitors {
+		// Emergency cleanup — remove entries older than 30 seconds
+		l.cleanupLocked(30 * time.Second)
+	}
+	if len(l.visitors) >= l.maxVisitors {
+		// Still full — return a deny-all limiter (don't store it)
+		return rate.NewLimiter(0, 0)
+	}
+
+	limiter := rate.NewLimiter(l.rate, l.burst)
+	l.visitors[ip] = &visitor{limiter: limiter, lastSeen: l.now()}
+	return limiter
 }
 
 // cleanupLoop removes visitors that haven't been seen in the last 3 minutes.
@@ -69,7 +89,11 @@ func (l *Limiter) cleanupLoop() {
 func (l *Limiter) Cleanup(maxAge time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.cleanupLocked(maxAge)
+}
 
+// cleanupLocked removes entries older than maxAge. Caller must hold l.mu.
+func (l *Limiter) cleanupLocked(maxAge time.Duration) {
 	now := l.now()
 	for ip, v := range l.visitors {
 		if now.Sub(v.lastSeen) > maxAge {
@@ -88,7 +112,7 @@ func (l *Limiter) VisitorCount() int {
 // Middleware returns an http.Handler that rate-limits by client IP.
 func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := ExtractClientIP(r)
+		ip := httputil.ExtractClientIP(r, l.trustProxy)
 		limiter := l.getVisitor(ip)
 
 		if !limiter.Allow() {
@@ -105,17 +129,4 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-// ExtractClientIP returns the best-available client IP from the request.
-// Prefers CF-Connecting-IP (set by Cloudflare), falls back to RemoteAddr host.
-func ExtractClientIP(r *http.Request) string {
-	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" {
-		return cf
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }

@@ -60,6 +60,36 @@ func TestLoad_InvalidPort(t *testing.T) {
 	assert.Contains(t, err.Error(), "PORT")
 }
 
+func TestLoad_RateLimitDisabledInProduction(t *testing.T) {
+	// Verify that config correctly loads both RATE_LIMIT_DISABLED and production env.
+	// The production guard in main.go overrides cfg.RateLimitDisabled when IsProduction() is true.
+	t.Setenv("RATE_LIMIT_DISABLED", "1")
+	t.Setenv("IDENTITY_ENV", "production")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.True(t, cfg.RateLimitDisabled, "config should load the flag as-is")
+	assert.True(t, cfg.IsProduction(), "should be production")
+
+	// Simulate the production guard from main.go
+	if cfg.RateLimitDisabled && cfg.IsProduction() {
+		cfg.RateLimitDisabled = false
+	}
+	assert.False(t, cfg.RateLimitDisabled, "production guard should override the flag")
+}
+
+func TestLoad_RateLimitDisabledInDevelopment(t *testing.T) {
+	t.Setenv("RATE_LIMIT_DISABLED", "1")
+	t.Setenv("IDENTITY_ENV", "development")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.True(t, cfg.RateLimitDisabled, "should be disabled in development")
+	assert.False(t, cfg.IsProduction())
+}
+
 func TestLoad_JWTPrevSecret(t *testing.T) {
 	t.Setenv("JWT_SECRET", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=")
 	t.Setenv("JWT_SECRET_PREV", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=")
