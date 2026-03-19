@@ -31,6 +31,6 @@
         data-state="{{.State}}"
         data-code-challenge="{{.CodeChallenge}}">Sign in with passkey</button>
 </div>
-<script src="/static/webauthn.js"></script>
-<script src="/static/passkey-login.js"></script>
+<script src="/static/webauthn.js?v={{assetVer}}"></script>
+<script src="/static/passkey-login.js?v={{assetVer}}"></script>
 {{end}}

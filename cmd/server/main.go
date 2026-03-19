@@ -336,7 +336,9 @@ func run() error {
 	staticFS, _ := fs.Sub(ui.StaticFS, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	homeHTML, _ := ui.TemplateFS.ReadFile("templates/home.html")
-	homeTmpl, _ := template.New("home").Parse(string(homeHTML))
+	homeTmpl, _ := template.New("home").Funcs(template.FuncMap{
+		"assetVer": func() string { return ui.AssetVersion },
+	}).Parse(string(homeHTML))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		homeTmpl.Execute(w, map[string]string{"SiteName": cfg.SiteName}) //nolint:errcheck

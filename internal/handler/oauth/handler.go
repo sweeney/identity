@@ -104,11 +104,14 @@ func (h *oauthHandler) authorizeGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Mark RedirectURI as trusted — it was already validated against the client's
+	// registered URIs. Without this, html/template sanitizes custom URL schemes
+	// (e.g. myapp://callback) to #ZgotmplZ in the data-redirect-uri attribute.
 	h.render(w, "oauth_login.html", map[string]any{
 		"HideNav":             true,
 		"ClientName":          client.Name,
 		"ClientID":            clientID,
-		"RedirectURI":         redirectURI,
+		"RedirectURI":         template.URL(redirectURI),
 		"State":               state,
 		"CodeChallenge":       codeChallenge,
 		"CodeChallengeMethod": codeChallengeMethod,
@@ -151,7 +154,7 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 				"HideNav":       true,
 				"ClientName":    client.Name,
 				"ClientID":      clientID,
-				"RedirectURI":   redirectURI,
+				"RedirectURI":   template.URL(redirectURI),
 				"State":         state,
 				"CodeChallenge": codeChallenge,
 				"Error":         errMsg,
@@ -178,7 +181,7 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 			"HideNav":       true,
 			"ClientName":    client.Name,
 			"ClientID":      clientID,
-			"RedirectURI":   redirectURI,
+			"RedirectURI":   template.URL(redirectURI),
 			"State":         state,
 			"CodeChallenge": codeChallenge,
 			"Error":         errMsg,
