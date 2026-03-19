@@ -6,7 +6,7 @@
     <form method="POST" action="/admin/login" id="login-form">
         <label>
             Username
-            <input type="text" name="username" id="login-username" value="{{.Username}}" autofocus required autocomplete="username webauthn">
+            <input type="text" name="username" id="login-username" value="{{.Username}}" autofocus required autocomplete="username webauthn" autocapitalize="none" autocorrect="off" spellcheck="false">
         </label>
         <label>
             Password

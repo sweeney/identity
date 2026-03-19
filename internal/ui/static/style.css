@@ -162,6 +162,35 @@ article, .card {
 
 /* Passkey login */
 .login-box { max-width: 420px; margin: 4rem auto; }
+
+@media (max-width: 480px) {
+    /* Prevent iOS auto-zoom on input focus (requires font-size >= 16px) */
+    input[type="text"], input[type="password"], input[type="email"], select, textarea {
+        font-size: 1rem;
+    }
+
+    /* Fill the dynamic viewport height — this value shrinks when the iOS keyboard
+       appears, so the container automatically contracts to the space above it.
+       Flex centering then keeps the login box in that visible area. */
+    .container {
+        min-height: 100dvh;
+        padding-bottom: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+
+    .login-box { margin: 0 auto; }
+
+    /* Tighten vertical rhythm so the full form fits above the keyboard */
+    .login-box h2                             { font-size: 1.2rem; margin-bottom: 0.3rem; }
+    .login-box > p                            { margin-bottom: 0.5rem; }
+    .login-box label                          { margin-bottom: 0.65rem; }
+    .login-box input[type="text"],
+    .login-box input[type="password"]         { padding: 0.4rem 0.6rem; margin-top: 0.2rem; }
+    .login-box button[type="submit"]          { padding: 0.45rem 1.25rem; }
+    .login-box .passkey-divider               { margin: 0.6rem 0 0.4rem; }
+}
 .passkey-hidden { display: none; }
 .passkey-divider { text-align: center; margin: 1.5rem 0 1rem; color: var(--text-muted); font-size: 0.85rem; }
 .passkey-divider-line { display: inline-block; border-top: 1px solid var(--border); width: 30%; vertical-align: middle; }
