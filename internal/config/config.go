@@ -76,7 +76,6 @@ func Load() (*Config, error) {
 		// Defaults
 		Port:            8181,
 		DBPath:          "identity.db",
-		JWTIssuer:       "identity.home",
 		AccessTokenTTL:  15 * time.Minute,
 		RefreshTokenTTL: 30 * 24 * time.Hour,
 		BCryptCost:      12,
@@ -124,6 +123,12 @@ func Load() (*Config, error) {
 	cfg.SiteName = os.Getenv("SITE_NAME")
 	if cfg.SiteName == "" {
 		cfg.SiteName = "Identity"
+	}
+
+	// JWT_ISSUER: the "iss" claim in issued JWTs; defaults to SiteName
+	cfg.JWTIssuer = os.Getenv("JWT_ISSUER")
+	if cfg.JWTIssuer == "" {
+		cfg.JWTIssuer = cfg.SiteName
 	}
 
 	// TRUST_PROXY: "cloudflare" trusts CF-Connecting-IP, anything else means use RemoteAddr
