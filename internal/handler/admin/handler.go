@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -813,40 +814,51 @@ func (h *adminHandler) oauthDeletePost(w http.ResponseWriter, r *http.Request) {
 
 // --- Audit Log ---
 
-const auditLogLimit = 200
+const auditPageSize = 100
 
 func (h *adminHandler) auditLog(w http.ResponseWriter, r *http.Request) {
 	filterUserID := r.URL.Query().Get("user_id")
 	filterEventType := r.URL.Query().Get("event_type")
 
-	var events []*domain.AuthEvent
-	var err error
-
-	if filterUserID != "" {
-		events, err = h.auditRepo.ListForUser(filterUserID, auditLogLimit)
-	} else {
-		events, err = h.auditRepo.List(auditLogLimit)
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
 	}
+	offset := (page - 1) * auditPageSize
+
+	total, err := h.auditRepo.CountFiltered(filterUserID, filterEventType)
 	if err != nil {
 		http.Error(w, "failed to load audit log", http.StatusInternalServerError)
 		return
 	}
 
-	// Filter by event type client-side (simple filter)
-	if filterEventType != "" {
-		var filtered []*domain.AuthEvent
-		for _, e := range events {
-			if e.EventType == filterEventType {
-				filtered = append(filtered, e)
-			}
-		}
-		events = filtered
+	events, err := h.auditRepo.ListFiltered(filterUserID, filterEventType, auditPageSize, offset)
+	if err != nil {
+		http.Error(w, "failed to load audit log", http.StatusInternalServerError)
+		return
 	}
+
+	totalPages := (total + auditPageSize - 1) / auditPageSize
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	showFrom := offset + 1
+	showTo := offset + len(events)
 
 	h.render(w, r, "audit_log.html", map[string]any{
 		"Events":          events,
 		"FilterUserID":    filterUserID,
 		"FilterEventType": filterEventType,
+		"Page":            page,
+		"TotalPages":      totalPages,
+		"Total":           total,
+		"ShowFrom":        showFrom,
+		"ShowTo":          showTo,
+		"HasPrev":         page > 1,
+		"HasNext":         page < totalPages,
+		"PrevPage":        page - 1,
+		"NextPage":        page + 1,
 	})
 }
 

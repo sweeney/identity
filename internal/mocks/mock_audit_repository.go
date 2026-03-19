@@ -70,6 +70,36 @@ func (mr *MockAuditRepositoryMockRecorder) ListForUser(userID, limit any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListForUser", reflect.TypeOf((*MockAuditRepository)(nil).ListForUser), userID, limit)
 }
 
+// CountFiltered mocks base method.
+func (m *MockAuditRepository) CountFiltered(userID, eventType string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountFiltered", userID, eventType)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountFiltered indicates an expected call of CountFiltered.
+func (mr *MockAuditRepositoryMockRecorder) CountFiltered(userID, eventType any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountFiltered", reflect.TypeOf((*MockAuditRepository)(nil).CountFiltered), userID, eventType)
+}
+
+// ListFiltered mocks base method.
+func (m *MockAuditRepository) ListFiltered(userID, eventType string, limit, offset int) ([]*domain.AuthEvent, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListFiltered", userID, eventType, limit, offset)
+	ret0, _ := ret[0].([]*domain.AuthEvent)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListFiltered indicates an expected call of ListFiltered.
+func (mr *MockAuditRepositoryMockRecorder) ListFiltered(userID, eventType, limit, offset any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListFiltered", reflect.TypeOf((*MockAuditRepository)(nil).ListFiltered), userID, eventType, limit, offset)
+}
+
 // Record mocks base method.
 func (m *MockAuditRepository) Record(event *domain.AuthEvent) error {
 	m.ctrl.T.Helper()

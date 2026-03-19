@@ -73,6 +73,35 @@ func (s *AuditStore) ListForUser(userID string, limit int) ([]*domain.AuthEvent,
 	return scanAuthEvents(rows)
 }
 
+func (s *AuditStore) ListFiltered(userID, eventType string, limit, offset int) ([]*domain.AuthEvent, error) {
+	rows, err := s.db.DB().Query(
+		`SELECT id, event_type, COALESCE(user_id,''), username, COALESCE(client_id,''),
+		        COALESCE(device_hint,''), COALESCE(ip_address,''), detail, occurred_at
+		 FROM auth_events
+		 WHERE (? = '' OR user_id = ?) AND (? = '' OR event_type = ?)
+		 ORDER BY occurred_at DESC LIMIT ? OFFSET ?`,
+		userID, userID, eventType, eventType, limit, offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list filtered auth events: %w", err)
+	}
+	defer rows.Close()
+	return scanAuthEvents(rows)
+}
+
+func (s *AuditStore) CountFiltered(userID, eventType string) (int, error) {
+	var count int
+	err := s.db.DB().QueryRow(
+		`SELECT COUNT(*) FROM auth_events
+		 WHERE (? = '' OR user_id = ?) AND (? = '' OR event_type = ?)`,
+		userID, userID, eventType, eventType,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count filtered auth events: %w", err)
+	}
+	return count, nil
+}
+
 func scanAuthEvents(rows *sql.Rows) ([]*domain.AuthEvent, error) {
 	var events []*domain.AuthEvent
 	for rows.Next() {

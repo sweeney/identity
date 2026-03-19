@@ -85,4 +85,6 @@ type AuditRepository interface {
 	Record(event *AuthEvent) error
 	List(limit int) ([]*AuthEvent, error)
 	ListForUser(userID string, limit int) ([]*AuthEvent, error)
+	ListFiltered(userID, eventType string, limit, offset int) ([]*AuthEvent, error)
+	CountFiltered(userID, eventType string) (int, error)
 }

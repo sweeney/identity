@@ -18,6 +18,7 @@
 </form>
 
 {{if .Events}}
+<p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.75rem">Showing {{.ShowFrom}}–{{.ShowTo}} of {{.Total}}</p>
 <table>
     <thead>
         <tr>
@@ -60,6 +61,13 @@
     {{end}}
     </tbody>
 </table>
+{{if gt .TotalPages 1}}
+<div class="pagination">
+    {{if .HasPrev}}<a href="/admin/audit?page={{.PrevPage}}{{if .FilterUserID}}&amp;user_id={{.FilterUserID}}{{end}}{{if .FilterEventType}}&amp;event_type={{.FilterEventType}}{{end}}" class="btn btn-secondary btn-small">← Previous</a>{{end}}
+    <span>Page {{.Page}} of {{.TotalPages}}</span>
+    {{if .HasNext}}<a href="/admin/audit?page={{.NextPage}}{{if .FilterUserID}}&amp;user_id={{.FilterUserID}}{{end}}{{if .FilterEventType}}&amp;event_type={{.FilterEventType}}{{end}}" class="btn btn-secondary btn-small">Next →</a>{{end}}
+</div>
+{{end}}
 {{else}}
 <p>No audit events found.</p>
 {{end}}
