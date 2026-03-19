@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -86,7 +88,12 @@ type loginBeginRequest struct {
 
 func (h *webauthnHandler) loginBegin(w http.ResponseWriter, r *http.Request) {
 	var req loginBeginRequest
-	json.NewDecoder(r.Body).Decode(&req) //nolint:errcheck
+	if body, _ := io.ReadAll(r.Body); len(body) > 0 {
+		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil {
+			jsonError(w, http.StatusBadRequest, "invalid_request_body", "request body must be JSON")
+			return
+		}
+	}
 
 	assertion, challengeID, err := h.svc.BeginLogin(req.Username)
 	if err != nil {

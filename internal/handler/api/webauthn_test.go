@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -210,6 +211,36 @@ func TestWebAuthnLoginBegin_NoCredentials(t *testing.T) {
 	var resp map[string]any
 	decodeJSON(t, rr, &resp)
 	assert.Equal(t, "disc-ch-1", resp["challenge_id"])
+}
+
+func TestWebAuthnLoginBegin_MalformedJSON_Returns400(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	webauthnSvc := mocks.NewMockWebAuthnServicer(ctrl) // no expectations — must not be called
+	h := api.NewRouter(newTestIssuer(t), nil, nil, webauthnSvc, "")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/login/begin", strings.NewReader("{not valid json"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	var resp map[string]string
+	json.NewDecoder(rr.Body).Decode(&resp) //nolint:errcheck
+	assert.Equal(t, "invalid_request_body", resp["error"])
+}
+
+func TestWebAuthnLoginBegin_FormEncodedBody_Returns400(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	webauthnSvc := mocks.NewMockWebAuthnServicer(ctrl) // no expectations — must not be called
+	h := api.NewRouter(newTestIssuer(t), nil, nil, webauthnSvc, "")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/login/begin", strings.NewReader("username=alice"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	var resp map[string]string
+	json.NewDecoder(rr.Body).Decode(&resp) //nolint:errcheck
+	assert.Equal(t, "invalid_request_body", resp["error"])
 }
 
 // --- POST /api/v1/webauthn/login/finish ---
