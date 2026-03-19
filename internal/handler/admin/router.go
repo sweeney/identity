@@ -20,7 +20,9 @@ type Config struct {
 
 // NewRouter builds the /admin mux.
 func NewRouter(cfg Config, authSvc service.AuthServicer, userSvc service.UserServicer, oauthClients domain.OAuthClientRepository, auditRepo domain.AuditRepository, backupSvc domain.BackupService, tokenIssuer *auth.TokenIssuer, webauthnSvc service.WebAuthnServicer) http.Handler {
-	funcs := template.FuncMap{}
+	funcs := template.FuncMap{
+		"assetVer": func() string { return ui.AssetVersion },
+	}
 
 	// Parse only the base template at startup; page templates are cloned in per-request.
 	baseTmpl := template.Must(

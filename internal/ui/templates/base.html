@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{block "title" .}}Identity{{end}} — {{if .SiteName}}{{.SiteName}}{{else}}Identity{{end}}</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/style.css?v={{assetVer}}">
 </head>
 <body>
     <main class="container">

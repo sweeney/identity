@@ -18,7 +18,9 @@ func NewRouter(svc service.OAuthServicer, trustProxy string, tokenIssuer *auth.T
 		return http.NotFoundHandler()
 	}
 
-	funcs := template.FuncMap{}
+	funcs := template.FuncMap{
+		"assetVer": func() string { return ui.AssetVersion },
+	}
 	baseTmpl := template.Must(
 		template.New("base.html").Funcs(funcs).ParseFS(ui.TemplateFS, "templates/base.html"),
 	)
