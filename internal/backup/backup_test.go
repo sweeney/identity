@@ -19,26 +19,38 @@ func TestManager_TriggerAsync_CoalescesMultipleTriggers(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uploader := mocks.NewMockUploader(ctrl)
 
-	// Only one upload should occur even if TriggerAsync is called many times rapidly
-	uploader.EXPECT().Upload(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+	// Only one upload should occur even if TriggerAsync is called many times rapidly.
+	done := make(chan struct{})
+	uploader.EXPECT().Upload(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _, _ string) error {
+			close(done)
+			return nil
+		},
+	).Times(1)
 
 	m := backup.NewManager(backup.Config{
 		DBPath:     ":memory:",
 		BucketName: "test-bucket",
 	}, uploader, nil)
 
+	// Fire all triggers before starting the background goroutine. The channel
+	// has capacity 1, so exactly one item is queued; the remaining 9 hit the
+	// default branch and are dropped. This makes coalescing deterministic.
+	for range 10 {
+		m.TriggerAsync()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	m.Start(ctx)
 
-	// Fire many triggers rapidly
-	for range 10 {
-		m.TriggerAsync()
+	select {
+	case <-done:
+		// single upload completed — pass
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for upload")
 	}
-
-	// Give background goroutine time to process
-	time.Sleep(200 * time.Millisecond)
 }
 
 func TestManager_TriggerAsync_NoBlockOnFullChannel(t *testing.T) {
