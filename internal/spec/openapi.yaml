@@ -32,6 +32,8 @@ tags:
     description: User management (admin only except GET /users/{id})
   - name: oauth
     description: OAuth 2.0 Authorization Code + PKCE (endpoints are at /oauth, not /api/v1)
+  - name: webauthn
+    description: Passkey / WebAuthn registration, authentication, and credential management
 
 components:
   securitySchemes:
@@ -105,7 +107,8 @@ components:
             Known codes: invalid_credentials, account_disabled, invalid_refresh_token,
             token_expired, token_family_compromised, forbidden, not_found, username_taken,
             cannot_delete_last_admin, validation_error, user_limit_reached, weak_password,
-            rate_limited, internal_error
+            rate_limited, internal_error, webauthn_not_enabled, webauthn_invalid_challenge,
+            webauthn_verification_failed, webauthn_credential_not_found, webauthn_credential_limit
         message:
           type: string
           description: Human-readable description. Do not parse programmatically.
@@ -120,6 +123,23 @@ components:
           enum: [invalid_request, invalid_grant, unsupported_grant_type, access_denied, server_error]
         error_description:
           type: string
+
+    WebAuthnCredential:
+      type: object
+      required: [id, name, created_at, last_used_at]
+      properties:
+        id:
+          type: string
+          description: Internal UUID for this passkey (use this for rename/delete operations)
+        name:
+          type: string
+          description: User-provided label for the passkey
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
 
 paths:
   /auth/login:
@@ -635,3 +655,333 @@ paths:
                   value:
                     error: invalid_grant
                     error_description: The authorization code has already been used.
+
+  # ── WebAuthn / Passkey endpoints ───────────────────────────────
+
+  /webauthn/register/begin:
+    post:
+      operationId: webauthnRegisterBegin
+      summary: Begin passkey registration
+      description: |
+        Starts the WebAuthn registration ceremony for the authenticated user.
+        Returns credential creation options (pass to `navigator.credentials.create()`)
+        and a `challenge_id` to submit back in the finish step.
+        Challenges expire after 120 seconds.
+      tags: [webauthn]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Registration ceremony started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publicKey, challenge_id]
+                properties:
+                  publicKey:
+                    type: object
+                    description: WebAuthn PublicKeyCredentialCreationOptions — pass directly to navigator.credentials.create()
+                  challenge_id:
+                    type: string
+                    description: Server-generated challenge ID. Submit this in the finish step.
+        "400":
+          description: Passkeys not enabled on this server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: webauthn_not_enabled
+                message: passkeys are not enabled on this server
+        "401":
+          description: Missing or invalid access token
+        "409":
+          description: Maximum number of passkeys reached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: webauthn_credential_limit
+                message: maximum number of passkeys reached
+
+  /webauthn/register/finish:
+    post:
+      operationId: webauthnRegisterFinish
+      summary: Complete passkey registration
+      description: |
+        Completes the WebAuthn registration ceremony. The request body is the raw
+        JSON output from `navigator.credentials.create()`. The challenge ID is
+        required (via query parameter or `X-Challenge-ID` header). An optional
+        passkey name can be provided via query parameter or `X-Passkey-Name` header.
+      tags: [webauthn]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: challenge_id
+          in: query
+          required: true
+          description: Challenge ID from the begin step (also accepted via `X-Challenge-ID` header)
+          schema:
+            type: string
+        - name: name
+          in: query
+          required: false
+          description: Human-readable label for the passkey (also accepted via `X-Passkey-Name` header)
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: Raw JSON output from navigator.credentials.create()
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Passkey registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnCredential'
+        "400":
+          description: Validation error, challenge invalid/expired, or verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missing_challenge:
+                  value:
+                    error: validation_error
+                    message: challenge_id is required
+                invalid_challenge:
+                  value:
+                    error: webauthn_invalid_challenge
+                    message: challenge expired or not found
+                verification_failed:
+                  value:
+                    error: webauthn_verification_failed
+                    message: passkey registration verification failed
+                not_enabled:
+                  value:
+                    error: webauthn_not_enabled
+                    message: passkeys are not enabled on this server
+        "401":
+          description: Missing or invalid access token
+
+  /webauthn/login/begin:
+    post:
+      operationId: webauthnLoginBegin
+      summary: Begin passkey authentication
+      description: |
+        Starts the WebAuthn authentication ceremony. No authentication required.
+        If `username` is provided, the server associates the challenge with that user
+        (but still uses discoverable credential flow to prevent username enumeration).
+        If `username` is omitted, uses a fully discoverable credential flow.
+        Returns assertion options (pass to `navigator.credentials.get()`)
+        and a `challenge_id` for the finish step.
+      tags: [webauthn]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  description: Optional username hint. Omit for fully discoverable (usernameless) login.
+                  example: alice
+      responses:
+        "200":
+          description: Authentication ceremony started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publicKey, challenge_id]
+                properties:
+                  publicKey:
+                    type: object
+                    description: WebAuthn PublicKeyCredentialRequestOptions — pass directly to navigator.credentials.get()
+                  challenge_id:
+                    type: string
+                    description: Server-generated challenge ID. Submit this in the finish step.
+        "400":
+          description: Passkeys not enabled on this server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: webauthn_not_enabled
+                message: passkeys are not enabled on this server
+
+  /webauthn/login/finish:
+    post:
+      operationId: webauthnLoginFinish
+      summary: Complete passkey authentication
+      description: |
+        Completes the WebAuthn authentication ceremony and issues JWT tokens.
+        The request body is the raw JSON output from `navigator.credentials.get()`.
+        The challenge ID is required (via query parameter or `X-Challenge-ID` header).
+        On success, returns the same token response as password-based login.
+      tags: [webauthn]
+      parameters:
+        - name: challenge_id
+          in: query
+          required: true
+          description: Challenge ID from the begin step (also accepted via `X-Challenge-ID` header)
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: Raw JSON output from navigator.credentials.get()
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Authentication successful — tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        "400":
+          description: Validation error or challenge invalid/expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missing_challenge:
+                  value:
+                    error: validation_error
+                    message: challenge_id query parameter is required
+                invalid_challenge:
+                  value:
+                    error: webauthn_invalid_challenge
+                    message: challenge expired or not found
+                not_enabled:
+                  value:
+                    error: webauthn_not_enabled
+                    message: passkeys are not enabled on this server
+        "401":
+          description: Passkey verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: webauthn_verification_failed
+                message: passkey authentication failed
+        "403":
+          description: Account disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: account_disabled
+                message: account has been disabled
+
+  /webauthn/credentials:
+    get:
+      operationId: webauthnListCredentials
+      summary: List passkeys
+      description: Returns all registered passkeys for the authenticated user.
+      tags: [webauthn]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Passkey list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credentials, total]
+                properties:
+                  credentials:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WebAuthnCredential'
+                  total:
+                    type: integer
+        "401":
+          description: Missing or invalid access token
+
+  /webauthn/credentials/{id}:
+    patch:
+      operationId: webauthnRenameCredential
+      summary: Rename a passkey
+      description: Updates the display name of a passkey owned by the authenticated user.
+      tags: [webauthn]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Internal passkey UUID (from the `id` field in credential responses)
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: New display name for the passkey (max 100 characters, control characters stripped)
+      responses:
+        "204":
+          description: Passkey renamed
+        "400":
+          description: Invalid JSON
+        "401":
+          description: Missing or invalid access token
+        "404":
+          description: Passkey not found (or not owned by this user)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: webauthn_credential_not_found
+                message: passkey not found
+
+    delete:
+      operationId: webauthnDeleteCredential
+      summary: Delete a passkey
+      description: Permanently removes a passkey owned by the authenticated user.
+      tags: [webauthn]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Internal passkey UUID (from the `id` field in credential responses)
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Passkey deleted
+        "401":
+          description: Missing or invalid access token
+        "404":
+          description: Passkey not found (or not owned by this user)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: webauthn_credential_not_found
+                message: passkey not found
