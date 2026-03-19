@@ -130,10 +130,12 @@ func TestAuthorizePost_Success(t *testing.T) {
 		"password":     {"password"},
 	})
 
-	assert.Equal(t, http.StatusFound, rr.Code)
-	loc := rr.Header().Get("Location")
-	assert.Contains(t, loc, "code=raw-code-xyz")
-	assert.Contains(t, loc, "state=state-xyz")
+	// Renders an intermediate redirect page (avoids CSP form-action blocking custom schemes)
+	assert.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, "code=raw-code-xyz")
+	assert.Contains(t, body, "state=state-xyz")
+	assert.Contains(t, body, "Redirecting")
 }
 
 func TestAuthorizePost_StateWithSpecialChars(t *testing.T) {
@@ -150,11 +152,11 @@ func TestAuthorizePost_StateWithSpecialChars(t *testing.T) {
 		"password":       {"password"},
 	})
 
-	assert.Equal(t, http.StatusFound, rr.Code)
-	loc, err := url.Parse(rr.Header().Get("Location"))
-	require.NoError(t, err)
-	assert.Equal(t, "raw-code-xyz", loc.Query().Get("code"))
-	assert.Equal(t, "foo&bar=baz#qux", loc.Query().Get("state"))
+	assert.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, "code=raw-code-xyz")
+	// State must be URL-encoded in the redirect URL
+	assert.Contains(t, body, url.QueryEscape("foo&bar=baz#qux"))
 }
 
 func TestAuthorizePost_StateWithSpaces(t *testing.T) {
@@ -171,11 +173,11 @@ func TestAuthorizePost_StateWithSpaces(t *testing.T) {
 		"password":       {"password"},
 	})
 
-	assert.Equal(t, http.StatusFound, rr.Code)
-	loc, err := url.Parse(rr.Header().Get("Location"))
-	require.NoError(t, err)
-	assert.Equal(t, "raw-code-xyz", loc.Query().Get("code"))
-	assert.Equal(t, "hello world", loc.Query().Get("state"))
+	assert.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, "code=raw-code-xyz")
+	// url.QueryEscape encodes spaces as "+", which html/template further escapes to "&#43;"
+	assert.Contains(t, body, "hello")
 }
 
 func TestAuthorizePost_EmptyState(t *testing.T) {
@@ -192,14 +194,41 @@ func TestAuthorizePost_EmptyState(t *testing.T) {
 		"password":       {"password"},
 	})
 
-	assert.Equal(t, http.StatusFound, rr.Code)
-	loc := rr.Header().Get("Location")
-	assert.NotContains(t, loc, "&state=")
-	assert.NotContains(t, loc, "?state=")
-	// Verify code is still present
-	parsed, err := url.Parse(loc)
-	require.NoError(t, err)
-	assert.Equal(t, "raw-code-xyz", parsed.Query().Get("code"))
+	assert.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.NotContains(t, body, "&amp;state=")
+	assert.Contains(t, body, "code=raw-code-xyz")
+}
+
+func TestAuthorizePost_CustomSchemeRedirect(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+
+	client := &domain.OAuthClient{ID: "client-1", Name: "My App"}
+	svc.EXPECT().ValidateAuthorizeRequest("client-1", "myapp://callback").Return(client, nil)
+	authSvc.EXPECT().AuthorizeUser("alice", "password", gomock.Any()).Return("user-alice", nil)
+	svc.EXPECT().AuthorizeByUserID("client-1", "myapp://callback", "user-alice", "alice", "challenge-abc", gomock.Any()).
+		Return("raw-code-xyz", nil)
+
+	h := newTestRouterWithAuth(svc, authSvc)
+	rr := postForm(t, h, "/oauth/authorize", url.Values{
+		"client_id":      {"client-1"},
+		"redirect_uri":   {"myapp://callback"},
+		"state":          {"state-xyz"},
+		"code_challenge": {"challenge-abc"},
+		"username":       {"alice"},
+		"password":       {"password"},
+	})
+
+	// Must NOT be a 302 redirect — that would be blocked by CSP form-action 'self'
+	// for custom URL schemes. Instead, render an intermediate page with JS redirect.
+	assert.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, "myapp://callback")
+	assert.Contains(t, body, "code=raw-code-xyz")
+	assert.Contains(t, body, "Redirecting")
+	assert.NotEqual(t, http.StatusFound, rr.Code, "must not use 302 for custom scheme redirects")
 }
 
 func TestAuthorizePost_BadCredentials(t *testing.T) {

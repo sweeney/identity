@@ -39,7 +39,7 @@
             code_challenge: btn.getAttribute('data-code-challenge') || '',
           });
 
-          fetch('/oauth/authorize/passkey', {
+          return fetch('/oauth/authorize/passkey', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
@@ -47,7 +47,11 @@
             },
             body: body,
           }).then(function (resp) {
-            if (!resp.ok) throw new Error('Authorization failed');
+            if (!resp.ok) {
+              return resp.json().catch(function () { return {}; }).then(function (err) {
+                throw new Error(err.message || 'Authorization failed');
+              });
+            }
             return resp.json();
           }).then(function (data) {
             window.location.href = data.redirect_uri;

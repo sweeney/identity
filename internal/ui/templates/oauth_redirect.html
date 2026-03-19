@@ -1,0 +1,8 @@
+{{define "title"}}Redirecting{{end}}
+{{define "content"}}
+<div style="max-width:480px;margin:4rem auto;text-align:center">
+    <p>Redirecting to app&hellip;</p>
+    <p><small><a id="redirect-link" href="{{.RedirectURL}}">Click here if you are not redirected</a></small></p>
+</div>
+<script>window.location.replace(document.getElementById('redirect-link').href);</script>
+{{end}}

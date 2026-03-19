@@ -163,7 +163,7 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 		if state != "" {
 			redirectURL += "&state=" + url.QueryEscape(state)
 		}
-		http.Redirect(w, r, redirectURL, http.StatusFound)
+		h.clientRedirect(w, redirectURL)
 		return
 	}
 
@@ -208,19 +208,30 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, redirectURL, http.StatusFound)
+	h.clientRedirect(w, redirectURL)
 }
 
 // authorizePasskey accepts an access_token from a WebAuthn login and issues an OAuth authorization code.
 // This bridges the passkey ceremony (which happens in JavaScript on the login page) into the OAuth flow.
 func (h *oauthHandler) authorizePasskey(w http.ResponseWriter, r *http.Request) {
+	wantsJSON := r.Header.Get("Accept") == "application/json"
+	errResp := func(status int, title, message string) {
+		if wantsJSON {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			json.NewEncoder(w).Encode(map[string]string{"error": title, "message": message}) //nolint:errcheck
+			return
+		}
+		h.renderError(w, title, message)
+	}
+
 	if !httputil.CheckOrigin(r) {
-		h.renderError(w, "Forbidden", "Origin mismatch.")
+		errResp(http.StatusForbidden, "origin_mismatch", "Origin mismatch.")
 		return
 	}
 
 	if err := r.ParseForm(); err != nil {
-		h.renderError(w, "Bad Request", "Could not parse form.")
+		errResp(http.StatusBadRequest, "bad_request", "Could not parse form.")
 		return
 	}
 
@@ -231,31 +242,31 @@ func (h *oauthHandler) authorizePasskey(w http.ResponseWriter, r *http.Request) 
 	codeChallenge := r.FormValue("code_challenge")
 
 	if accessToken == "" || clientID == "" || redirectURI == "" || codeChallenge == "" {
-		h.renderError(w, "Invalid Request", "Missing required parameters.")
+		errResp(http.StatusBadRequest, "missing_parameters", "Missing required parameters.")
 		return
 	}
 
 	if h.tokenIssuer == nil {
-		h.renderError(w, "Not Available", "Passkey login is not configured.")
+		errResp(http.StatusServiceUnavailable, "not_configured", "Passkey login is not configured.")
 		return
 	}
 
 	claims, err := h.tokenIssuer.Parse(accessToken)
 	if err != nil {
-		h.renderError(w, "Authentication Failed", "Invalid or expired token.")
+		errResp(http.StatusUnauthorized, "invalid_token", "Invalid or expired token.")
 		return
 	}
 
 	// Re-validate client
 	_, err = h.svc.ValidateAuthorizeRequest(clientID, redirectURI)
 	if err != nil {
-		h.renderError(w, "Invalid Request", "Client or redirect URI is invalid.")
+		errResp(http.StatusBadRequest, "invalid_client", "Client or redirect URI is invalid.")
 		return
 	}
 
 	rawCode, err := h.svc.AuthorizeByUserID(clientID, redirectURI, claims.UserID, claims.Username, codeChallenge, httputil.ExtractClientIP(r, h.trustProxy))
 	if err != nil {
-		h.renderError(w, "Authorization Failed", "Could not complete authorization.")
+		errResp(http.StatusInternalServerError, "authorization_failed", "Could not complete authorization.")
 		return
 	}
 
@@ -272,7 +283,7 @@ func (h *oauthHandler) authorizePasskey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	http.Redirect(w, r, redirectURL, http.StatusFound)
+	h.clientRedirect(w, redirectURL)
 }
 
 // token handles authorization_code and refresh_token grant types.
@@ -382,6 +393,18 @@ func oauthError(w http.ResponseWriter, code, description string) {
 func jsonOK(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v) //nolint:errcheck
+}
+
+// clientRedirect renders an intermediate page that redirects the browser to the
+// given URL via JavaScript. This avoids CSP form-action restrictions that block
+// 302 redirects to custom URL schemes (e.g. myapp://callback) after form POST.
+func (h *oauthHandler) clientRedirect(w http.ResponseWriter, redirectURL string) {
+	// Mark URL as trusted so html/template doesn't sanitize custom schemes (e.g. myapp://)
+	// to #ZgotmplZ. The URL was already validated against the registered redirect_uri.
+	h.render(w, "oauth_redirect.html", map[string]any{
+		"HideNav":     true,
+		"RedirectURL": template.URL(redirectURL),
+	})
 }
 
 // --- Passkey prompt (shown after OAuth password login if user has no passkeys) ---

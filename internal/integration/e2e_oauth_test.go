@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,21 @@ type noopBackup struct{}
 func (n *noopBackup) TriggerAsync()  {}
 func (n *noopBackup) RunNow() error  { return nil }
 
+// extractRedirectURL parses the redirect URL from the intermediate redirect page HTML.
+// The page contains: <a id="redirect-link" href="...">
+var redirectLinkRe = regexp.MustCompile(`id="redirect-link" href="([^"]+)"`)
+
+func extractRedirectURL(t *testing.T, body string) *url.URL {
+	t.Helper()
+	matches := redirectLinkRe.FindStringSubmatch(body)
+	require.True(t, len(matches) >= 2, "redirect link not found in body")
+	// HTML-unescape &amp; → &
+	raw := strings.ReplaceAll(matches[1], "&amp;", "&")
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	return u
+}
+
 func pkceVerifierAndChallenge() (verifier, challenge string) {
 	verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 	h := sha256.Sum256([]byte(verifier))
@@ -140,15 +156,13 @@ func TestE2E_OAuthFlow(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr = httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
-	assert.Equal(t, http.StatusFound, rr.Code)
+	// Renders intermediate redirect page (not a 302) to avoid CSP form-action issues
+	assert.Equal(t, http.StatusOK, rr.Code)
 
-	loc := rr.Header().Get("Location")
-	assert.Contains(t, loc, "code=")
-	assert.Contains(t, loc, "state="+state)
+	locURL := extractRedirectURL(t, rr.Body.String())
+	assert.NotEmpty(t, locURL.Query().Get("code"))
+	assert.Equal(t, state, locURL.Query().Get("state"))
 
-	// Extract code from redirect
-	locURL, err := url.Parse(loc)
-	require.NoError(t, err)
 	code := locURL.Query().Get("code")
 	require.NotEmpty(t, code)
 
@@ -223,9 +237,9 @@ func TestE2E_OAuthFlow_CodeReplay(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
-	require.Equal(t, http.StatusFound, rr.Code)
+	require.Equal(t, http.StatusOK, rr.Code)
 
-	locURL, _ := url.Parse(rr.Header().Get("Location"))
+	locURL := extractRedirectURL(t, rr.Body.String())
 	code := locURL.Query().Get("code")
 
 	exchangeCode := func() int {
