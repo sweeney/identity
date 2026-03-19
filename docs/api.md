@@ -100,6 +100,8 @@ Content-Type: application/json
 
 ### Step 4 — Logout
 
+**Revoke current session only** (pass the refresh token):
+
 ```
 POST /api/v1/auth/logout
 Authorization: Bearer <access_token>
@@ -110,9 +112,23 @@ Content-Type: application/json
 { "refresh_token": "dGhpcyBpcyBhIHJhbmRvbSB0b2tlbg" }
 ```
 
-If `refresh_token` is provided, only that device's session is revoked. If omitted, **all** sessions for the user are revoked.
+**Revoke all sessions** (omit the body entirely):
+
+```
+POST /api/v1/auth/logout
+Authorization: Bearer <access_token>
+```
+
+If a body is present it **must be `Content-Type: application/json`**. Sending any other encoding (e.g. form data) returns `400 invalid_request_body`. An empty body with no `Content-Type` is valid and triggers the sign-out-everywhere path.
 
 **Response**: `204 No Content`
+
+**Error responses**:
+
+| Status | Error code | Cause |
+|---|---|---|
+| `400` | `invalid_request_body` | Non-empty body is not valid JSON |
+| `401` | — | Missing or invalid access token |
 
 ---
 

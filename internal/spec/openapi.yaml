@@ -255,8 +255,13 @@ paths:
       operationId: logout
       summary: Revoke session(s)
       description: |
-        If `refresh_token` is provided, only that device's session is revoked.
-        If omitted, **all sessions** for the authenticated user are revoked (sign out everywhere).
+        Revokes the authenticated user's session(s).
+
+        - If a JSON body with `refresh_token` is provided, only that device's session is revoked.
+        - If the body is omitted entirely, **all sessions** for the user are revoked (sign out everywhere).
+
+        The request body **must be JSON** if provided. Sending a non-empty body with any other
+        content type (e.g. `application/x-www-form-urlencoded`) will return `400 invalid_request_body`.
       tags: [auth]
       security:
         - bearerAuth: []
@@ -269,10 +274,26 @@ paths:
               properties:
                 refresh_token:
                   type: string
-                  description: Omit to revoke all sessions.
+                  description: The refresh token to revoke. Omit the body entirely to revoke all sessions.
+            examples:
+              revoke_one:
+                summary: Revoke current session only
+                value:
+                  refresh_token: "4FaNtb_inHxcDlx..."
       responses:
         "204":
-          description: Session(s) revoked
+          description: Session(s) revoked successfully
+        "400":
+          description: Request body is non-empty but not valid JSON
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_request_body:
+                  value:
+                    error: invalid_request_body
+                    message: request body must be JSON
         "401":
           description: Missing or invalid access token
 

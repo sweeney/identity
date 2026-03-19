@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,6 +194,60 @@ func TestLogoutHandler_Success(t *testing.T) {
 	h := api.NewRouter(issuer, authSvc, nil, nil, "")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", mustJSON(map[string]string{"refresh_token": "my-refresh-token"}))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNoContent, rr.Code)
+}
+
+func TestLogoutHandler_FormEncodedBody_Returns400(t *testing.T) {
+	issuer := newTestIssuer(t)
+	token, err := issuer.Mint(domain.TokenClaims{UserID: "user-123", Username: "alice", Role: domain.RoleUser, IsActive: true})
+	require.NoError(t, err)
+
+	h := api.NewRouter(issuer, nil, nil, nil, "")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", strings.NewReader("refresh_token=some-token"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	var resp map[string]string
+	decodeJSON(t, rr, &resp)
+	assert.Equal(t, "invalid_request_body", resp["error"])
+}
+
+func TestLogoutHandler_MalformedJSON_Returns400(t *testing.T) {
+	issuer := newTestIssuer(t)
+	token, err := issuer.Mint(domain.TokenClaims{UserID: "user-123", Username: "alice", Role: domain.RoleUser, IsActive: true})
+	require.NoError(t, err)
+
+	h := api.NewRouter(issuer, nil, nil, nil, "")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", strings.NewReader("{not valid json"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	var resp map[string]string
+	decodeJSON(t, rr, &resp)
+	assert.Equal(t, "invalid_request_body", resp["error"])
+}
+
+func TestLogoutHandler_EmptyBody_LogsOutAll(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+	authSvc.EXPECT().Logout("user-123", "").Return(nil)
+
+	issuer := newTestIssuer(t)
+	token, err := issuer.Mint(domain.TokenClaims{UserID: "user-123", Username: "alice", Role: domain.RoleUser, IsActive: true})
+	require.NoError(t, err)
+
+	h := api.NewRouter(issuer, authSvc, nil, nil, "")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

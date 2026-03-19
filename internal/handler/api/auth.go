@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/sweeney/identity/internal/auth"
@@ -109,9 +111,15 @@ type logoutRequest struct {
 func (h *authHandler) logout(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
 
+	body, _ := io.ReadAll(r.Body)
+
 	var req logoutRequest
-	// Ignore decode errors — refresh_token is optional
-	json.NewDecoder(r.Body).Decode(&req) //nolint:errcheck
+	if len(body) > 0 {
+		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil {
+			jsonError(w, http.StatusBadRequest, "invalid_request_body", "request body must be JSON")
+			return
+		}
+	}
 
 	if err := h.svc.Logout(claims.UserID, req.RefreshToken); err != nil {
 		jsonError(w, http.StatusInternalServerError, "internal_error", "logout failed")
