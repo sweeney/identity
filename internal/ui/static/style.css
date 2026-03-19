@@ -169,18 +169,10 @@ article, .card {
         font-size: 1rem;
     }
 
-    /* Fill the dynamic viewport height — this value shrinks when the iOS keyboard
-       appears, so the container automatically contracts to the space above it.
-       Flex centering then keeps the login box in that visible area. */
-    .container {
-        min-height: 100dvh;
-        padding-bottom: 0.5rem;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-    }
-
-    .login-box { margin: 0 auto; }
+    /* Small top padding so the form sits near the top — keeps it above the keyboard
+       without the centering tricks that caused excess whitespace in WebViews */
+    .container { padding-top: 1.25rem; padding-bottom: 0.5rem; }
+    .login-box  { margin: 0 auto; }
 
     /* Tighten vertical rhythm so the full form fits above the keyboard */
     .login-box h2                             { font-size: 1.2rem; margin-bottom: 0.3rem; }
