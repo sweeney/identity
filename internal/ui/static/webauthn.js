@@ -70,9 +70,12 @@ async function passkeyLogin(apiBase, username) {
     body.response.userHandle = bufferToBase64url(assertion.response.userHandle);
   }
 
-  const finishResp = await fetch(apiBase + '/api/v1/webauthn/login/finish?challenge_id=' + challengeId, {
+  const finishResp = await fetch(apiBase + '/api/v1/webauthn/login/finish', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Challenge-ID': challengeId,
+    },
     body: JSON.stringify(body),
   });
 

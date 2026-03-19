@@ -256,14 +256,9 @@ func (h *adminHandler) loginPost(w http.ResponseWriter, r *http.Request) {
 
 // loginPasskey accepts an access_token (from a WebAuthn login) and creates an admin session.
 func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
-	// Defense-in-depth: reject cross-origin requests alongside SameSite=Strict cookies.
-	if origin := r.Header.Get("Origin"); origin != "" {
-		host := r.Host
-		// Origin is scheme://host — check that it ends with the request Host
-		if !strings.HasSuffix(origin, "://"+host) {
-			http.Error(w, "forbidden: origin mismatch", http.StatusForbidden)
-			return
-		}
+	if !httputil.CheckOrigin(r) {
+		http.Error(w, "forbidden: origin mismatch", http.StatusForbidden)
+		return
 	}
 
 	accessToken := r.FormValue("access_token")

@@ -214,6 +214,11 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 // authorizePasskey accepts an access_token from a WebAuthn login and issues an OAuth authorization code.
 // This bridges the passkey ceremony (which happens in JavaScript on the login page) into the OAuth flow.
 func (h *oauthHandler) authorizePasskey(w http.ResponseWriter, r *http.Request) {
+	if !httputil.CheckOrigin(r) {
+		h.renderError(w, "Forbidden", "Origin mismatch.")
+		return
+	}
+
 	if err := r.ParseForm(); err != nil {
 		h.renderError(w, "Bad Request", "Could not parse form.")
 		return

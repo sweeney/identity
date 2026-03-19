@@ -38,6 +38,41 @@ func TestExtractClientIP_CloudflareTrust_NoHeader(t *testing.T) {
 	}
 }
 
+func TestCheckOrigin_SameOrigin(t *testing.T) {
+	r := &http.Request{Host: "id.swee.net", Header: http.Header{"Origin": {"https://id.swee.net"}}}
+	if !CheckOrigin(r) {
+		t.Error("same origin should pass")
+	}
+}
+
+func TestCheckOrigin_CrossOrigin(t *testing.T) {
+	r := &http.Request{Host: "id.swee.net", Header: http.Header{"Origin": {"https://evil.com"}}}
+	if CheckOrigin(r) {
+		t.Error("cross origin should fail")
+	}
+}
+
+func TestCheckOrigin_NoOriginHeader(t *testing.T) {
+	r := &http.Request{Host: "id.swee.net", Header: http.Header{}}
+	if !CheckOrigin(r) {
+		t.Error("missing origin should pass (non-browser client)")
+	}
+}
+
+func TestCheckOrigin_Localhost(t *testing.T) {
+	r := &http.Request{Host: "localhost:8181", Header: http.Header{"Origin": {"http://localhost:8181"}}}
+	if !CheckOrigin(r) {
+		t.Error("localhost same-origin should pass")
+	}
+}
+
+func TestCheckOrigin_LocalhostCrossPort(t *testing.T) {
+	r := &http.Request{Host: "localhost:8181", Header: http.Header{"Origin": {"http://localhost:9093"}}}
+	if CheckOrigin(r) {
+		t.Error("localhost cross-port should fail")
+	}
+}
+
 func TestExtractClientIP_RemoteAddrNoPort(t *testing.T) {
 	r := &http.Request{
 		RemoteAddr: "192.168.1.1",

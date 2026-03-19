@@ -93,8 +93,6 @@ func (h *webauthnHandler) loginBegin(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, service.ErrWebAuthnNotEnabled):
 			jsonError(w, http.StatusBadRequest, "webauthn_not_enabled", "passkeys are not enabled on this server")
-		case errors.Is(err, service.ErrWebAuthnNoCredentials):
-			jsonError(w, http.StatusBadRequest, "webauthn_no_credentials", "no passkeys registered for this user")
 		default:
 			jsonError(w, http.StatusInternalServerError, "internal_error", "failed to begin passkey login")
 		}
