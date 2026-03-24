@@ -72,7 +72,9 @@ func TestRequireAuth_InvalidToken(t *testing.T) {
 }
 
 func TestRequireAuth_ExpiredToken(t *testing.T) {
-	issuer, err := auth.NewTokenIssuer(testSecret, "", "identity.home", time.Millisecond)
+	key, err := auth.GenerateKey()
+	require.NoError(t, err)
+	issuer, err := auth.NewTokenIssuer(key, nil, "identity.home", time.Millisecond)
 	require.NoError(t, err)
 
 	token, err := issuer.Mint(domain.TokenClaims{UserID: "u1", Username: "bob", Role: domain.RoleUser, IsActive: true})

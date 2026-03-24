@@ -14,11 +14,11 @@ import (
 	"github.com/sweeney/identity/internal/service"
 )
 
-const testSecret = "test-secret-key-that-is-long-enough-for-hmac"
-
 func newTestIssuer(t *testing.T) *auth.TokenIssuer {
 	t.Helper()
-	issuer, err := auth.NewTokenIssuer(testSecret, "", "identity.home", 15*time.Minute)
+	key, err := auth.GenerateKey()
+	require.NoError(t, err)
+	issuer, err := auth.NewTokenIssuer(key, nil, "identity.home", 15*time.Minute)
 	require.NoError(t, err)
 	return issuer
 }

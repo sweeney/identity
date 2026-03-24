@@ -35,8 +35,8 @@ Open http://localhost:8181/admin/ and log in with the credentials from the conso
 ```
 ./identity-server                        # Start the server
 ./identity-server --reset-admin          # Reset admin password (interactive)
-./identity-server --rotate-jwt-secret    # Rotate the JWT signing secret
-./identity-server --clear-prev-jwt-secret # Remove previous secret after rotation
+./identity-server --rotate-jwt-key       # Rotate the JWT signing key
+./identity-server --clear-prev-jwt-key   # Remove previous key after rotation
 ./identity-server --list-backups         # List R2 backups
 ./identity-server --restore-backup [key] # Restore from R2 backup
 ./identity-server --help                 # Show all commands

@@ -11,7 +11,6 @@ import (
 )
 
 func TestLoad_AllEnvSet(t *testing.T) {
-	t.Setenv("JWT_SECRET", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=")
 	t.Setenv("DB_PATH", "/tmp/test.db")
 	t.Setenv("PORT", "9090")
 	t.Setenv("R2_ACCOUNT_ID", "acct123")
@@ -24,7 +23,6 @@ func TestLoad_AllEnvSet(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	assert.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=", cfg.JWTSecret)
 	assert.Equal(t, "/tmp/test.db", cfg.DBPath)
 	assert.Equal(t, 9090, cfg.Port)
 	assert.Equal(t, "admin", cfg.AdminUsername)
@@ -32,24 +30,15 @@ func TestLoad_AllEnvSet(t *testing.T) {
 }
 
 func TestLoad_MinimalConfig(t *testing.T) {
-	// No env vars at all — should succeed (JWT secret managed by DB)
+	// No env vars at all — should succeed (JWT key managed by DB)
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
 	assert.Equal(t, 8181, cfg.Port)
 	assert.Equal(t, "identity.db", cfg.DBPath)
-	assert.Empty(t, cfg.JWTSecret)
 	assert.Equal(t, 15*time.Minute, cfg.AccessTokenTTL)
 	assert.Equal(t, 30*24*time.Hour, cfg.RefreshTokenTTL)
-}
-
-func TestLoad_ShortJWTSecret(t *testing.T) {
-	t.Setenv("JWT_SECRET", "tooshort")
-
-	_, err := config.Load()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "32 characters")
 }
 
 func TestLoad_InvalidPort(t *testing.T) {
@@ -164,12 +153,3 @@ func TestLoad_WebAuthnDoesNotMergeCORSOrigins(t *testing.T) {
 	assert.NotContains(t, cfg.WebAuthnRPOrigins, "http://localhost:3000")
 }
 
-func TestLoad_JWTPrevSecret(t *testing.T) {
-	t.Setenv("JWT_SECRET", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=")
-	t.Setenv("JWT_SECRET_PREV", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=")
-
-	cfg, err := config.Load()
-	require.NoError(t, err)
-
-	assert.Equal(t, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=", cfg.JWTSecretPrev)
-}

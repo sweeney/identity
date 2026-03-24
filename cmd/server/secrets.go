@@ -1,100 +1,146 @@
 package main
 
 import (
+	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
 
+	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/db"
 )
 
 const (
-	metaJWTSecret     = "jwt_secret"
-	metaJWTSecretPrev = "jwt_secret_prev"
+	metaJWTKey        = "jwt_secret"      // stores PEM-encoded EC private key
+	metaJWTPrevKey    = "jwt_secret_prev" // stores PEM-encoded EC private key (rotation fallback)
+	metaSessionSecret = "session_secret"  // stores random string for admin cookies + CSRF
 )
 
-// jwtSecrets holds the current and previous JWT signing secrets.
-type jwtSecrets struct {
-	Current  string
-	Previous string
+// serverSecrets holds the JWT signing keys and the session secret.
+type serverSecrets struct {
+	JWTCurrent  *ecdsa.PrivateKey
+	JWTPrevious *ecdsa.PrivateKey // may be nil
+	Session     string
 }
 
-// resolveJWTSecrets determines the JWT secrets to use on startup.
-//
-// Priority:
-//  1. JWT_SECRET env var (if set, overrides DB — backward compat)
-//  2. jwt_secret in the metadata table
-//  3. Generate a new random secret and store it in the DB
-func resolveJWTSecrets(database *db.Database, envSecret, envPrevSecret string) (*jwtSecrets, error) {
-	if envSecret != "" {
-		// Env var takes precedence (backward compat / explicit override)
-		return &jwtSecrets{Current: envSecret, Previous: envPrevSecret}, nil
-	}
+// resolveServerSecrets determines the JWT signing keys and session secret on startup.
+// All values are generated on first run and persisted to the metadata table.
+func resolveServerSecrets(database *db.Database) (*serverSecrets, error) {
+	secrets := &serverSecrets{}
 
-	// Try loading from DB
-	current, err := getMetadata(database, metaJWTSecret)
+	// JWT signing key
+	currentPEM, err := getMetadata(database, metaJWTKey)
 	if err != nil {
-		return nil, fmt.Errorf("read jwt secret from db: %w", err)
+		return nil, fmt.Errorf("read jwt key from db: %w", err)
 	}
 
-	if current != "" {
-		prev, _ := getMetadata(database, metaJWTSecretPrev)
-		return &jwtSecrets{Current: current, Previous: prev}, nil
+	if currentPEM != "" {
+		secrets.JWTCurrent, err = parseECKey(currentPEM)
+		if err != nil {
+			// Migration: DB holds the old HMAC string from before the ES256 switch.
+			// Generate a fresh EC key and overwrite it. Existing access tokens (HS256,
+			// 15-min TTL) will be invalidated, but that's expected when changing algorithms.
+			log.Println("Migrating JWT signing key from HMAC secret to EC keypair")
+			secrets.JWTCurrent, err = generateAndStoreKey(database)
+			if err != nil {
+				return nil, err
+			}
+			// Drop any previous HMAC secret — it's incompatible with the new issuer.
+			_ = deleteMetadata(database, metaJWTPrevKey)
+		} else if prevPEM, _ := getMetadata(database, metaJWTPrevKey); prevPEM != "" {
+			secrets.JWTPrevious, err = parseECKey(prevPEM)
+			if err != nil {
+				return nil, fmt.Errorf("parse previous jwt key: %w", err)
+			}
+		}
+	} else {
+		// First run — generate and store
+		secrets.JWTCurrent, err = generateAndStoreKey(database)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// First run — generate and store
-	secret, err := generateSecret(64)
+	// Session secret (for admin cookies and CSRF tokens)
+	session, err := getMetadata(database, metaSessionSecret)
 	if err != nil {
-		return nil, fmt.Errorf("generate jwt secret: %w", err)
+		return nil, fmt.Errorf("read session secret from db: %w", err)
 	}
-
-	if err := setMetadata(database, metaJWTSecret, secret); err != nil {
-		return nil, fmt.Errorf("store jwt secret: %w", err)
+	if session == "" {
+		session, err = generateSecret(64)
+		if err != nil {
+			return nil, fmt.Errorf("generate session secret: %w", err)
+		}
+		if err := setMetadata(database, metaSessionSecret, session); err != nil {
+			return nil, fmt.Errorf("store session secret: %w", err)
+		}
+		log.Println("Generated session secret (stored in database)")
 	}
+	secrets.Session = session
 
-	log.Println("Generated JWT signing secret (stored in database)")
-	return &jwtSecrets{Current: secret}, nil
+	return secrets, nil
 }
 
-// rotateJWTSecret generates a new JWT secret, moves the current one to previous.
+func generateAndStoreKey(database *db.Database) (*ecdsa.PrivateKey, error) {
+	key, err := auth.GenerateKey()
+	if err != nil {
+		return nil, fmt.Errorf("generate jwt key: %w", err)
+	}
+	keyPEM, err := encodeECKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("encode jwt key: %w", err)
+	}
+	if err := setMetadata(database, metaJWTKey, keyPEM); err != nil {
+		return nil, fmt.Errorf("store jwt key: %w", err)
+	}
+	log.Println("Generated JWT signing key (stored in database)")
+	return key, nil
+}
+
+// rotateJWTSecret generates a new JWT key, moving the current one to previous.
 func rotateJWTSecret(database *db.Database) error {
-	current, err := getMetadata(database, metaJWTSecret)
+	currentPEM, err := getMetadata(database, metaJWTKey)
 	if err != nil {
-		return fmt.Errorf("read current secret: %w", err)
+		return fmt.Errorf("read current key: %w", err)
 	}
-	if current == "" {
-		return fmt.Errorf("no existing JWT secret found — run the server first")
+	if currentPEM == "" {
+		return fmt.Errorf("no existing JWT key found — run the server first")
 	}
 
-	newSecret, err := generateSecret(64)
+	key, err := auth.GenerateKey()
 	if err != nil {
-		return fmt.Errorf("generate new secret: %w", err)
+		return fmt.Errorf("generate new key: %w", err)
+	}
+	newKeyPEM, err := encodeECKey(key)
+	if err != nil {
+		return fmt.Errorf("encode new key: %w", err)
 	}
 
-	// Move current → previous, set new → current
-	if err := setMetadata(database, metaJWTSecretPrev, current); err != nil {
-		return fmt.Errorf("store previous secret: %w", err)
+	if err := setMetadata(database, metaJWTPrevKey, currentPEM); err != nil {
+		return fmt.Errorf("store previous key: %w", err)
 	}
-	if err := setMetadata(database, metaJWTSecret, newSecret); err != nil {
-		return fmt.Errorf("store new secret: %w", err)
+	if err := setMetadata(database, metaJWTKey, newKeyPEM); err != nil {
+		return fmt.Errorf("store new key: %w", err)
 	}
 
-	fmt.Println("JWT secret rotated.")
-	fmt.Println("The previous secret will continue to be accepted for token validation.")
-	fmt.Println("Restart the server to pick up the new secret.")
-	fmt.Println("After 15 minutes (one access token lifetime), you can remove the previous secret with --clear-prev-jwt-secret")
+	fmt.Println("JWT signing key rotated.")
+	fmt.Println("The previous key will continue to be accepted for token validation.")
+	fmt.Println("Restart the server to pick up the new key.")
+	fmt.Println("After 15 minutes (one access token lifetime), you can remove the previous key with --clear-prev-jwt-key")
 	return nil
 }
 
-// clearPrevJWTSecret removes the previous JWT secret from the DB.
+// clearPrevJWTSecret removes the previous JWT key from the DB.
 func clearPrevJWTSecret(database *db.Database) error {
-	if err := deleteMetadata(database, metaJWTSecretPrev); err != nil {
-		return fmt.Errorf("delete previous secret: %w", err)
+	if err := deleteMetadata(database, metaJWTPrevKey); err != nil {
+		return fmt.Errorf("delete previous key: %w", err)
 	}
-	fmt.Println("Previous JWT secret cleared. Restart the server to apply.")
+	fmt.Println("Previous JWT key cleared. Restart the server to apply.")
 	return nil
 }
 
@@ -120,6 +166,23 @@ func setMetadata(database *db.Database, key, value string) error {
 func deleteMetadata(database *db.Database, key string) error {
 	_, err := database.DB().Exec("DELETE FROM metadata WHERE key = ?", key)
 	return err
+}
+
+func encodeECKey(key *ecdsa.PrivateKey) (string, error) {
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return "", err
+	}
+	block := &pem.Block{Type: "EC PRIVATE KEY", Bytes: der}
+	return string(pem.EncodeToMemory(block)), nil
+}
+
+func parseECKey(pemStr string) (*ecdsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+	return x509.ParseECPrivateKey(block.Bytes)
 }
 
 func generateSecret(length int) (string, error) {

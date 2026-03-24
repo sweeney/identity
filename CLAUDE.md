@@ -97,8 +97,8 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 
 ```
 ./identity-server --reset-admin             # Reset admin password (interactive)
-./identity-server --rotate-jwt-secret       # Rotate JWT signing secret (zero-downtime)
-./identity-server --clear-prev-jwt-secret   # Remove previous secret after rotation
+./identity-server --rotate-jwt-key          # Rotate JWT signing key (zero-downtime)
+./identity-server --clear-prev-jwt-key      # Remove previous key after rotation
 ./identity-server --list-backups            # List R2 backups
 ./identity-server --restore-backup [key]    # Restore from R2 backup
 ```

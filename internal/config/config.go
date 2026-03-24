@@ -30,9 +30,7 @@ type Config struct {
 	DBPath string
 
 	// JWT
-	JWTSecret     string
-	JWTSecretPrev string // Optional: set during zero-downtime key rotation
-	JWTIssuer     string
+	JWTIssuer string
 
 	// Token lifetimes
 	AccessTokenTTL  time.Duration
@@ -90,15 +88,6 @@ func Load() (*Config, error) {
 	}
 
 	var errs []error
-
-	// Optional: JWT_SECRET (overrides DB-managed secret; minimum 32 characters if set)
-	cfg.JWTSecret = os.Getenv("JWT_SECRET")
-	if cfg.JWTSecret != "" && len(cfg.JWTSecret) < 32 {
-		errs = append(errs, errors.New("JWT_SECRET must be at least 32 characters"))
-	}
-
-	// Optional: JWT_SECRET_PREV (for zero-downtime rotation)
-	cfg.JWTSecretPrev = os.Getenv("JWT_SECRET_PREV")
 
 	// Optional: initial admin credentials (only used for first-run seed)
 	cfg.AdminUsername = os.Getenv("ADMIN_USERNAME")

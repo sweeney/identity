@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -37,12 +38,12 @@ func main() {
 				log.Fatalf("fatal: %v", err)
 			}
 			return
-		case "--rotate-jwt-secret":
+		case "--rotate-jwt-key":
 			if err := runDBCommand(rotateJWTSecret); err != nil {
 				log.Fatalf("fatal: %v", err)
 			}
 			return
-		case "--clear-prev-jwt-secret":
+		case "--clear-prev-jwt-key":
 			if err := runDBCommand(clearPrevJWTSecret); err != nil {
 				log.Fatalf("fatal: %v", err)
 			}
@@ -67,8 +68,8 @@ func main() {
 			fmt.Println("Commands:")
 			fmt.Println("  (none)                    Start the server")
 			fmt.Println("  --reset-admin             Reset the admin password (interactive)")
-			fmt.Println("  --rotate-jwt-secret       Generate a new JWT signing secret")
-			fmt.Println("  --clear-prev-jwt-secret   Remove the previous JWT secret after rotation")
+			fmt.Println("  --rotate-jwt-key          Generate a new JWT signing key")
+			fmt.Println("  --clear-prev-jwt-key      Remove the previous JWT key after rotation")
 			fmt.Println("  --list-backups            List available R2 backups")
 			fmt.Println("  --restore-backup [key]    Restore from an R2 backup (interactive if no key)")
 			fmt.Println("  --help                    Show this help")
@@ -188,13 +189,13 @@ func run() error {
 	oauthCodeStore := store.NewOAuthCodeStore(database)
 	auditStore := store.NewAuditStore(database)
 
-	// JWT secrets (from DB or env var override)
-	secrets, err := resolveJWTSecrets(database, cfg.JWTSecret, cfg.JWTSecretPrev)
+	// JWT signing keys and session secret (all DB-managed, generated on first run)
+	secrets, err := resolveServerSecrets(database)
 	if err != nil {
-		return fmt.Errorf("jwt secrets: %w", err)
+		return fmt.Errorf("server secrets: %w", err)
 	}
 
-	issuer, err := auth.NewTokenIssuer(secrets.Current, secrets.Previous, cfg.JWTIssuer, cfg.AccessTokenTTL)
+	issuer, err := auth.NewTokenIssuer(secrets.JWTCurrent, secrets.JWTPrevious, cfg.JWTIssuer, cfg.AccessTokenTTL)
 	if err != nil {
 		return fmt.Errorf("jwt issuer: %w", err)
 	}
@@ -321,12 +322,12 @@ func run() error {
 	mux.Handle("/api/v1/", apiRouter)
 	// All auth endpoints that accept credentials must use the strict rate limiter:
 	//   POST /api/v1/auth/login, POST /oauth/token, POST /oauth/authorize, POST /admin/login
-	oauthRouter := oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy, issuer, authSvc, webauthnSvc, secrets.Current, cfg.SiteName)
+	oauthRouter := oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy, issuer, authSvc, webauthnSvc, secrets.Session, cfg.SiteName)
 	mux.Handle("POST /oauth/token", wrapAuth(oauthRouter))
 	mux.Handle("POST /oauth/authorize", wrapAuth(oauthRouter))
 	mux.Handle("/oauth/", oauthRouter)
 	adminRouter := admin.NewRouter(admin.Config{
-		SessionSecret: secrets.Current,
+		SessionSecret: secrets.Session,
 		Production:    cfg.IsProduction(),
 		TrustProxy:    cfg.TrustProxy,
 		SiteName:      cfg.SiteName,
@@ -347,6 +348,7 @@ func run() error {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
 	})
+	mux.Handle("GET /.well-known/jwks.json", jwksHandler(issuer))
 	mux.HandleFunc("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")
 		w.Write(spec.YAML)
@@ -444,6 +446,16 @@ func securityHeaders(next http.Handler, allowedOrigins []string, devMode bool) h
 		}
 
 		next.ServeHTTP(w, r)
+	})
+}
+
+// jwksHandler serves the JSON Web Key Set at /.well-known/jwks.json.
+// Consuming services use this to fetch the public key for JWT verification.
+func jwksHandler(issuer *auth.TokenIssuer) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		json.NewEncoder(w).Encode(issuer.JWKS()) //nolint:errcheck
 	})
 }
 
