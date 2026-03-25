@@ -3,8 +3,10 @@
 *.db-shm
 *.db-wal
 
-# Binary
+# Binaries
 bin/
+identity-server
+verifier-demo
 
 # Test artifacts
 coverage.out
