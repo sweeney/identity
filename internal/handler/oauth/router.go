@@ -44,5 +44,7 @@ func NewRouter(svc service.OAuthServicer, trustProxy string, tokenIssuer *auth.T
 	mux.HandleFunc("POST /oauth/passkey-prompt/register/begin", h.passkeyPromptRegisterBegin)
 	mux.HandleFunc("POST /oauth/passkey-prompt/register/finish", h.passkeyPromptRegisterFinish)
 	mux.HandleFunc("POST /oauth/token", h.token)
+	mux.HandleFunc("POST /oauth/introspect", h.introspect)
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", h.discovery)
 	return mux
 }

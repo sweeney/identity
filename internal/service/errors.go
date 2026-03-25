@@ -26,4 +26,7 @@ var (
 	ErrAuthCodeAlreadyUsed    = errors.New("auth code already used")
 	ErrAuthCodeExpired        = errors.New("auth code expired")
 	ErrPKCEVerificationFailed = errors.New("pkce verification failed")
+	ErrInvalidScope           = errors.New("invalid scope")
+	ErrUnauthorizedClient     = errors.New("unauthorized client")
+	ErrInvalidClientSecret    = errors.New("invalid client secret")
 )

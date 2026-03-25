@@ -226,7 +226,7 @@ func run() error {
 	// Services
 	authSvc := service.NewAuthService(issuer, userStore, tokenStore, backupMgr, auditStore, cfg.RefreshTokenTTL)
 	userSvc := service.NewUserService(userStore, tokenStore, backupMgr, auditStore, 10)
-	oauthSvc := service.NewOAuthService(authSvc, oauthClientStore, oauthCodeStore, auditStore, 60*time.Second)
+	oauthSvc := service.NewOAuthService(authSvc, issuer, oauthClientStore, oauthCodeStore, auditStore, 60*time.Second)
 
 	// WebAuthn / Passkeys (optional — enabled when WEBAUTHN_RP_ID is set, or automatically in development)
 	var webauthnSvc service.WebAuthnServicer
@@ -325,6 +325,7 @@ func run() error {
 	oauthRouter := oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy, issuer, authSvc, webauthnSvc, secrets.Session, cfg.SiteName)
 	mux.Handle("POST /oauth/token", wrapAuth(oauthRouter))
 	mux.Handle("POST /oauth/authorize", wrapAuth(oauthRouter))
+	mux.Handle("POST /oauth/introspect", wrapAuth(oauthRouter))
 	mux.Handle("/oauth/", oauthRouter)
 	adminRouter := admin.NewRouter(admin.Config{
 		SessionSecret: secrets.Session,
@@ -349,6 +350,7 @@ func run() error {
 		fmt.Fprint(w, "ok")
 	})
 	mux.Handle("GET /.well-known/jwks.json", jwksHandler(issuer))
+	mux.Handle("GET /.well-known/oauth-authorization-server", oauthRouter)
 	mux.HandleFunc("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")
 		w.Write(spec.YAML)

@@ -6,11 +6,37 @@ import "time"
 //
 //go:generate mockgen -destination=../mocks/mock_oauth_client_repository.go -package=mocks github.com/sweeney/identity/internal/domain OAuthClientRepository
 type OAuthClient struct {
-	ID           string
-	Name         string
-	RedirectURIs []string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID                      string
+	Name                    string
+	RedirectURIs            []string
+	SecretHash              string   // bcrypt hash of client secret (empty for public clients)
+	SecretHashPrev          string   // previous hash, for rotation
+	GrantTypes              []string // "authorization_code", "client_credentials"
+	Scopes                  []string // allowed scopes for this client
+	TokenEndpointAuthMethod string   // "none", "client_secret_basic", "client_secret_post"
+	Audience                string   // aud claim for issued tokens
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+// HasGrantType returns true if the client is configured for the given grant type.
+func (c *OAuthClient) HasGrantType(gt string) bool {
+	for _, g := range c.GrantTypes {
+		if g == gt {
+			return true
+		}
+	}
+	return false
+}
+
+// HasScope returns true if the given scope is in the client's allowed scopes.
+func (c *OAuthClient) HasScope(scope string) bool {
+	for _, s := range c.Scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
 }
 
 // AuthCode is a single-use authorization code persisted to DB.
@@ -61,6 +87,8 @@ const (
 	EventOAuthClientDeleted     = "oauth_client_deleted"
 	EventBackupSuccess          = "backup_success"
 	EventBackupFailure          = "backup_failure"
+	EventClientCredentials      = "client_credentials"
+	EventClientSecretRotated    = "client_secret_rotated"
 )
 
 // OAuthClientRepository defines persistence operations for OAuth clients.

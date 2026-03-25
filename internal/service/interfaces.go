@@ -1,6 +1,8 @@
 package service
 
-import "github.com/sweeney/identity/internal/domain"
+import (
+	"github.com/sweeney/identity/internal/domain"
+)
 
 // AuthServicer is the interface the API handler uses for auth operations.
 //
@@ -40,4 +42,6 @@ type OAuthServicer interface {
 	AuthorizeByUserID(clientID, redirectURI, userID, username, codeChallenge, ip string) (rawCode string, err error)
 	ExchangeCode(clientID, code, redirectURI, codeVerifier string) (*LoginResult, error)
 	RefreshToken(rawRefreshToken string) (*LoginResult, error)
+	GetClient(clientID string) (*domain.OAuthClient, error)
+	IssueClientCredentials(client *domain.OAuthClient, requestedScope, ip string) (*ClientCredentialsResult, error)
 }

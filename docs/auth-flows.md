@@ -1,6 +1,6 @@
 # Authentication Flows
 
-Visual walkthrough of how web and mobile apps authenticate against the Identity server.
+Visual walkthrough of how web apps, mobile apps, and backend services authenticate against the Identity server.
 
 ---
 
@@ -289,6 +289,96 @@ already rotated by A.
 
 ---
 
+## Flow D: Client Credentials (service-to-service)
+
+For backend services, cron jobs, and workers that need to call the Identity API (or other services that validate Identity JWTs) without any user involvement.
+
+```
+  Backend Service                               Identity Server
+  ───────────────                               ───────────────
+      │
+      │  POST /oauth/token
+      │  Authorization: Basic base64(client_id:client_secret)
+      │  grant_type=client_credentials
+      │  scope=read:users
+      │ ──────────────────────────────────────────►│
+      │                                            │  Verify client_id exists
+      │                                            │  bcrypt-compare secret
+      │                                            │  Check client has grant_type=client_credentials
+      │                                            │  Validate scope ⊆ allowed scopes
+      │                                            │  Mint JWT (15 min, RFC 9068 claims)
+      │                                            │  Record audit event
+      │◄────────────────────────────────────────── │
+      │  { access_token, token_type: "Bearer",
+      │    expires_in: 900, scope: "read:users" }
+      │
+      │  ┌──────────────────────────────────────┐
+      │  │ Cache token in memory                │
+      │  │ No refresh token — just re-auth      │
+      │  └──────────────────────────────────────┘
+      │
+      │  GET /api/v1/users
+      │  Authorization: Bearer <access_token>
+      │ ──────────────────────────────────────────►│  Resource Server
+      │                                            │  Verify JWT signature (via JWKS)
+      │                                            │  Check exp
+      │                                            │  Check aud matches this service
+      │                                            │  Check scope includes required scope
+      │◄────────────────────────────────────────── │
+      │  200 OK
+      │
+      │  ⏰ Token expires after 15 minutes...
+      │
+      │  POST /oauth/token  (same request as above)
+      │ ──────────────────────────────────────────►│
+      │◄────────────────────────────────────────── │
+      │  New access token
+      ▼
+```
+
+**Key differences from user flows:**
+- No browser, no redirect, no user interaction
+- No refresh token — the client secret is the long-lived credential
+- JWT claims use RFC 9068 format: `sub` = client_id, `client_id` (top-level), `aud`, `scope`, `jti`
+- No `UserID`, `Username`, or `Role` in the JWT
+
+**Token management in code:**
+```go
+// Simple pattern: authenticate, cache, re-authenticate on expiry
+var (
+    mu          sync.Mutex
+    token       string
+    tokenExpiry time.Time
+)
+
+func getToken(clientSecret string) (string, error) {
+    mu.Lock()
+    defer mu.Unlock()
+
+    // Return cached token if still valid (with 60s buffer)
+    if token != "" && time.Now().Before(tokenExpiry.Add(-60*time.Second)) {
+        return token, nil
+    }
+
+    // Re-authenticate
+    tok, err := authenticate(clientSecret, "read:users")
+    if err != nil {
+        return "", err
+    }
+    token = tok.AccessToken
+    tokenExpiry = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
+    return token, nil
+}
+```
+
+**Discovery:** Clients can fetch `GET /.well-known/oauth-authorization-server` (RFC 8414) to find the token endpoint, JWKS URI, and supported grant types programmatically.
+
+**Introspection:** Resource servers can call `POST /oauth/introspect` (RFC 7662) with client credentials to verify a token in real-time, useful for high-stakes operations where the 15-minute revocation window is too wide.
+
+**Secret rotation:** Rotate the client secret via the admin UI at `/admin/oauth/{id}/edit`. During rotation, both old and new secrets are accepted. Clear the previous secret after all services have updated.
+
+---
+
 ## Audit Trail
 
 Every arrow labeled with an auth action above generates an audit event:
@@ -301,6 +391,7 @@ Every arrow labeled with an auth action above generates an audit event:
 │ 2026-03-17 14:15:02 ✓ oauth authorize     alice   myapp     1.2.3.4│
 │ 2026-03-17 14:20:05 ✗ login failed        bob     —         5.6.7.8│
 │ 2026-03-17 14:22:10 ⚠ token compromised   alice   —         9.0.1.2│
+│ 2026-03-17 14:23:00 ✓ client_credentials  —       worker    3.4.5.6│
 │ 2026-03-17 14:25:00   logout              alice   —         1.2.3.4│
 └─────────────────────────────────────────────────────────────────────┘
 

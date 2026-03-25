@@ -226,14 +226,18 @@ BAD=$(curl -s "$BASE/oauth/authorize" -X POST \
 check_contains "Bad creds re-renders form" "Invalid username or password" "$BAD"
 
 # POST authorize — success
-AUTH_RESP=$(curl -s -D- -o /dev/null "$BASE/oauth/authorize" -X POST \
+# Server uses a JS redirect page (200 + HTML) rather than HTTP 302, to support
+# custom URI schemes (myapp://) that CSP form-action would block.
+AUTH_RESP=$(curl -s "$BASE/oauth/authorize" -X POST \
   -d "client_id=testapp&redirect_uri=http://localhost:3000/callback&state=$STATE&code_challenge=$CHALLENGE&username=alice&password=alicepassword123" \
   -H "Content-Type: application/x-www-form-urlencoded")
-check_contains "Redirects with 302" "302" "$AUTH_RESP"
-LOCATION=$(echo "$AUTH_RESP" | grep -i '^location:' | tr -d '\r')
-check_contains "Redirect has code" "code=" "$LOCATION"
-check_contains "Redirect has state" "state=$STATE" "$LOCATION"
-CODE=$(echo "$LOCATION" | sed 's/.*code=//;s/&.*//')
+# Server returns a JS redirect page (200) to support custom URI schemes.
+# Extract the callback URL from the redirect-link href, decoding HTML entities.
+REDIRECT_HREF=$(echo "$AUTH_RESP" | grep -o 'href="http[^"]*"' | head -1 | sed 's/href="//;s/"$//' | sed 's/&amp;/\&/g')
+check_contains "Authorize redirects to callback" "http://localhost:3000/callback" "$REDIRECT_HREF"
+check_contains "Redirect has code" "code=" "$REDIRECT_HREF"
+check_contains "Redirect has state" "state=$STATE" "$REDIRECT_HREF"
+CODE=$(echo "$REDIRECT_HREF" | sed 's/.*[?&]code=//;s/&.*//')
 
 # Token exchange
 TOKEN_RESP=$(curl -s -X POST "$BASE/oauth/token" \

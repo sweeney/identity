@@ -72,6 +72,9 @@ func NewRouter(cfg Config, authSvc service.AuthServicer, userSvc service.UserSer
 	mux.Handle("POST /admin/oauth/{id}/edit", h.requireSession(h.requireCSRF(http.HandlerFunc(h.oauthEditPost))))
 	mux.Handle("GET /admin/oauth/{id}/delete", h.requireSession(http.HandlerFunc(h.oauthDeleteGet)))
 	mux.Handle("POST /admin/oauth/{id}/delete", h.requireSession(h.requireCSRF(http.HandlerFunc(h.oauthDeletePost))))
+	mux.Handle("POST /admin/oauth/{id}/generate-secret", h.requireSession(h.requireCSRF(http.HandlerFunc(h.oauthGenerateSecret))))
+	mux.Handle("POST /admin/oauth/{id}/rotate-secret", h.requireSession(h.requireCSRF(http.HandlerFunc(h.oauthRotateSecret))))
+	mux.Handle("POST /admin/oauth/{id}/clear-prev-secret", h.requireSession(h.requireCSRF(http.HandlerFunc(h.oauthClearPrevSecret))))
 
 	// Passkeys
 	mux.Handle("GET /admin/passkeys/prompt", h.requireSession(http.HandlerFunc(h.passkeyPrompt)))

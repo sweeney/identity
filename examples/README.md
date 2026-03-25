@@ -1,35 +1,41 @@
-# Example Apps
+# Example OAuth Clients
 
-Demo apps showing different ways to integrate with the Identity service.
+Four demo apps showing different ways to integrate with the Identity service.
+
+The first three implement the Authorization Code + PKCE flow — the difference is where the tokens end up. The fourth demonstrates service-to-service auth using Client Credentials.
 
 ## Running the demos
 
 Start the Identity server:
 
 ```bash
-ADMIN_USERNAME=admin ADMIN_PASSWORD=adminpassword1 ./bin/identity-server
+JWT_SECRET="<32+ chars>" ADMIN_USERNAME=admin ADMIN_PASSWORD=adminpassword1 \
+  ./bin/identity-server
 ```
 
-Register the OAuth demos as clients at `/admin/oauth/new`:
+Register each demo as an OAuth client at `/admin/oauth/new`:
 
-| Demo | Client ID | Redirect URI |
-|------|-----------|-------------|
-| Server-side | `demo` | `http://localhost:9090/callback` |
-| SPA | `spa-demo` | `http://localhost:9091/` |
-| BFF | `bff-demo` | `http://localhost:9092/callback` |
+| Demo | Client ID | Grant Type | Redirect URI |
+|------|-----------|------------|-------------|
+| Server-side | `demo` | authorization_code | `http://localhost:9090/callback` |
+| SPA | `spa-demo` | authorization_code | `http://localhost:9091/` |
+| BFF | `bff-demo` | authorization_code | `http://localhost:9092/callback` |
+| Client Credentials | `worker` | client_credentials | (none) |
+
+For the Client Credentials demo, also generate a client secret on the edit page, set scopes to `read:users`, audience to `http://localhost:8181`, and auth method to `client_secret_basic`.
 
 Then start whichever demo you want:
 
 ```bash
-go run ./examples/server-side-demo   # http://localhost:9090
-go run ./examples/spa-demo           # http://localhost:9091
-go run ./examples/bff-demo           # http://localhost:9092
-go run ./examples/verifier-demo      # http://localhost:9093 (no OAuth client needed)
+go run ./examples/server-side-demo                          # http://localhost:9090
+go run ./examples/spa-demo                                  # http://localhost:9091
+go run ./examples/bff-demo                                  # http://localhost:9092
+CLIENT_SECRET=<secret> go run ./examples/client-credentials-demo  # runs once, prints output
 ```
 
 ---
 
-## The three approaches
+## The four approaches
 
 ### 1. Server-side (single user)
 
@@ -92,9 +98,29 @@ Browser ──cookie──► BFF server ──Bearer token──► Identity AP
 
 ---
 
+### 4. Client Credentials (service-to-service)
+
+**`examples/client-credentials-demo`** — Go CLI that authenticates as a service, not a user.
+
+```
+Service ──POST /oauth/token──► Identity Server
+          (client_id + secret)
+          ◄── access_token (JWT, 15 min)
+```
+
+**How it works**: The service sends its `client_id` and `client_secret` to the token endpoint using HTTP Basic auth. It receives a short-lived JWT with `client_id`, `aud`, `scope`, and `jti` claims (RFC 9068). No user, no browser, no redirect.
+
+**Token storage**: In-memory variable. Re-authenticate when expired.
+
+**Good for**: Cron jobs, microservices, background workers, any server-side process that needs to call a protected API.
+
+**Key differences from user flows**: No refresh token (the secret _is_ the long-lived credential). JWT claims identify the service, not a user. Resource servers check `scope` and `aud` instead of `role`.
+
+---
+
 ## Other integration styles
 
-These aren't demoed here but are worth knowing about:
+These aren't demoed above but are worth knowing about:
 
 ### Native mobile apps
 
@@ -106,25 +132,16 @@ Use the SPA approach but with platform-secure storage instead of localStorage:
 
 See `docs/api.md` for Swift and Kotlin code examples.
 
-### Token verification in downstream services
-
-**`examples/verifier-demo`** — shows how a consuming service validates tokens without holding the private key.
-
-```
-Service A ──Bearer token──► Service B (verifier-demo)
-                              fetches public key from /.well-known/jwks.json
-                              verifies signature locally
-```
-
-The verifier fetches the JWKS on startup, caches public keys by `kid`, and re-fetches automatically when it sees an unknown `kid` (handling zero-downtime key rotation). No shared secret — the private key never leaves the Identity server.
-
 ### Server-to-server (machine clients)
 
-Not applicable to OAuth authorization code flow. If you need machine-to-machine auth:
+Use the **Client Credentials** flow (see `examples/client-credentials-demo`):
 
-- Use `POST /api/v1/auth/login` with a service account's credentials
-- Store the refresh token in a secrets manager or encrypted config
-- Implement the refresh mutex pattern from `docs/api.md` if multiple goroutines/threads share the token
+- Register an OAuth client with `client_credentials` grant type and generate a secret
+- `POST /oauth/token` with `grant_type=client_credentials` + HTTP Basic auth
+- Receive a short-lived JWT (15 min) — no refresh token, just re-authenticate
+- Use `RequireScope` and `RequireAudience` middleware on receiving services to validate tokens
+
+This is the OAuth 2.0 standard for machine-to-machine auth (RFC 6749 §4.4).
 
 ### Multi-page server-rendered apps (Rails, Django, etc.)
 
@@ -161,6 +178,6 @@ This is what projects like OAuth2-Proxy and Authelia do. It's the right choice i
 | CLI tool | **Server-side** (temporary localhost callback) |
 | Quick prototype | **Server-side** |
 | Existing app behind a reverse proxy | **Forward-auth middleware** |
-| Server-to-server | **Direct API login** (no OAuth needed) |
+| Server-to-server / microservices | **Client Credentials** |
 
 When in doubt, use the BFF pattern. It's more code, but it's the only approach where a frontend vulnerability can't directly compromise user tokens.

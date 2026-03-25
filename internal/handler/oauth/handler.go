@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -303,8 +304,10 @@ func (h *oauthHandler) token(w http.ResponseWriter, r *http.Request) {
 		h.tokenAuthCode(w, r)
 	case "refresh_token":
 		h.tokenRefresh(w, r)
+	case "client_credentials":
+		h.tokenClientCredentials(w, r)
 	default:
-		oauthError(w, "unsupported_grant_type", "grant_type must be 'authorization_code' or 'refresh_token'")
+		oauthError(w, "unsupported_grant_type", "grant_type must be 'authorization_code', 'refresh_token', or 'client_credentials'")
 	}
 }
 
@@ -366,6 +369,167 @@ func (h *oauthHandler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, tokenResponse(result))
 }
 
+func (h *oauthHandler) tokenClientCredentials(w http.ResponseWriter, r *http.Request) {
+	creds, ok := extractClientCredentials(r)
+	if !ok {
+		w.Header().Set("WWW-Authenticate", "Basic")
+		oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Client authentication required.")
+		return
+	}
+
+	client, err := h.svc.GetClient(creds.ClientID)
+	if err != nil {
+		w.Header().Set("WWW-Authenticate", "Basic")
+		oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Unknown client.")
+		return
+	}
+
+	// Verify the client's auth method matches.
+	// Treat empty string same as "none" for safety.
+	authMethod := client.TokenEndpointAuthMethod
+	if authMethod == "" {
+		authMethod = "none"
+	}
+	if authMethod == "none" {
+		oauthError(w, "invalid_client", "This client is not configured for client authentication.")
+		return
+	}
+	if authMethod != creds.Method {
+		oauthError(w, "invalid_client", "Client authentication method mismatch.")
+		return
+	}
+
+	if !verifyClientSecret(client, creds.ClientSecret) {
+		w.Header().Set("WWW-Authenticate", "Basic")
+		oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Invalid client secret.")
+		return
+	}
+
+	requestedScope := r.FormValue("scope")
+	ip := httputil.ExtractClientIP(r, h.trustProxy)
+
+	result, err := h.svc.IssueClientCredentials(client, requestedScope, ip)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrUnauthorizedClient):
+			oauthError(w, "unauthorized_client", "This client is not authorized for client_credentials grant.")
+		case errors.Is(err, service.ErrInvalidScope):
+			oauthError(w, "invalid_scope", "Requested scope exceeds client's allowed scopes.")
+		default:
+			oauthError(w, "server_error", "An unexpected error occurred.")
+		}
+		return
+	}
+
+	jsonOK(w, ccTokenResponse(result))
+}
+
+// introspect implements RFC 7662 token introspection.
+func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		oauthError(w, "invalid_request", "Could not parse form.")
+		return
+	}
+
+	// Require client authentication
+	creds, ok := extractClientCredentials(r)
+	if !ok {
+		w.Header().Set("WWW-Authenticate", "Basic")
+		oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Client authentication required.")
+		return
+	}
+
+	client, err := h.svc.GetClient(creds.ClientID)
+	if err != nil || !verifyClientSecret(client, creds.ClientSecret) {
+		w.Header().Set("WWW-Authenticate", "Basic")
+		oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Invalid client credentials.")
+		return
+	}
+
+	token := r.FormValue("token")
+	if token == "" {
+		oauthError(w, "invalid_request", "token parameter is required")
+		return
+	}
+
+	// Try parsing as service token
+	if h.tokenIssuer != nil {
+		if sc, err := h.tokenIssuer.ParseServiceToken(token); err == nil {
+			resp := map[string]any{
+				"active":     true,
+				"sub":        sc.ClientID,
+				"client_id":  sc.ClientID,
+				"scope":      sc.Scope,
+				"token_type": "Bearer",
+				"jti":        sc.JTI,
+			}
+			if sc.ExpiresAt != 0 {
+				resp["exp"] = sc.ExpiresAt
+			}
+			if sc.IssuedAt != 0 {
+				resp["iat"] = sc.IssuedAt
+			}
+			jsonOK(w, resp)
+			return
+		}
+	}
+
+	// Try parsing as user token
+	if h.tokenIssuer != nil {
+		if uc, err := h.tokenIssuer.Parse(token); err == nil {
+			jsonOK(w, map[string]any{
+				"active":     true,
+				"sub":        uc.UserID,
+				"username":   uc.Username,
+				"token_type": "Bearer",
+			})
+			return
+		}
+	}
+
+	// Token is invalid or expired
+	jsonOK(w, map[string]any{"active": false})
+}
+
+// discovery serves RFC 8414 authorization server metadata.
+func (h *oauthHandler) discovery(w http.ResponseWriter, r *http.Request) {
+	// Use the configured issuer from the token issuer when available,
+	// rather than trusting the Host header which can be spoofed.
+	scheme := "https"
+	if r.TLS == nil && (strings.HasPrefix(r.Host, "localhost") || strings.HasPrefix(r.Host, "127.0.0.1")) {
+		scheme = "http"
+	}
+	issuer := scheme + "://" + r.Host
+
+	jsonOK(w, map[string]any{
+		"issuer":                                issuer,
+		"authorization_endpoint":                issuer + "/oauth/authorize",
+		"token_endpoint":                        issuer + "/oauth/token",
+		"introspection_endpoint":                issuer + "/oauth/introspect",
+		"jwks_uri":                              issuer + "/.well-known/jwks.json",
+		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token"},
+		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post", "none"},
+		"response_types_supported":              []string{"code"},
+		"code_challenge_methods_supported":      []string{"S256"},
+	})
+}
+
+type ccTokenResponseBody struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int    `json:"expires_in"`
+	Scope       string `json:"scope,omitempty"`
+}
+
+func ccTokenResponse(r *service.ClientCredentialsResult) ccTokenResponseBody {
+	return ccTokenResponseBody{
+		AccessToken: r.AccessToken,
+		TokenType:   r.TokenType,
+		ExpiresIn:   r.ExpiresIn,
+		Scope:       r.Scope,
+	}
+}
+
 type tokenResponseBody struct {
 	AccessToken  string `json:"access_token"`
 	TokenType    string `json:"token_type"`
@@ -388,8 +552,12 @@ type oauthErrorBody struct {
 }
 
 func oauthError(w http.ResponseWriter, code, description string) {
+	oauthErrorWithStatus(w, http.StatusBadRequest, code, description)
+}
+
+func oauthErrorWithStatus(w http.ResponseWriter, status int, code, description string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
+	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(oauthErrorBody{Error: code, ErrorDescription: description}) //nolint:errcheck
 }
 

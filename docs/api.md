@@ -16,7 +16,7 @@ The Identity service is a self-hosted JWT authentication and identity management
 
 ---
 
-## Two Ways to Authenticate
+## Three Ways to Authenticate
 
 ### Option A: Direct API Login
 
@@ -37,6 +37,17 @@ Best for third-party apps, multiple domains, or native mobile apps that should r
 5. App exchanges the code at `POST /oauth/token` with the code_verifier → receive tokens
 
 OAuth clients must be registered via the admin UI at `/admin/oauth` before use.
+
+### Option C: Client Credentials (service-to-service)
+
+Best for backend services, cron jobs, and microservices that need to call APIs without user involvement.
+
+1. Register an OAuth client with `client_credentials` grant type and generate a secret
+2. `POST /oauth/token` with `grant_type=client_credentials` + client authentication → receive access token
+3. Use `Authorization: Bearer <access_token>` on every request
+4. When the token expires (15 min), re-authenticate with the same credentials (no refresh token)
+
+See [Client Credentials Flow](#client-credentials-flow) below for details.
 
 ---
 
@@ -242,9 +253,194 @@ The `/oauth/token` endpoint uses RFC 6749 error format, which differs from the r
 |---|---|
 | `invalid_request` | Missing required parameters |
 | `invalid_grant` | Bad/expired/replayed code, PKCE failure, bad refresh token |
-| `unsupported_grant_type` | Grant type not `authorization_code` or `refresh_token` |
+| `unsupported_grant_type` | Grant type not recognized |
+| `unauthorized_client` | Client not authorized for this grant type |
+| `invalid_client` | Bad client credentials or auth method mismatch |
+| `invalid_scope` | Requested scope exceeds client's allowed scopes |
 | `access_denied` | Account disabled |
 | `server_error` | Unexpected internal error |
+
+---
+
+## Client Credentials Flow
+
+For backend services that need to call APIs without user involvement.
+
+### Prerequisites
+
+1. Register an OAuth client at `/admin/oauth` with:
+   - **Grant Types**: `client_credentials` checked
+   - **Token Endpoint Auth Method**: `client_secret_basic` (recommended) or `client_secret_post`
+   - **Scopes**: the scopes this service is allowed to request (e.g. `read:users`)
+   - **Audience**: the identifier of the target service (e.g. `https://api.example.com`)
+2. Generate a client secret on the client's edit page
+
+### Step 1 — Obtain an access token
+
+```
+POST /oauth/token
+Authorization: Basic base64(client_id:client_secret)
+Content-Type: application/x-www-form-urlencoded
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `grant_type` | string | Yes | Must be `client_credentials` |
+| `scope` | string | No | Space-delimited scopes. Defaults to all client scopes if omitted. |
+
+**Response 200**:
+
+```json
+{
+  "access_token": "eyJhbGciOiJFUzI1NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "scope": "read:users"
+}
+```
+
+No `refresh_token` is returned. When the token expires, repeat this request.
+
+**Go example**:
+
+```go
+func authenticate(clientID, clientSecret, scope string) (*TokenResponse, error) {
+    form := url.Values{
+        "grant_type": {"client_credentials"},
+        "scope":      {scope},
+    }
+    req, _ := http.NewRequest("POST", identityURL+"/oauth/token",
+        strings.NewReader(form.Encode()))
+    req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+    req.SetBasicAuth(clientID, clientSecret)
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != 200 {
+        body, _ := io.ReadAll(resp.Body)
+        return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, body)
+    }
+
+    var tok TokenResponse
+    json.NewDecoder(resp.Body).Decode(&tok)
+    return &tok, nil
+}
+```
+
+**Swift example**:
+
+```swift
+func authenticate(clientID: String, clientSecret: String, scope: String) async throws -> TokenResponse {
+    var request = URLRequest(url: URL(string: "\(identityURL)/oauth/token")!)
+    request.httpMethod = "POST"
+    request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+
+    let credentials = Data("\(clientID):\(clientSecret)".utf8).base64EncodedString()
+    request.setValue("Basic \(credentials)", forHTTPHeaderField: "Authorization")
+
+    request.httpBody = "grant_type=client_credentials&scope=\(scope)".data(using: .utf8)
+
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+        throw AuthError.authenticationFailed
+    }
+    return try JSONDecoder().decode(TokenResponse.self, from: data)
+}
+```
+
+### Step 2 — Use the token
+
+Same as all other flows: send `Authorization: Bearer <access_token>` on every request.
+
+### Step 3 — Re-authenticate on expiry
+
+There is no refresh token. When the access token expires (check `expires_in`), call the token endpoint again with the same credentials.
+
+**Recommended pattern**: cache the token in memory with its expiry time. Re-authenticate with a 60-second buffer before `expires_in` to avoid clock-skew 401s.
+
+### JWT claims (RFC 9068)
+
+Service tokens use a different claim structure from user tokens:
+
+```json
+{
+  "iss": "https://id.example.com",
+  "sub": "my-service",
+  "client_id": "my-service",
+  "aud": "https://api.example.com",
+  "scope": "read:users",
+  "jti": "550e8400-e29b-41d4-a716-446655440000",
+  "iat": 1711393200,
+  "exp": 1711394100
+}
+```
+
+- `sub` = `client_id` (no user identity)
+- `client_id` is a top-level claim (use this to distinguish service tokens from user tokens)
+- `aud` identifies the target service — resource servers should reject tokens not intended for them
+- `scope` is space-delimited
+- `jti` is a unique token ID (enables revocation lists)
+- No `usr` (username), `rol` (role), or `act` (active) claims
+
+### Token introspection (RFC 7662)
+
+Resource servers can validate a token in real-time by calling the introspection endpoint:
+
+```
+POST /oauth/introspect
+Authorization: Basic base64(client_id:client_secret)
+Content-Type: application/x-www-form-urlencoded
+
+token=eyJhbGciOiJFUzI1NiIs...
+```
+
+**Response** (valid token):
+```json
+{
+  "active": true,
+  "sub": "my-service",
+  "client_id": "my-service",
+  "scope": "read:users",
+  "token_type": "Bearer",
+  "jti": "550e8400-...",
+  "exp": 1711394100,
+  "iat": 1711393200
+}
+```
+
+**Response** (expired/invalid token):
+```json
+{ "active": false }
+```
+
+### Discovery (RFC 8414)
+
+```
+GET /.well-known/oauth-authorization-server
+```
+
+Returns the token endpoint URL, JWKS URI, supported grant types, and other metadata. Useful for clients that want to self-configure rather than hard-code URLs.
+
+### Secret rotation
+
+1. Admin clicks "Rotate Secret" on the client's edit page
+2. A new secret is generated; both old and new are accepted
+3. Update the service's configuration with the new secret
+4. Admin clicks "Clear Previous Secret" to complete rotation
+
+Zero-downtime — the service continues authenticating throughout.
+
+### Error codes
+
+| `error` code | When |
+|---|---|
+| `invalid_client` | Unknown client, bad secret, or auth method mismatch |
+| `unauthorized_client` | Client not configured for `client_credentials` grant |
+| `invalid_scope` | Requested scope exceeds allowed scopes |
 
 ---
 

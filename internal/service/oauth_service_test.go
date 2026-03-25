@@ -3,6 +3,7 @@ package service_test
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"testing"
 	"time"
 
@@ -29,12 +30,14 @@ func newOAuthService(t *testing.T, ctrl *gomock.Controller) (
 ) {
 	t.Helper()
 	authSvc := mocks.NewMockAuthServicer(ctrl)
+	issuer := mocks.NewMockTokenIssuer(ctrl)
+	issuer.EXPECT().MintServiceToken(gomock.Any(), gomock.Any()).Return("mock-token", nil).AnyTimes()
 	clients := mocks.NewMockOAuthClientRepository(ctrl)
 	codes := mocks.NewMockOAuthCodeRepository(ctrl)
 	audit := mocks.NewMockAuditRepository(ctrl)
 	audit.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
 
-	svc := service.NewOAuthService(authSvc, clients, codes, audit, 60*time.Second)
+	svc := service.NewOAuthService(authSvc, issuer, clients, codes, audit, 60*time.Second)
 	return svc, authSvc, clients, codes
 }
 
@@ -43,6 +46,7 @@ func testClient() *domain.OAuthClient {
 		ID:           "client-1",
 		Name:         "My App",
 		RedirectURIs: []string{"https://myapp.example.com/callback"},
+		GrantTypes:   []string{"authorization_code"},
 	}
 }
 
@@ -273,4 +277,163 @@ func TestOAuthService_RefreshToken(t *testing.T) {
 	got, err := svc.RefreshToken("old-refresh")
 	require.NoError(t, err)
 	assert.Equal(t, "new.access.token", got.AccessToken)
+}
+
+// --- IssueClientCredentials ---
+
+func TestIssueClientCredentials_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, _, _ := newOAuthService(t, ctrl)
+
+	client := &domain.OAuthClient{
+		ID:         "svc-1",
+		GrantTypes: []string{"client_credentials"},
+		Scopes:     []string{"read:users", "write:users"},
+		Audience:   "https://api.example.com",
+	}
+
+	result, err := svc.IssueClientCredentials(client, "read:users", "1.2.3.4")
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer", result.TokenType)
+	assert.Equal(t, "mock-token", result.AccessToken)
+	assert.Equal(t, "read:users", result.Scope)
+	assert.Equal(t, 900, result.ExpiresIn)
+}
+
+func TestIssueClientCredentials_DefaultScopes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, _, _ := newOAuthService(t, ctrl)
+
+	client := &domain.OAuthClient{
+		ID:         "svc-1",
+		GrantTypes: []string{"client_credentials"},
+		Scopes:     []string{"read:users", "write:users"},
+		Audience:   "https://api.example.com",
+	}
+
+	result, err := svc.IssueClientCredentials(client, "", "1.2.3.4")
+	require.NoError(t, err)
+	assert.Equal(t, "read:users write:users", result.Scope)
+}
+
+func TestIssueClientCredentials_WrongGrantType(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, _, _ := newOAuthService(t, ctrl)
+
+	client := &domain.OAuthClient{
+		ID:         "svc-1",
+		GrantTypes: []string{"authorization_code"},
+		Scopes:     []string{"read:users"},
+		Audience:   "https://api.example.com",
+	}
+
+	_, err := svc.IssueClientCredentials(client, "", "1.2.3.4")
+	assert.ErrorIs(t, err, service.ErrUnauthorizedClient)
+}
+
+func TestIssueClientCredentials_InvalidScope(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, _, _ := newOAuthService(t, ctrl)
+
+	client := &domain.OAuthClient{
+		ID:         "svc-1",
+		GrantTypes: []string{"client_credentials"},
+		Scopes:     []string{"read:users"},
+		Audience:   "https://api.example.com",
+	}
+
+	_, err := svc.IssueClientCredentials(client, "write:users", "1.2.3.4")
+	assert.ErrorIs(t, err, service.ErrInvalidScope)
+}
+
+func TestIssueClientCredentials_SubsetOfScopes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, _, _ := newOAuthService(t, ctrl)
+
+	client := &domain.OAuthClient{
+		ID:         "svc-1",
+		GrantTypes: []string{"client_credentials"},
+		Scopes:     []string{"read:users", "write:users", "delete:users"},
+		Audience:   "https://api.example.com",
+	}
+
+	result, err := svc.IssueClientCredentials(client, "read:users write:users", "1.2.3.4")
+	require.NoError(t, err)
+	assert.Equal(t, "read:users write:users", result.Scope)
+}
+
+func TestGetClient_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, clients, _ := newOAuthService(t, ctrl)
+
+	expected := testClient()
+	clients.EXPECT().GetByID("client-1").Return(expected, nil)
+
+	got, err := svc.GetClient("client-1")
+	require.NoError(t, err)
+	assert.Equal(t, "client-1", got.ID)
+}
+
+func TestGetClient_NotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, clients, _ := newOAuthService(t, ctrl)
+
+	clients.EXPECT().GetByID("unknown").Return(nil, domain.ErrNotFound)
+
+	_, err := svc.GetClient("unknown")
+	assert.ErrorIs(t, err, service.ErrUnknownClient)
+}
+
+func TestIssueClientCredentials_AuditEvent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+	issuer := mocks.NewMockTokenIssuer(ctrl)
+	issuer.EXPECT().MintServiceToken(gomock.Any(), gomock.Any()).Return("mock-token", nil)
+	clients := mocks.NewMockOAuthClientRepository(ctrl)
+	codes := mocks.NewMockOAuthCodeRepository(ctrl)
+	audit := mocks.NewMockAuditRepository(ctrl)
+
+	// Assert the audit event has the correct type
+	audit.EXPECT().Record(gomock.Any()).DoAndReturn(func(event *domain.AuthEvent) error {
+		assert.Equal(t, domain.EventClientCredentials, event.EventType)
+		assert.Equal(t, "svc-1", event.ClientID)
+		assert.Equal(t, "1.2.3.4", event.IPAddress)
+		assert.Contains(t, event.Detail, "scope=read:users")
+		return nil
+	})
+
+	svc := service.NewOAuthService(authSvc, issuer, clients, codes, audit, 60*time.Second)
+
+	client := &domain.OAuthClient{
+		ID:         "svc-1",
+		GrantTypes: []string{"client_credentials"},
+		Scopes:     []string{"read:users"},
+		Audience:   "https://api.example.com",
+	}
+
+	_, err := svc.IssueClientCredentials(client, "read:users", "1.2.3.4")
+	require.NoError(t, err)
+}
+
+func TestIssueClientCredentials_EmptyAudience(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+	issuer := mocks.NewMockTokenIssuer(ctrl)
+	issuer.EXPECT().MintServiceToken(gomock.Any(), gomock.Any()).Return("", errors.New("audience is required for service tokens"))
+	clients := mocks.NewMockOAuthClientRepository(ctrl)
+	codes := mocks.NewMockOAuthCodeRepository(ctrl)
+	audit := mocks.NewMockAuditRepository(ctrl)
+	audit.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
+
+	svc := service.NewOAuthService(authSvc, issuer, clients, codes, audit, 60*time.Second)
+
+	client := &domain.OAuthClient{
+		ID:         "svc-1",
+		GrantTypes: []string{"client_credentials"},
+		Scopes:     []string{"read:users"},
+		Audience:   "", // empty
+	}
+
+	_, err := svc.IssueClientCredentials(client, "read:users", "1.2.3.4")
+	assert.Error(t, err)
 }
