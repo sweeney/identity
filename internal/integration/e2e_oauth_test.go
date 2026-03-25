@@ -48,7 +48,9 @@ func setupE2EServer(t *testing.T) (http.Handler, *db.Database) {
 	oauthCodeStore := store.NewOAuthCodeStore(database)
 	auditStore := store.NewAuditStore(database)
 
-	issuer, err := auth.NewTokenIssuer(e2eJWTSecret, "", e2eJWTIssuer, 15*time.Minute)
+	jwtKey, err := auth.GenerateKey()
+	require.NoError(t, err)
+	issuer, err := auth.NewTokenIssuer(jwtKey, nil, e2eJWTIssuer, 15*time.Minute)
 	require.NoError(t, err)
 
 	backupMgr := &noopBackup{}
