@@ -1,19 +1,16 @@
-# Example OAuth Clients
+# Example Apps
 
-Three demo apps showing different ways to integrate with the Identity service using OAuth 2.0 Authorization Code + PKCE.
-
-All three implement the same flow — the difference is where the tokens end up.
+Demo apps showing different ways to integrate with the Identity service.
 
 ## Running the demos
 
 Start the Identity server:
 
 ```bash
-JWT_SECRET="<32+ chars>" ADMIN_USERNAME=admin ADMIN_PASSWORD=adminpassword1 \
-  ./bin/identity-server
+ADMIN_USERNAME=admin ADMIN_PASSWORD=adminpassword1 ./bin/identity-server
 ```
 
-Register each demo as an OAuth client at `/admin/oauth/new`:
+Register the OAuth demos as clients at `/admin/oauth/new`:
 
 | Demo | Client ID | Redirect URI |
 |------|-----------|-------------|
@@ -27,6 +24,7 @@ Then start whichever demo you want:
 go run ./examples/server-side-demo   # http://localhost:9090
 go run ./examples/spa-demo           # http://localhost:9091
 go run ./examples/bff-demo           # http://localhost:9092
+go run ./examples/verifier-demo      # http://localhost:9093 (no OAuth client needed)
 ```
 
 ---
@@ -107,6 +105,18 @@ Use the SPA approach but with platform-secure storage instead of localStorage:
 - Use `ASWebAuthenticationSession` (iOS) or Chrome Custom Tabs (Android) for the OAuth redirect — never embed a WebView.
 
 See `docs/api.md` for Swift and Kotlin code examples.
+
+### Token verification in downstream services
+
+**`examples/verifier-demo`** — shows how a consuming service validates tokens without holding the private key.
+
+```
+Service A ──Bearer token──► Service B (verifier-demo)
+                              fetches public key from /.well-known/jwks.json
+                              verifies signature locally
+```
+
+The verifier fetches the JWKS on startup, caches public keys by `kid`, and re-fetches automatically when it sees an unknown `kid` (handling zero-downtime key rotation). No shared secret — the private key never leaves the Identity server.
 
 ### Server-to-server (machine clients)
 
