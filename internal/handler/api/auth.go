@@ -110,6 +110,10 @@ type logoutRequest struct {
 
 func (h *authHandler) logout(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		jsonError(w, http.StatusForbidden, "forbidden", "service tokens cannot log out")
+		return
+	}
 
 	body, _ := io.ReadAll(r.Body)
 
@@ -138,6 +142,11 @@ type meResponse struct {
 
 func (h *authHandler) me(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		// Service token — no user identity
+		jsonError(w, http.StatusForbidden, "forbidden", "service tokens do not have a user identity")
+		return
+	}
 	jsonOK(w, meResponse{
 		ID:       claims.UserID,
 		Username: claims.Username,

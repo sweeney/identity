@@ -19,10 +19,23 @@ type webauthnHandler struct {
 	trustProxy string
 }
 
+// userClaimsOrForbidden extracts user claims and returns nil (having written a 403)
+// if the request was authenticated by a service token rather than a user token.
+func userClaimsOrForbidden(w http.ResponseWriter, r *http.Request) *domain.TokenClaims {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		jsonError(w, http.StatusForbidden, "forbidden", "service tokens cannot access user-specific endpoints")
+	}
+	return claims
+}
+
 // --- Registration ---
 
 func (h *webauthnHandler) registerBegin(w http.ResponseWriter, r *http.Request) {
-	claims := auth.ClaimsFromContext(r.Context())
+	claims := userClaimsOrForbidden(w, r)
+	if claims == nil {
+		return
+	}
 
 	creation, challengeID, err := h.svc.BeginRegistration(claims.UserID)
 	if err != nil {
@@ -52,7 +65,10 @@ func headerOrQuery(r *http.Request, header, query string) string {
 }
 
 func (h *webauthnHandler) registerFinish(w http.ResponseWriter, r *http.Request) {
-	claims := auth.ClaimsFromContext(r.Context())
+	claims := userClaimsOrForbidden(w, r)
+	if claims == nil {
+		return
+	}
 
 	challengeID := headerOrQuery(r, "X-Challenge-ID", "challenge_id")
 	name := headerOrQuery(r, "X-Passkey-Name", "name")
@@ -165,7 +181,10 @@ func toCredentialResponse(c *domain.WebAuthnCredential) credentialResponse {
 }
 
 func (h *webauthnHandler) listCredentials(w http.ResponseWriter, r *http.Request) {
-	claims := auth.ClaimsFromContext(r.Context())
+	claims := userClaimsOrForbidden(w, r)
+	if claims == nil {
+		return
+	}
 
 	creds, err := h.svc.ListCredentials(claims.UserID)
 	if err != nil {
@@ -189,7 +208,10 @@ type renameCredentialRequest struct {
 }
 
 func (h *webauthnHandler) renameCredential(w http.ResponseWriter, r *http.Request) {
-	claims := auth.ClaimsFromContext(r.Context())
+	claims := userClaimsOrForbidden(w, r)
+	if claims == nil {
+		return
+	}
 	credID := r.PathValue("id")
 
 	var req renameCredentialRequest
@@ -213,7 +235,10 @@ func (h *webauthnHandler) renameCredential(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *webauthnHandler) deleteCredential(w http.ResponseWriter, r *http.Request) {
-	claims := auth.ClaimsFromContext(r.Context())
+	claims := userClaimsOrForbidden(w, r)
+	if claims == nil {
+		return
+	}
 	credID := r.PathValue("id")
 
 	err := h.svc.DeleteCredential(claims.UserID, credID)

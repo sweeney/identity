@@ -102,6 +102,10 @@ func (h *userHandler) create(w http.ResponseWriter, r *http.Request) {
 func (h *userHandler) get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		jsonError(w, http.StatusForbidden, "forbidden", "service tokens cannot access user records")
+		return
+	}
 
 	// Non-admins can only access their own record
 	if claims.Role != domain.RoleAdmin && claims.UserID != id {

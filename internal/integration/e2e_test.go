@@ -43,12 +43,9 @@ func newTestServer(t *testing.T) *testServer {
 	userStore := store.NewUserStore(database)
 	tokenStore := store.NewTokenStore(database)
 
-	issuer, err := auth.NewTokenIssuer(
-		"integration-test-secret-long-enough-for-hmac",
-		"",
-		"identity.home",
-		15*time.Minute,
-	)
+	key, err := auth.GenerateKey()
+	require.NoError(t, err)
+	issuer, err := auth.NewTokenIssuer(key, nil, "identity.home", 15*time.Minute)
 	require.NoError(t, err)
 
 	noopBackup := &backup.NoopManager{}

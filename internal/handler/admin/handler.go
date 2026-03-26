@@ -2,7 +2,9 @@ package admin
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
@@ -674,26 +677,44 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.FormValue("id"))
 	name := strings.TrimSpace(r.FormValue("name"))
 	rawURIs := r.FormValue("redirect_uris")
+	grantTypes := r.Form["grant_types"]
+	authMethod := r.FormValue("token_endpoint_auth_method")
+	rawScopes := r.FormValue("scopes")
+	audience := strings.TrimSpace(r.FormValue("audience"))
 
-	if id == "" || name == "" || rawURIs == "" {
+	if id == "" || name == "" {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction":       "/admin/oauth/new",
-			"Error":            "Client ID, name, and at least one redirect URI are required.",
+			"Error":            "Client ID and name are required.",
 			"FormID":           id,
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
+			"FormScopes":       rawScopes,
+			"FormAudience":     audience,
 		})
 		return
 	}
 
+	if len(grantTypes) == 0 {
+		grantTypes = []string{"authorization_code"}
+	}
+	if authMethod == "" {
+		authMethod = "none"
+	}
+
 	uris := splitURIs(rawURIs)
+	scopes := splitLines(rawScopes)
 	now := time.Now().UTC()
 	client := &domain.OAuthClient{
-		ID:           id,
-		Name:         name,
-		RedirectURIs: uris,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:                      id,
+		Name:                    name,
+		RedirectURIs:            uris,
+		GrantTypes:              grantTypes,
+		Scopes:                  scopes,
+		TokenEndpointAuthMethod: authMethod,
+		Audience:                audience,
+		CreatedAt:               now,
+		UpdatedAt:               now,
 	}
 
 	if err := h.oauthClients.Create(client); err != nil {
@@ -703,6 +724,8 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormID":           id,
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
+			"FormScopes":       rawScopes,
+			"FormAudience":     audience,
 		})
 		return
 	}
@@ -743,18 +766,33 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 
 	name := strings.TrimSpace(r.FormValue("name"))
 	rawURIs := r.FormValue("redirect_uris")
+	grantTypes := r.Form["grant_types"]
+	authMethod := r.FormValue("token_endpoint_auth_method")
+	rawScopes := r.FormValue("scopes")
+	audience := strings.TrimSpace(r.FormValue("audience"))
 
-	if name == "" || rawURIs == "" {
+	if name == "" {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction": "/admin/oauth/" + id + "/edit",
 			"Client":     client,
-			"Error":      "Name and at least one redirect URI are required.",
+			"Error":      "Name is required.",
 		})
 		return
 	}
 
+	if len(grantTypes) == 0 {
+		grantTypes = []string{"authorization_code"}
+	}
+	if authMethod == "" {
+		authMethod = "none"
+	}
+
 	client.Name = name
 	client.RedirectURIs = splitURIs(rawURIs)
+	client.GrantTypes = grantTypes
+	client.Scopes = splitLines(rawScopes)
+	client.TokenEndpointAuthMethod = authMethod
+	client.Audience = audience
 	if err := h.oauthClients.Update(client); err != nil {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction": "/admin/oauth/" + id + "/edit",
@@ -810,6 +848,138 @@ func (h *adminHandler) oauthDeletePost(w http.ResponseWriter, r *http.Request) {
 	meta := h.auditMeta(r)
 	h.recordAuditWithDetail(domain.EventOAuthClientDeleted, "", meta.ActorUsername, meta.IPAddress, "deleted OAuth client "+id)
 	http.Redirect(w, r, "/admin/oauth", http.StatusSeeOther)
+}
+
+// --- OAuth Client Secret Management ---
+
+func (h *adminHandler) oauthGenerateSecret(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	client, err := h.oauthClients.GetByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := h.verifyAdminPassword(r); err != nil {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction": "/admin/oauth/" + id + "/edit",
+			"Client":     client,
+			"Error":      "Incorrect password.",
+		})
+		return
+	}
+
+	secret, hash, err := generateClientSecret()
+	if err != nil {
+		http.Error(w, "failed to generate secret", http.StatusInternalServerError)
+		return
+	}
+
+	client.SecretHash = hash
+	if err := h.oauthClients.Update(client); err != nil {
+		http.Error(w, "failed to save secret", http.StatusInternalServerError)
+		return
+	}
+
+	meta := h.auditMeta(r)
+	h.recordAuditWithDetail(domain.EventClientSecretRotated, "", meta.ActorUsername, meta.IPAddress, "generated secret for OAuth client "+id)
+	h.render(w, r, "oauth_client_form.html", map[string]any{
+		"FormAction":      "/admin/oauth/" + id + "/edit",
+		"Client":          client,
+		"GeneratedSecret": secret,
+		"Success":         "Client secret generated. Copy it now — it will not be shown again.",
+	})
+}
+
+func (h *adminHandler) oauthRotateSecret(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	client, err := h.oauthClients.GetByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := h.verifyAdminPassword(r); err != nil {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction": "/admin/oauth/" + id + "/edit",
+			"Client":     client,
+			"Error":      "Incorrect password.",
+		})
+		return
+	}
+
+	secret, hash, err := generateClientSecret()
+	if err != nil {
+		http.Error(w, "failed to generate secret", http.StatusInternalServerError)
+		return
+	}
+
+	client.SecretHashPrev = client.SecretHash
+	client.SecretHash = hash
+	if err := h.oauthClients.Update(client); err != nil {
+		http.Error(w, "failed to save secret", http.StatusInternalServerError)
+		return
+	}
+
+	meta := h.auditMeta(r)
+	h.recordAuditWithDetail(domain.EventClientSecretRotated, "", meta.ActorUsername, meta.IPAddress, "rotated secret for OAuth client "+id)
+	h.render(w, r, "oauth_client_form.html", map[string]any{
+		"FormAction":      "/admin/oauth/" + id + "/edit",
+		"Client":          client,
+		"GeneratedSecret": secret,
+		"Success":         "Secret rotated. Both old and new secrets are accepted. Copy the new secret, then clear the previous one.",
+	})
+}
+
+func (h *adminHandler) oauthClearPrevSecret(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	client, err := h.oauthClients.GetByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := h.verifyAdminPassword(r); err != nil {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction": "/admin/oauth/" + id + "/edit",
+			"Client":     client,
+			"Error":      "Incorrect password.",
+		})
+		return
+	}
+
+	client.SecretHashPrev = ""
+	if err := h.oauthClients.Update(client); err != nil {
+		http.Error(w, "failed to save", http.StatusInternalServerError)
+		return
+	}
+
+	meta := h.auditMeta(r)
+	h.recordAuditWithDetail(domain.EventClientSecretRotated, "", meta.ActorUsername, meta.IPAddress, "cleared previous secret for OAuth client "+id)
+	http.Redirect(w, r, "/admin/oauth/"+id+"/edit", http.StatusSeeOther)
+}
+
+// generateClientSecret generates a random client secret and its bcrypt hash.
+func generateClientSecret() (raw, hash string, err error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", "", err
+	}
+	raw = base64.RawURLEncoding.EncodeToString(b)
+	hashed, err := bcrypt.GenerateFromPassword([]byte(raw), 12)
+	if err != nil {
+		return "", "", err
+	}
+	return raw, string(hashed), nil
+}
+
+// splitLines splits text on newlines, trims whitespace, and removes empty lines.
+func splitLines(s string) []string {
+	var result []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			result = append(result, line)
+		}
+	}
+	return result
 }
 
 // --- Audit Log ---

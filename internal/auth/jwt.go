@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -23,6 +24,13 @@ type identityClaims struct {
 	Username string      `json:"usr"`
 	Role     domain.Role `json:"rol"`
 	IsActive bool        `json:"act"`
+}
+
+// serviceClaims is the JWT claim set for client_credentials tokens (RFC 9068).
+type serviceClaims struct {
+	jwt.RegisteredClaims
+	ClientID string `json:"client_id"`
+	Scope    string `json:"scope,omitempty"`
 }
 
 // JWK represents a single JSON Web Key.
@@ -99,6 +107,97 @@ func (ti *TokenIssuer) Mint(claims domain.TokenClaims) (string, error) {
 		return "", fmt.Errorf("sign token: %w", err)
 	}
 	return signed, nil
+}
+
+// MintServiceToken creates a signed JWT for a client_credentials grant (RFC 9068).
+func (ti *TokenIssuer) MintServiceToken(claims domain.ServiceTokenClaims, ttl time.Duration) (string, error) {
+	if claims.Audience == "" {
+		return "", errors.New("audience is required for service tokens")
+	}
+	now := time.Now()
+	jwtClaims := serviceClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    ti.issuer,
+			Subject:   claims.ClientID,
+			Audience:  jwt.ClaimStrings{claims.Audience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+			ID:        uuid.New().String(),
+		},
+		ClientID: claims.ClientID,
+		Scope:    claims.Scope,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwtClaims)
+	token.Header["kid"] = ti.keyID
+	token.Header["typ"] = "at+jwt" // RFC 9068 §2.1
+	signed, err := token.SignedString(ti.key)
+	if err != nil {
+		return "", fmt.Errorf("sign service token: %w", err)
+	}
+	return signed, nil
+}
+
+// ParseServiceToken validates a JWT and returns ServiceTokenClaims if the token
+// contains a client_id claim. Returns ErrTokenInvalid if it's not a service token.
+func (ti *TokenIssuer) ParseServiceToken(tokenStr string) (*domain.ServiceTokenClaims, error) {
+	if tokenStr == "" {
+		return nil, ErrTokenInvalid
+	}
+
+	parse := func(key *ecdsa.PrivateKey) (*domain.ServiceTokenClaims, error) {
+		token, err := jwt.ParseWithClaims(
+			tokenStr,
+			&serviceClaims{},
+			func(t *jwt.Token) (any, error) {
+				if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+				}
+				// Reject tokens without the at+jwt type header (RFC 9068 §2.1).
+				// This prevents user tokens from being accepted as service tokens.
+				if typ, _ := t.Header["typ"].(string); typ != "at+jwt" {
+					return nil, fmt.Errorf("not a service token")
+				}
+				return &key.PublicKey, nil
+			},
+			jwt.WithIssuer(ti.issuer),
+			jwt.WithExpirationRequired(),
+		)
+		if err != nil {
+			if errors.Is(err, jwt.ErrTokenExpired) {
+				return nil, ErrTokenExpired
+			}
+			return nil, ErrTokenInvalid
+		}
+		c, ok := token.Claims.(*serviceClaims)
+		if !ok || !token.Valid || c.ClientID == "" {
+			return nil, ErrTokenInvalid
+		}
+		var exp, iat int64
+		if c.ExpiresAt != nil {
+			exp = c.ExpiresAt.Unix()
+		}
+		if c.IssuedAt != nil {
+			iat = c.IssuedAt.Unix()
+		}
+		return &domain.ServiceTokenClaims{
+			ClientID:  c.ClientID,
+			Audience:  strings.Join(c.Audience, " "),
+			Scope:     c.Scope,
+			JTI:       c.ID,
+			ExpiresAt: exp,
+			IssuedAt:  iat,
+		}, nil
+	}
+
+	result, err := parse(ti.key)
+	if err != nil && ti.prevKey != nil && !errors.Is(err, ErrTokenExpired) {
+		if result, fallbackErr := parse(ti.prevKey); fallbackErr == nil {
+			return result, nil
+		}
+	}
+	return result, err
 }
 
 // Parse validates a JWT and returns the embedded TokenClaims.

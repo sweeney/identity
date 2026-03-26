@@ -48,13 +48,15 @@ func setupE2EServer(t *testing.T) (http.Handler, *db.Database) {
 	oauthCodeStore := store.NewOAuthCodeStore(database)
 	auditStore := store.NewAuditStore(database)
 
-	issuer, err := auth.NewTokenIssuer(e2eJWTSecret, "", e2eJWTIssuer, 15*time.Minute)
+	jwtKey, err := auth.GenerateKey()
+	require.NoError(t, err)
+	issuer, err := auth.NewTokenIssuer(jwtKey, nil, e2eJWTIssuer, 15*time.Minute)
 	require.NoError(t, err)
 
 	backupMgr := &noopBackup{}
 	authSvc := service.NewAuthService(issuer, userStore, tokenStore, backupMgr, auditStore, 30*24*time.Hour)
 	userSvc := service.NewUserService(userStore, tokenStore, backupMgr, auditStore, 4)
-	oauthSvc := service.NewOAuthService(authSvc, oauthClientStore, oauthCodeStore, auditStore, 60*time.Second)
+	oauthSvc := service.NewOAuthService(authSvc, issuer, oauthClientStore, oauthCodeStore, auditStore, 60*time.Second)
 
 	// Create admin user
 	_, err = userSvc.Create(e2eAdminUser, "Admin", "adminpassword123", domain.RoleAdmin)

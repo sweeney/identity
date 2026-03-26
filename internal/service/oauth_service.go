@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,18 +13,34 @@ import (
 	"github.com/sweeney/identity/internal/domain"
 )
 
-// OAuthService orchestrates the OAuth 2.0 authorization code flow with PKCE.
+// OAuthService orchestrates the OAuth 2.0 authorization code flow with PKCE
+// and the client credentials flow.
 type OAuthService struct {
 	auth    AuthServicer
+	issuer  TokenIssuer
 	clients domain.OAuthClientRepository
 	codes   domain.OAuthCodeRepository
 	audit   domain.AuditRepository
 	codeTTL time.Duration
 }
 
+// TokenIssuer is the subset of auth.TokenIssuer needed by OAuthService.
+type TokenIssuer interface {
+	MintServiceToken(claims domain.ServiceTokenClaims, ttl time.Duration) (string, error)
+}
+
+// ClientCredentialsResult holds the response for a client_credentials grant.
+type ClientCredentialsResult struct {
+	AccessToken string
+	TokenType   string
+	ExpiresIn   int
+	Scope       string
+}
+
 // NewOAuthService creates an OAuthService.
 func NewOAuthService(
 	auth AuthServicer,
+	issuer TokenIssuer,
 	clients domain.OAuthClientRepository,
 	codes domain.OAuthCodeRepository,
 	audit domain.AuditRepository,
@@ -31,11 +48,24 @@ func NewOAuthService(
 ) *OAuthService {
 	return &OAuthService{
 		auth:    auth,
+		issuer:  issuer,
 		clients: clients,
 		codes:   codes,
 		audit:   audit,
 		codeTTL: codeTTL,
 	}
+}
+
+// GetClient returns an OAuth client by ID.
+func (s *OAuthService) GetClient(clientID string) (*domain.OAuthClient, error) {
+	client, err := s.clients.GetByID(clientID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil, ErrUnknownClient
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get client: %w", err)
+	}
+	return client, nil
 }
 
 // ValidateAuthorizeRequest looks up the client and validates the redirect URI.
@@ -176,6 +206,61 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 // RefreshToken delegates to the underlying auth service refresh.
 func (s *OAuthService) RefreshToken(rawRefreshToken string) (*LoginResult, error) {
 	return s.auth.Refresh(rawRefreshToken)
+}
+
+const serviceTokenTTL = 15 * time.Minute
+
+// IssueClientCredentials issues an access token for the client_credentials grant.
+// requestedScope may be empty (defaults to all client scopes).
+func (s *OAuthService) IssueClientCredentials(client *domain.OAuthClient, requestedScope, ip string) (*ClientCredentialsResult, error) {
+	if !client.HasGrantType("client_credentials") {
+		return nil, ErrUnauthorizedClient
+	}
+
+	// Validate requested scopes and normalize (remove duplicates/extra whitespace)
+	scope := strings.Join(client.Scopes, " ")
+	if requestedScope != "" {
+		var validated []string
+		seen := make(map[string]bool)
+		for _, rs := range strings.Split(requestedScope, " ") {
+			if rs == "" {
+				continue
+			}
+			if !client.HasScope(rs) {
+				return nil, ErrInvalidScope
+			}
+			if !seen[rs] {
+				validated = append(validated, rs)
+				seen[rs] = true
+			}
+		}
+		scope = strings.Join(validated, " ")
+	}
+
+	claims := domain.ServiceTokenClaims{
+		ClientID: client.ID,
+		Audience: client.Audience,
+		Scope:    scope,
+	}
+
+	accessToken, err := s.issuer.MintServiceToken(claims, serviceTokenTTL)
+	if err != nil {
+		return nil, fmt.Errorf("mint service token: %w", err)
+	}
+
+	s.record(&domain.AuthEvent{
+		EventType: domain.EventClientCredentials,
+		ClientID:  client.ID,
+		IPAddress: ip,
+		Detail:    "scope=" + scope,
+	})
+
+	return &ClientCredentialsResult{
+		AccessToken: accessToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   int(serviceTokenTTL.Seconds()),
+		Scope:       scope,
+	}, nil
 }
 
 // verifyPKCE checks that sha256(verifier) == challenge (S256 method).

@@ -366,7 +366,7 @@ func TestTokenEndpoint_RefreshToken_Success(t *testing.T) {
 func TestTokenEndpoint_UnsupportedGrantType(t *testing.T) {
 	h := newTestRouter(mocks.NewMockOAuthServicer(gomock.NewController(t)))
 	rr := postForm(t, h, "/oauth/token", url.Values{
-		"grant_type": {"client_credentials"},
+		"grant_type": {"implicit"},
 	})
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	var body map[string]string

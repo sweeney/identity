@@ -37,6 +37,20 @@ Human-readable guides are in `docs/`:
 5. App exchanges code at `POST /oauth/token` with `code_verifier` → receive tokens
 6. Refresh via `POST /oauth/token` with `grant_type=refresh_token`
 
+## Client Credentials flow (service-to-service)
+
+Machine-to-machine auth — no user, no browser. A service authenticates with its own credentials.
+
+1. Register an OAuth client at `/admin/oauth` with grant type `client_credentials` and a client secret
+2. `POST /oauth/token` with `grant_type=client_credentials`, `Authorization: Basic base64(client_id:client_secret)`, optional `scope=read:users`
+3. Receive `access_token` (JWT, 15 min), `token_type`, `expires_in`, `scope` — **no refresh token**
+4. When token expires, re-authenticate with the same credentials (step 2)
+
+JWT claims follow RFC 9068: `sub` = client_id, `client_id` (top-level), `jti`, `aud`, `scope` (space-delimited). No user claims.
+
+Discovery: `GET /.well-known/oauth-authorization-server` (RFC 8414)
+Introspection: `POST /oauth/introspect` with client auth + `token` parameter (RFC 7662)
+
 ## Passkey / WebAuthn flow
 
 Passkeys let users sign in with biometrics (Touch ID, Face ID, Windows Hello) instead of a password.
@@ -68,7 +82,7 @@ All API errors return the same shape (`/oauth/token` uses RFC 6749 format instea
 { "error": "snake_case_code", "message": "Human readable" }
 ```
 
-Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expired`, `invalid_refresh_token`, `account_disabled`, `forbidden`, `unknown_client`, `invalid_redirect_uri`, `invalid_auth_code`, `pkce_verification_failed`, `webauthn_not_enabled`, `webauthn_invalid_challenge`, `webauthn_verification_failed`, `webauthn_no_credentials`, `webauthn_credential_not_found`
+Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expired`, `invalid_refresh_token`, `account_disabled`, `forbidden`, `unknown_client`, `invalid_redirect_uri`, `invalid_auth_code`, `pkce_verification_failed`, `webauthn_not_enabled`, `webauthn_invalid_challenge`, `webauthn_verification_failed`, `webauthn_no_credentials`, `webauthn_credential_not_found`, `invalid_client`, `unauthorized_client`, `invalid_scope`, `insufficient_scope`
 
 ## Running locally
 
@@ -126,6 +140,7 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `internal/handler/api/webauthn.go` | WebAuthn API endpoints (`/api/v1/webauthn/*`) |
 | `internal/store/webauthn_credential_store.go` | WebAuthn credential persistence |
 | `internal/store/webauthn_challenge_store.go` | WebAuthn challenge persistence (ephemeral) |
+| `internal/handler/oauth/client_auth.go` | Client secret authentication (Basic + form body) |
 | `internal/spec/openapi.yaml` | OpenAPI 3.0 spec (served at `/openapi.json`) |
 | `cmd/server/secrets.go` | DB-managed JWT secret with rotation support |
 | `cmd/server/backups.go` | `--list-backups` and `--restore-backup` CLI commands |
@@ -133,3 +148,4 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `examples/` | Four demo clients (server-side, SPA, BFF, passkey) |
 | `scripts/e2e.sh` | End-to-end test suite (58 checks) |
 | `scripts/e2e-webauthn.sh` | WebAuthn end-to-end test suite (32 checks) |
+| `scripts/e2e-client-credentials.sh` | Client credentials end-to-end test suite |

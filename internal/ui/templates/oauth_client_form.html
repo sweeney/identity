@@ -3,6 +3,14 @@
 <h2>{{if .Client}}Edit OAuth Client{{else}}New OAuth Client{{end}}</h2>
 
 {{if .Error}}<p class="flash-error">{{.Error}}</p>{{end}}
+{{if .Success}}<p class="flash-success">{{.Success}}</p>{{end}}
+
+{{if .GeneratedSecret}}
+<div class="flash-warning" style="word-break:break-all">
+    <strong>Client Secret (copy now — it will not be shown again):</strong><br>
+    <code>{{.GeneratedSecret}}</code>
+</div>
+{{end}}
 
 <form method="POST" action="{{.FormAction}}">
     <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
@@ -19,9 +27,36 @@
         Application Name
         <input type="text" name="name" value="{{if .Client}}{{.Client.Name}}{{else}}{{.FormName}}{{end}}" required placeholder="e.g. My Dashboard">
     </label>
+    <fieldset>
+        <legend>Grant Types</legend>
+        <label class="checkbox-label">
+            <input type="checkbox" name="grant_types" value="authorization_code" {{if .Client}}{{if .Client.HasGrantType "authorization_code"}}checked{{end}}{{else}}checked{{end}}>
+            Authorization Code (PKCE)
+        </label>
+        <label class="checkbox-label">
+            <input type="checkbox" name="grant_types" value="client_credentials" {{if .Client}}{{if .Client.HasGrantType "client_credentials"}}checked{{end}}{{end}}>
+            Client Credentials (service-to-service)
+        </label>
+    </fieldset>
     <label>
-        Redirect URIs <small>(one per line)</small>
-        <textarea name="redirect_uris" rows="4" required placeholder="https://myapp.example.com/callback&#10;myapp://callback">{{if .Client}}{{range $i, $uri := .Client.RedirectURIs}}{{if $i}}&#10;{{end}}{{$uri}}{{end}}{{else}}{{.FormRedirectURIs}}{{end}}</textarea>
+        Token Endpoint Auth Method
+        <select name="token_endpoint_auth_method">
+            <option value="none" {{if .Client}}{{if eq .Client.TokenEndpointAuthMethod "none"}}selected{{end}}{{end}}>None (public / PKCE only)</option>
+            <option value="client_secret_basic" {{if .Client}}{{if eq .Client.TokenEndpointAuthMethod "client_secret_basic"}}selected{{end}}{{end}}>client_secret_basic (HTTP Basic)</option>
+            <option value="client_secret_post" {{if .Client}}{{if eq .Client.TokenEndpointAuthMethod "client_secret_post"}}selected{{end}}{{end}}>client_secret_post (form body)</option>
+        </select>
+    </label>
+    <label>
+        Redirect URIs <small>(one per line, required for authorization_code)</small>
+        <textarea name="redirect_uris" rows="4" placeholder="https://myapp.example.com/callback&#10;myapp://callback">{{if .Client}}{{range $i, $uri := .Client.RedirectURIs}}{{if $i}}&#10;{{end}}{{$uri}}{{end}}{{else}}{{.FormRedirectURIs}}{{end}}</textarea>
+    </label>
+    <label>
+        Allowed Scopes <small>(one per line, e.g. read:users)</small>
+        <textarea name="scopes" rows="3" placeholder="read:users&#10;write:users">{{if .Client}}{{range $i, $s := .Client.Scopes}}{{if $i}}&#10;{{end}}{{$s}}{{end}}{{else}}{{.FormScopes}}{{end}}</textarea>
+    </label>
+    <label>
+        Audience <small>(aud claim in issued tokens)</small>
+        <input type="text" name="audience" value="{{if .Client}}{{.Client.Audience}}{{else}}{{.FormAudience}}{{end}}" placeholder="e.g. https://api.example.com">
     </label>
     {{if .Client}}
     <label>
@@ -34,4 +69,31 @@
         <a href="/admin/oauth" class="btn btn-secondary">Cancel</a>
     </div>
 </form>
+
+{{if .Client}}
+<hr>
+<h3>Client Secret</h3>
+{{if .Client.SecretHash}}
+<p>A client secret is set.{{if .Client.SecretHashPrev}} <em>(Previous secret also active — rotation in progress.)</em>{{end}}</p>
+<form method="POST" action="/admin/oauth/{{.Client.ID}}/rotate-secret" style="display:inline">
+    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+    <input type="password" name="admin_password" required placeholder="Admin password">
+    <button type="submit" class="btn btn-secondary">Rotate Secret</button>
+</form>
+{{if .Client.SecretHashPrev}}
+<form method="POST" action="/admin/oauth/{{.Client.ID}}/clear-prev-secret" style="display:inline;margin-left:0.5rem">
+    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+    <input type="password" name="admin_password" required placeholder="Admin password">
+    <button type="submit" class="btn btn-secondary">Clear Previous Secret</button>
+</form>
+{{end}}
+{{else}}
+<p>No client secret set.</p>
+<form method="POST" action="/admin/oauth/{{.Client.ID}}/generate-secret">
+    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+    <input type="password" name="admin_password" required placeholder="Admin password">
+    <button type="submit">Generate Secret</button>
+</form>
+{{end}}
+{{end}}
 {{end}}

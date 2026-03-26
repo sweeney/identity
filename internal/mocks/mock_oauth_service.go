@@ -86,6 +86,36 @@ func (mr *MockOAuthServicerMockRecorder) ExchangeCode(clientID, code, redirectUR
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExchangeCode", reflect.TypeOf((*MockOAuthServicer)(nil).ExchangeCode), clientID, code, redirectURI, codeVerifier)
 }
 
+// GetClient mocks base method.
+func (m *MockOAuthServicer) GetClient(clientID string) (*domain.OAuthClient, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetClient", clientID)
+	ret0, _ := ret[0].(*domain.OAuthClient)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetClient indicates an expected call of GetClient.
+func (mr *MockOAuthServicerMockRecorder) GetClient(clientID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetClient", reflect.TypeOf((*MockOAuthServicer)(nil).GetClient), clientID)
+}
+
+// IssueClientCredentials mocks base method.
+func (m *MockOAuthServicer) IssueClientCredentials(client *domain.OAuthClient, requestedScope, ip string) (*service.ClientCredentialsResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IssueClientCredentials", client, requestedScope, ip)
+	ret0, _ := ret[0].(*service.ClientCredentialsResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IssueClientCredentials indicates an expected call of IssueClientCredentials.
+func (mr *MockOAuthServicerMockRecorder) IssueClientCredentials(client, requestedScope, ip any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueClientCredentials", reflect.TypeOf((*MockOAuthServicer)(nil).IssueClientCredentials), client, requestedScope, ip)
+}
+
 // RefreshToken mocks base method.
 func (m *MockOAuthServicer) RefreshToken(rawRefreshToken string) (*service.LoginResult, error) {
 	m.ctrl.T.Helper()
