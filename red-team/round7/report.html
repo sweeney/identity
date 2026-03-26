@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Red Team Report — Round 7 — id.swee.net</title>
+<style>
+  :root {
+    --bg: #0a0a0f; --bg2: #12121a; --bg3: #1a1a26; --border: #2a2a3a;
+    --text: #c8c8d4; --text-dim: #6a6a7a; --accent: #7b68ee;
+    --red: #ff4757; --orange: #ffa502; --yellow: #eccc68;
+    --green: #2ed573; --cyan: #70a1ff;
+    --mono: 'SF Mono','Fira Code','JetBrains Mono','Cascadia Code',Consolas,monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { font-family: var(--mono); font-size: 14px; line-height: 1.7; background: var(--bg); color: var(--text); max-width: 960px; margin: 0 auto; padding: 40px 24px 100px; }
+  h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; }
+  h1 { font-size: 22px; color: #fff; margin-bottom: 8px; }
+  h2 { font-size: 16px; color: var(--accent); margin-top: 48px; margin-bottom: 16px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 14px; color: #ddd; margin-top: 16px; margin-bottom: 8px; }
+  p { margin-bottom: 12px; }
+  code { background: var(--bg3); padding: 1px 5px; border-radius: 3px; font-size: 12.5px; }
+  pre { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; overflow-x: auto; font-size: 12px; margin: 8px 0 16px; line-height: 1.5; }
+  .subtitle { color: var(--text-dim); margin-bottom: 24px; }
+  .meta { color: var(--text-dim); font-size: 12px; margin-bottom: 32px; }
+  .meta span { margin-right: 20px; }
+  .sev { display: inline-block; padding: 1px 8px; border-radius: 3px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+  .sev-high { background: rgba(255,71,87,0.12); color: var(--red); border: 1px solid rgba(255,71,87,0.3); }
+  .sev-medium { background: rgba(255,165,2,0.12); color: var(--orange); border: 1px solid rgba(255,165,2,0.3); }
+  .sev-low { background: rgba(236,204,104,0.12); color: var(--yellow); border: 1px solid rgba(236,204,104,0.3); }
+  .sev-info { background: rgba(112,161,255,0.1); color: var(--cyan); border: 1px solid rgba(112,161,255,0.2); }
+  .fixed { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; background: rgba(46,213,115,0.08); color: var(--green); border: 1px solid rgba(46,213,115,0.2); margin-left: 6px; }
+  .pass-badge { display: inline-block; padding: 4px 16px; border-radius: 4px; font-size: 14px; font-weight: 700; letter-spacing: 0.05em; background: rgba(255,165,2,0.12); color: var(--orange); border: 2px solid rgba(255,165,2,0.3); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 12.5px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.1em; }
+  tr:hover td { background: rgba(123,104,238,0.04); }
+  .finding { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 20px 24px; margin: 16px 0 24px; }
+  .finding-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .finding-title { color: #fff; font-weight: 600; }
+  .finding-id { color: var(--text-dim); font-size: 12px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .good-list { list-style: none; padding: 0; }
+  .good-list li { padding: 4px 0; }
+  .good-list li::before { content: "[+] "; color: var(--green); font-weight: 700; }
+  .chart { display: flex; gap: 24px; margin: 16px 0 24px; flex-wrap: wrap; }
+  .chart-bar { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .chart-val { font-size: 28px; font-weight: 700; color: #fff; }
+  .chart-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; }
+  .attack-scenario { background: rgba(255,71,87,0.04); border-left: 3px solid rgba(255,71,87,0.3); padding: 10px 16px; margin: 8px 0 16px; border-radius: 0 4px 4px 0; }
+  .evidence { background: rgba(112,161,255,0.04); border-left: 3px solid rgba(112,161,255,0.2); padding: 10px 16px; margin: 8px 0 16px; border-radius: 0 4px 4px 0; font-size: 12.5px; }
+  .fix { background: rgba(46,213,115,0.04); border-left: 3px solid rgba(46,213,115,0.2); padding: 10px 16px; margin: 8px 0 16px; border-radius: 0 4px 4px 0; }
+  .note { background: rgba(123,104,238,0.04); border-left: 3px solid rgba(123,104,238,0.2); padding: 10px 16px; margin: 8px 0 16px; border-radius: 0 4px 4px 0; font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<h1>// RED TEAM REPORT &mdash; ROUND 7</h1>
+<p class="subtitle">id.swee.net &mdash; Identity &amp; Auth Server &mdash; ES256 Migration &amp; Client Credentials</p>
+<div class="meta">
+  <span>target: https://id.swee.net/</span>
+  <span>source: github.com/sweeney/identity</span><br>
+  <span>date: 2026-03-26</span>
+  <span>stack: Go / SQLite / OAuth 2.0+PKCE / JWT ES256 / WebAuthn / RFC 9068 / Cloudflare</span>
+</div>
+
+<div style="text-align: center; margin: 32px 0;">
+  <span class="pass-badge">ASSESSMENT: CONDITIONAL PASS</span>
+  <p style="color: var(--text-dim); font-size: 12px; margin-top: 12px;">
+    2 prior findings confirmed fixed &bull; 2 MEDIUM new &bull; 3 LOW new &bull; 2 INFO &bull; no auth bypass found
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<h2>// Executive Summary</h2>
+
+<p>Round 7 targeted significant new functionality shipped since Round 6: the JWT algorithm migration from HS256 to ES256 (ECDSA P-256), the new OAuth 2.0 client credentials flow (RFC 6749 §4.4) with RFC 9068 service tokens, a public JWKS endpoint, token introspection (RFC 7662), and authorization server metadata/discovery (RFC 8414). The new <code>RequireScope</code> and <code>RequireAudience</code> middleware were also reviewed.</p>
+
+<p>No critical vulnerabilities or auth bypasses were found in the new cryptographic infrastructure — ES256 is implemented correctly, service tokens are properly distinguished from user tokens, and token rotation TOCTOU remains fixed. Two prior findings were confirmed remediated. The new findings are architectural gaps (middleware unwired, discovery endpoint reflecting Host header) and operational edge cases.</p>
+
+<div class="chart">
+  <div class="chart-bar"><span class="chart-val" style="color: var(--green)">2</span><span class="chart-label">Fixed</span><span class="chart-sub">from R6</span></div>
+  <div class="chart-bar"><span class="chart-val" style="color: var(--orange)">2</span><span class="chart-label">Medium</span></div>
+  <div class="chart-bar"><span class="chart-val" style="color: var(--yellow)">3</span><span class="chart-label">Low</span></div>
+  <div class="chart-bar"><span class="chart-val" style="color: var(--cyan)">2</span><span class="chart-label">Info</span></div>
+</div>
+
+<!-- ============================================================ -->
+<h2>// Prior Round Fixes Verified</h2>
+
+<table>
+  <tr><th>#</th><th>R6 Finding</th><th>R6 Severity</th><th>Status</th></tr>
+  <tr>
+    <td>R6-CORS</td>
+    <td>CORS <code>isAllowedOrigin</code> prefix-match bypass</td>
+    <td><span class="sev sev-medium">MEDIUM</span></td>
+    <td><span class="fixed">FIXED</span> &mdash; now exact <code>map[string]bool</code> lookup in <code>main.go:466</code></td>
+  </tr>
+  <tr>
+    <td>R6-SESSION</td>
+    <td>Admin session secret shared with JWT signing key</td>
+    <td><span class="sev sev-medium">MEDIUM</span></td>
+    <td><span class="fixed">FIXED</span> &mdash; <code>session_secret</code> is now a separate 64-byte random value in the metadata table</td>
+  </tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>// New Findings</h2>
+
+<!-- M1 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="finding-id">M1</span>
+    <span class="sev sev-medium">MEDIUM</span>
+    <span class="finding-title">Host Header Injection in OAuth Discovery Endpoint</span>
+  </div>
+  <p><strong>File:</strong> <code>internal/handler/oauth/handler.go:494&ndash;514</code></p>
+  <p>The <code>GET /.well-known/oauth-authorization-server</code> endpoint constructs the entire discovery document &mdash; <code>issuer</code>, <code>authorization_endpoint</code>, <code>token_endpoint</code>, <code>jwks_uri</code> &mdash; by trusting <code>r.Host</code> directly:</p>
+<pre>// Use the configured issuer from the token issuer when available,
+// rather than trusting the Host header which can be spoofed.
+scheme := "https"
+if r.TLS == nil &amp;&amp; (strings.HasPrefix(r.Host, "localhost") || ...) {
+    scheme = "http"
+}
+issuer := scheme + "://" + r.Host  // ← r.Host still used despite comment</pre>
+  <p>The code comment acknowledges the correct fix but it was never implemented. An attacker who can control the Host header receives a discovery document pointing all OAuth endpoints to their domain.</p>
+
+  <div class="attack-scenario">
+    <strong>Attack scenario (dev/staging):</strong><br>
+    An OAuth client using RFC 8414 auto-discovery fetches <code>/.well-known/oauth-authorization-server</code> with a spoofed <code>Host: evil.attacker.com</code> header. The returned document contains <code>"authorization_endpoint": "https://evil.attacker.com/oauth/authorize"</code>. The client begins sending authorization requests &mdash; including user credentials &mdash; to the attacker&rsquo;s server.
+  </div>
+
+  <div class="note">
+    <strong>Production mitigating factor:</strong> Cloudflare Tunnel normalizes the Host header before forwarding to the origin, making injection from the internet impractical. However, the vulnerability is fully exploitable on local, staging, and CI instances, and also if the origin is ever directly reachable.
+  </div>
+
+  <div class="fix">
+    <strong>Fix:</strong> Use the configured issuer string from <code>TokenIssuer.issuer</code> (set at startup from env config) instead of <code>r.Host</code>. Expose it via a method and pass it to the handler at construction time. The comment already says this is the right approach &mdash; it just needs to be implemented.
+  </div>
+</div>
+
+<!-- M2 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="finding-id">M2</span>
+    <span class="sev sev-medium">MEDIUM</span>
+    <span class="finding-title"><code>RequireScope</code> / <code>RequireAudience</code> Not Applied to Any Route</span>
+  </div>
+  <p><strong>Files:</strong> <code>internal/auth/middleware.go:97&ndash;154</code>, <code>internal/handler/api/router.go</code></p>
+  <p>Both <code>RequireScope</code> and <code>RequireAudience</code> middleware are fully implemented but not wired to any route in the identity server. All routes use only <code>RequireAuth</code> and optionally <code>RequireAdmin</code>:</p>
+<pre>// Every protected route looks like this — no scope or audience check:
+mux.Handle("GET /api/v1/users/{id}", auth.RequireAuth(issuer, http.HandlerFunc(uh.get)))</pre>
+
+  <h3>Audience gap</h3>
+  <p>A service token issued to any client with any audience (e.g., <code>aud: "my-api"</code>) is accepted by <code>RequireAuth</code> without checking whether its audience matches the identity server. <code>RequireAudience</code> exists precisely to prevent cross-service token replay, but it is never invoked.</p>
+  <p>In practice, the identity server&rsquo;s own routes are safe because all handlers either check <code>if claims == nil</code> (blocking service tokens) or are behind <code>RequireAdmin</code> (which also blocks them). However, this creates two concrete risks:</p>
+
+  <ol style="padding-left: 20px; margin-bottom: 12px;">
+    <li style="margin-bottom: 6px;"><strong>Consuming services:</strong> Any downstream service that protects its own endpoints using this identity server&rsquo;s JWTs must apply <code>RequireAudience</code> themselves to prevent token replay. Nothing in the API, docs, or middleware wiring signals that this is required.</li>
+    <li style="margin-bottom: 6px;"><strong>Scope is decorative:</strong> Service tokens carry a <code>scope</code> claim that is never enforced. A token with <code>scope: "read:users"</code> has identical access to one with <code>scope: "write:admin"</code> from the identity server&rsquo;s perspective.</li>
+  </ol>
+
+  <div class="fix">
+    <strong>Fix:</strong> Apply <code>RequireAudience("id.swee.net")</code> (or the configured issuer hostname) to all identity server API routes. Apply <code>RequireScope</code> to routes where scope differentiation is desired. Add clear documentation that consuming services must apply both middleware to their own protected endpoints.
+  </div>
+</div>
+
+<!-- L1 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="finding-id">L1</span>
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">Service Token Type-Confusion in <code>authorizePasskey</code> (No Auth Bypass)</span>
+  </div>
+  <p><strong>File:</strong> <code>internal/handler/oauth/handler.go:258</code>, <code>internal/auth/jwt.go:236&ndash;268</code></p>
+  <p><code>authorizePasskey</code> bridges the WebAuthn ceremony into the OAuth flow by accepting a user <code>access_token</code> and issuing an authorization code. It calls <code>h.tokenIssuer.Parse()</code> directly &mdash; not through <code>RequireAuth</code> middleware:</p>
+<pre>claims, err := h.tokenIssuer.Parse(accessToken)
+if err != nil {
+    errResp(http.StatusUnauthorized, "invalid_token", "Invalid or expired token.")
+    return
+}
+// ... no IsActive check ...
+rawCode, err := h.svc.AuthorizeByUserID(clientID, redirectURI, claims.UserID, ...)</pre>
+
+  <p>The underlying <code>parseWithKey</code> function has <strong>no <code>typ</code> header check</strong> &mdash; unlike <code>ParseServiceToken</code> which rejects tokens without <code>typ: "at+jwt"</code>. A service token (which has <code>sub = clientID</code>, <code>typ: "at+jwt"</code>) passes through <code>parseWithKey</code> with <code>TokenClaims{UserID: clientID}</code>.</p>
+
+  <p><code>AuthorizeByUserID</code> does not validate that <code>userID</code> is a real user &mdash; it inserts an auth code directly. When the attacker calls <code>ExchangeCode</code>, <code>IssueTokensForUser(clientID)</code> → <code>GetByID(clientID)</code> → <code>ErrNotFound</code> → exchange fails. <strong>No auth bypass.</strong></p>
+
+  <div class="attack-scenario">
+    <strong>Observable side effects:</strong><br>
+    1. A garbage auth code is written to the DB with <code>user_id = oauth_client_id</code>.<br>
+    2. An <code>oauth_authorize_success</code> audit event is emitted with a client ID as the user ID.
+  </div>
+
+  <div class="fix">
+    <strong>Fix:</strong> Add a <code>typ</code> check to <code>parseWithKey</code> that rejects service tokens (tokens where <code>typ == "at+jwt"</code>), consistent with <code>ParseServiceToken</code>&rsquo;s existing check in the other direction.
+  </div>
+</div>
+
+<!-- L2 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="finding-id">L2</span>
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">Empty Audience on <code>client_credentials</code> Client Causes Silent 500</span>
+  </div>
+  <p><strong>Files:</strong> <code>internal/handler/admin/handler.go:683&ndash;715</code>, <code>internal/auth/jwt.go:114</code></p>
+  <p>The admin UI allows creating a <code>client_credentials</code> OAuth client with an empty <code>audience</code> field &mdash; no validation is performed. However, <code>MintServiceToken</code> returns an error if <code>Audience == ""</code>:</p>
+<pre>func (ti *TokenIssuer) MintServiceToken(claims domain.ServiceTokenClaims, ttl time.Duration) (string, error) {
+    if claims.Audience == "" {
+        return "", errors.New("audience is required for service tokens")
+    }</pre>
+  <p>Any subsequent <code>POST /oauth/token</code> with <code>grant_type=client_credentials</code> for that client returns a 500 Internal Server Error. The client has no indication the issue is a configuration problem rather than a server fault.</p>
+  <div class="fix">
+    <strong>Fix:</strong> In the admin UI create/edit handlers, validate that <code>audience</code> is non-empty when <code>grant_types</code> includes <code>client_credentials</code>. Return a user-facing validation error rather than a silent 500.
+  </div>
+</div>
+
+<!-- L3 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="finding-id">L3</span>
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title"><code>verifyAdminPassword</code> Endpoints Under General Rate Limiter (30/min), Not Strict (5/min)</span>
+  </div>
+  <p><strong>Files:</strong> <code>cmd/server/main.go:336&ndash;337</code>, <code>internal/handler/admin/router.go:61&ndash;74</code></p>
+  <p>Only <code>POST /admin/login</code> is wrapped with <code>wrapAuth</code> (5/min strict limiter). All other admin routes fall under <code>/admin/</code>, which receives only the general 30/min rate limiter:</p>
+<pre>mux.Handle("POST /admin/login", wrapAuth(adminRouter))  // 5/min strict
+mux.Handle("/admin/", adminRouter)                       // 30/min general only</pre>
+
+  <p>These endpoints accept and verify an <code>admin_password</code> field for re-confirmation but are rate-limited at 30/min:</p>
+  <ul style="padding-left: 20px; margin-bottom: 12px;">
+    <li><code>POST /admin/users/{id}/edit</code></li>
+    <li><code>POST /admin/users/{id}/delete</code></li>
+    <li><code>POST /admin/oauth/{id}/edit</code></li>
+    <li><code>POST /admin/oauth/{id}/delete</code></li>
+  </ul>
+  <p>The comment at <code>main.go:323</code> explicitly lists the credential endpoints requiring strict rate limiting &mdash; but doesn&rsquo;t include the re-confirmation endpoints, suggesting they were overlooked.</p>
+  <div class="note">
+    <strong>Precondition:</strong> Requires a valid admin session cookie and CSRF token. An attacker who has obtained both (e.g., via XSS or session hijacking but without knowing the password) can attempt 30 password guesses per minute rather than 5.
+  </div>
+  <div class="fix">
+    <strong>Fix:</strong> Apply <code>wrapAuth</code> to POST routes that call <code>verifyAdminPassword</code>, or implement a per-session failed-confirmation lockout counter.
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>// Informational</h2>
+
+<div class="finding">
+  <div class="finding-header">
+    <span class="finding-id">I1</span>
+    <span class="sev sev-info">INFO</span>
+    <span class="finding-title">EC Private Key Stored Plaintext in SQLite</span>
+  </div>
+  <p>The ES256 private key is stored as PEM in the <code>metadata</code> table, unencrypted &mdash; the same design as the prior HS256 secret. A database file compromise grants full token forgery capability. This is an accepted architectural trade-off; noting it for completeness.</p>
+</div>
+
+<div class="finding">
+  <div class="finding-header">
+    <span class="finding-id">I2</span>
+    <span class="sev sev-info">INFO</span>
+    <span class="finding-title">JWKS <code>kid</code> Not Used to Select Parse Key</span>
+  </div>
+  <p>Tokens include a <code>kid</code> header derived from <code>sha256(DER(pubkey))[:8]</code>. However, <code>Parse</code> and <code>ParseServiceToken</code> ignore <code>kid</code> and always try the current key first, then the previous key. Not a security issue, but a missed optimization and deviation from the intent of key IDs in the JWKS spec.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>// What Held Up</h2>
+
+<ul class="good-list">
+  <li>ES256 signing and verification is correctly implemented (proper ECDSA P-256, not confused with EdDSA)</li>
+  <li>Service tokens require <code>typ: "at+jwt"</code> &mdash; cannot be mistaken for user tokens through <code>ParseServiceToken</code></li>
+  <li><code>RequireAdmin</code> correctly blocks service tokens (returns nil from user claims context)</li>
+  <li>WebAuthn handlers explicitly reject service tokens with a clear error message</li>
+  <li>Client credentials scope validation enforced &mdash; clients cannot request scopes beyond their allowlist</li>
+  <li>Token introspect endpoint requires client authentication (Basic or form body)</li>
+  <li>Token rotation TOCTOU fix intact &mdash; write-lock promotion still present in <code>token_store.go</code></li>
+  <li>DB file permissions (0600) and parameterized queries throughout the store layer</li>
+  <li>Client secrets stored only as bcrypt hashes with rotation support</li>
+  <li>Separate admin session secret confirmed (R6 fix verified)</li>
+  <li>CORS exact-match fix confirmed (R6 fix verified)</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2>// Summary Table</h2>
+
+<table>
+  <tr><th>ID</th><th>Title</th><th>Severity</th><th>Direct Exploit</th></tr>
+  <tr>
+    <td>M1</td>
+    <td>Host header injection in discovery endpoint</td>
+    <td><span class="sev sev-medium">MEDIUM</span></td>
+    <td>Yes (dev/staging); mitigated in prod by Cloudflare</td>
+  </tr>
+  <tr>
+    <td>M2</td>
+    <td>RequireScope / RequireAudience not wired to any route</td>
+    <td><span class="sev sev-medium">MEDIUM</span></td>
+    <td>No direct exploit on identity server; risk to consuming services</td>
+  </tr>
+  <tr>
+    <td>L1</td>
+    <td>Service token type-confusion in <code>authorizePasskey</code></td>
+    <td><span class="sev sev-low">LOW</span></td>
+    <td>No auth bypass; audit log pollution + garbage DB record</td>
+  </tr>
+  <tr>
+    <td>L2</td>
+    <td>Empty audience on client_credentials client &rarr; 500</td>
+    <td><span class="sev sev-low">LOW</span></td>
+    <td>No; operational failure only</td>
+  </tr>
+  <tr>
+    <td>L3</td>
+    <td>verifyAdminPassword under 30/min limiter, not 5/min</td>
+    <td><span class="sev sev-low">LOW</span></td>
+    <td>Requires pre-existing admin session + CSRF token</td>
+  </tr>
+  <tr>
+    <td>I1</td>
+    <td>EC private key stored plaintext in SQLite</td>
+    <td><span class="sev sev-info">INFO</span></td>
+    <td>Requires DB file access</td>
+  </tr>
+  <tr>
+    <td>I2</td>
+    <td>JWKS kid not used for key selection</td>
+    <td><span class="sev sev-info">INFO</span></td>
+    <td>No</td>
+  </tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>// Recommended Fix Priority</h2>
+
+<table>
+  <tr><th>Priority</th><th>Finding</th><th>Action</th></tr>
+  <tr>
+    <td>1</td>
+    <td>M1 &mdash; Host header injection</td>
+    <td>Read <code>TokenIssuer.issuer</code> (configured at startup); expose via method; use in discovery handler instead of <code>r.Host</code></td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td>M2 &mdash; Unwired middleware</td>
+    <td>Wire <code>RequireAudience</code> to all API routes; apply <code>RequireScope</code> where scope enforcement is desired; document for consuming services</td>
+  </tr>
+  <tr>
+    <td>3</td>
+    <td>L1 &mdash; parseWithKey typ confusion</td>
+    <td>Add <code>typ == "at+jwt"</code> rejection to <code>parseWithKey</code> symmetric with <code>ParseServiceToken</code></td>
+  </tr>
+  <tr>
+    <td>4</td>
+    <td>L2 &mdash; Empty audience validation</td>
+    <td>Validate non-empty audience in admin UI when <code>client_credentials</code> is selected</td>
+  </tr>
+  <tr>
+    <td>5</td>
+    <td>L3 &mdash; Rate limit on re-confirmation</td>
+    <td>Apply <code>wrapAuth</code> to admin edit/delete POSTs that call <code>verifyAdminPassword</code></td>
+  </tr>
+</table>
+
+</body>
+</html>
