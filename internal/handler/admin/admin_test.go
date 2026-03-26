@@ -702,6 +702,89 @@ func TestAdminBackup_GETNotAllowed(t *testing.T) {
 		"GET /admin/backup must not trigger the backup action")
 }
 
+// --- Round 7 / L2: Audience required for client_credentials grant ---
+//
+// Creating or editing an OAuth client with grant_type=client_credentials and an
+// empty audience must be rejected with a validation error. An empty audience causes
+// MintServiceToken to return an error, which previously resulted in a 500.
+
+func TestOAuthClientCreate_ClientCredentials_RequiresAudience(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+	_ = oauthClients // no Create call expected — validation fires first
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":        {csrf},
+		"id":           {"svc-client"},
+		"name":         {"Service Client"},
+		"grant_types":  {"client_credentials"},
+		// audience intentionally omitted
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	// Must re-render form with validation error, not redirect or 500.
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Audience is required for client_credentials")
+}
+
+func TestOAuthClientCreate_ClientCredentials_WithAudience_Succeeds(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+	oauthClients.EXPECT().Create(gomock.Any()).Return(nil)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":        {csrf},
+		"id":           {"svc-client"},
+		"name":         {"Service Client"},
+		"grant_types":  {"client_credentials"},
+		"audience":     {"https://api.example.com"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+}
+
+func TestOAuthClientEdit_ClientCredentials_RequiresAudience(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+
+	existingClient := &domain.OAuthClient{
+		ID:         "svc-client",
+		Name:       "Service Client",
+		GrantTypes: []string{"client_credentials"},
+		Audience:   "https://api.example.com",
+	}
+	oauthClients.EXPECT().GetByID("svc-client").Return(existingClient, nil)
+	// No Update call expected — validation fires first
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":          {csrf},
+		"name":           {"Service Client"},
+		"grant_types":    {"client_credentials"},
+		"audience":       {""}, // clearing the audience must be rejected
+		"admin_password": {adminPass},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/svc-client/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Audience is required for client_credentials")
+}
+
 func TestAdminBackup_RequiresCSRF(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	userSvc := mocks.NewMockUserServicer(ctrl)

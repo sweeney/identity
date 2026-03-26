@@ -9,11 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"time"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/internal/handler/oauth"
 	"github.com/sweeney/identity/internal/mocks"
@@ -326,10 +329,15 @@ func TestDiscoveryEndpoint(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := mocks.NewMockOAuthServicer(ctrl)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	key, err := auth.GenerateKey()
+	require.NoError(t, err)
+	issuer, err := auth.NewTokenIssuer(key, nil, "https://id.example.com", 15*time.Minute)
+	require.NoError(t, err)
+
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, "", "")
 
 	req := httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)
-	req.Host = "id.example.com"
+	req.Host = "evil.attacker.com" // Host header must be ignored
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
@@ -337,7 +345,10 @@ func TestDiscoveryEndpoint(t *testing.T) {
 
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
-	assert.Contains(t, body["token_endpoint"], "/oauth/token")
+	// Discovery document must use the configured issuer, not the Host header.
+	assert.Equal(t, "https://id.example.com", body["issuer"])
+	assert.Contains(t, body["token_endpoint"], "https://id.example.com")
+	assert.NotContains(t, body["token_endpoint"], "evil.attacker.com")
 	assert.Contains(t, body["jwks_uri"], "/.well-known/jwks.json")
 
 	grantTypes, ok := body["grant_types_supported"].([]any)

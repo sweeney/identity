@@ -702,6 +702,19 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 		authMethod = "none"
 	}
 
+	if sliceContains(grantTypes, "client_credentials") && audience == "" {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction":       "/admin/oauth/new",
+			"Error":            "Audience is required for client_credentials grant type.",
+			"FormID":           id,
+			"FormName":         name,
+			"FormRedirectURIs": rawURIs,
+			"FormScopes":       rawScopes,
+			"FormAudience":     audience,
+		})
+		return
+	}
+
 	uris := splitURIs(rawURIs)
 	scopes := splitLines(rawScopes)
 	now := time.Now().UTC()
@@ -785,6 +798,15 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if authMethod == "" {
 		authMethod = "none"
+	}
+
+	if sliceContains(grantTypes, "client_credentials") && audience == "" {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction": "/admin/oauth/" + id + "/edit",
+			"Client":     client,
+			"Error":      "Audience is required for client_credentials grant type.",
+		})
+		return
 	}
 
 	client.Name = name
@@ -968,6 +990,16 @@ func generateClientSecret() (raw, hash string, err error) {
 		return "", "", err
 	}
 	return raw, string(hashed), nil
+}
+
+// sliceContains reports whether s contains target.
+func sliceContains(s []string, target string) bool {
+	for _, v := range s {
+		if v == target {
+			return true
+		}
+	}
+	return false
 }
 
 // splitLines splits text on newlines, trims whitespace, and removes empty lines.

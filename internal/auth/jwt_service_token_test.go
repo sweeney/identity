@@ -119,6 +119,21 @@ func TestParseServiceToken_InvalidToken(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestParse_RejectsServiceToken verifies that a service token (typ: at+jwt) is
+// rejected by Parse to prevent type-confusion attacks in the authorizePasskey flow.
+func TestParse_RejectsServiceToken(t *testing.T) {
+	issuer := newTestIssuer(t)
+	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
+		ClientID: "my-service",
+		Audience: "https://api.example.com",
+		Scope:    "read:users",
+	}, 15*time.Minute)
+	require.NoError(t, err)
+
+	_, err = issuer.Parse(serviceToken)
+	assert.Error(t, err, "Parse must reject service tokens (typ: at+jwt)")
+}
+
 func TestMintServiceToken_KeyRotation(t *testing.T) {
 	key1, err := auth.GenerateKey()
 	require.NoError(t, err)

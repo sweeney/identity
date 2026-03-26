@@ -334,6 +334,15 @@ func run() error {
 		SiteName:      cfg.SiteName,
 	}, authSvc, userSvc, oauthClientStore, auditStore, backupMgr, issuer, webauthnSvc)
 	mux.Handle("POST /admin/login", wrapAuth(adminRouter))
+	// All admin POST endpoints that call verifyAdminPassword must use the strict rate
+	// limiter (5/min) so password re-confirmation cannot be brute-forced faster than login.
+	mux.Handle("POST /admin/users/{id}/edit", wrapAuth(adminRouter))
+	mux.Handle("POST /admin/users/{id}/delete", wrapAuth(adminRouter))
+	mux.Handle("POST /admin/oauth/{id}/edit", wrapAuth(adminRouter))
+	mux.Handle("POST /admin/oauth/{id}/delete", wrapAuth(adminRouter))
+	mux.Handle("POST /admin/oauth/{id}/generate-secret", wrapAuth(adminRouter))
+	mux.Handle("POST /admin/oauth/{id}/rotate-secret", wrapAuth(adminRouter))
+	mux.Handle("POST /admin/oauth/{id}/clear-prev-secret", wrapAuth(adminRouter))
 	mux.Handle("/admin/", adminRouter)
 	staticFS, _ := fs.Sub(ui.StaticFS, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))

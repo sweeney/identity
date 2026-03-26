@@ -6,7 +6,6 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -493,13 +492,8 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 
 // discovery serves RFC 8414 authorization server metadata.
 func (h *oauthHandler) discovery(w http.ResponseWriter, r *http.Request) {
-	// Use the configured issuer from the token issuer when available,
-	// rather than trusting the Host header which can be spoofed.
-	scheme := "https"
-	if r.TLS == nil && (strings.HasPrefix(r.Host, "localhost") || strings.HasPrefix(r.Host, "127.0.0.1")) {
-		scheme = "http"
-	}
-	issuer := scheme + "://" + r.Host
+	// Use the configured issuer from the token issuer — never trust the Host header.
+	issuer := h.tokenIssuer.Issuer()
 
 	jsonOK(w, map[string]any{
 		"issuer":                                issuer,

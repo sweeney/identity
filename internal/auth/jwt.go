@@ -222,6 +222,11 @@ func (ti *TokenIssuer) Parse(tokenStr string) (*domain.TokenClaims, error) {
 	return claims, nil
 }
 
+// Issuer returns the configured issuer string for this TokenIssuer.
+func (ti *TokenIssuer) Issuer() string {
+	return ti.issuer
+}
+
 // JWKS returns the public key set for this issuer in JWK Set format.
 // Serve this at /.well-known/jwks.json so consuming services can verify tokens
 // without holding the private key.
@@ -240,6 +245,10 @@ func (ti *TokenIssuer) parseWithKey(tokenStr string, key *ecdsa.PrivateKey) (*do
 		func(t *jwt.Token) (any, error) {
 			if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			}
+			// Reject service tokens (RFC 9068 at+jwt type) — they must use ParseServiceToken.
+			if typ, _ := t.Header["typ"].(string); typ == "at+jwt" {
+				return nil, fmt.Errorf("service token not accepted as user token")
 			}
 			return &key.PublicKey, nil
 		},
