@@ -117,6 +117,46 @@ check "Edit client = 303" "303" "$STATUS"
 BODY=$(curl -s -b "admin_session=$COOKIE" "$BASE/admin/oauth")
 check_contains "Updated name shows" "Test App v2" "$BODY"
 
+# ── 4b. OAuth client registration security ───────────────────────────
+#
+# These tests verify that validation added to fix red-team findings is
+# enforced at the HTTP layer, not just in unit tests.
+
+echo ""
+echo "=== 4b. OAuth client registration security ==="
+
+# javascript: redirect URI rejected at registration (N3)
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b "admin_session=$COOKIE" \
+  -X POST "$BASE/admin/oauth/new" \
+  -d "_csrf=$CSRF&id=sec-test&name=Sec+Test&redirect_uris=javascript:alert(document.cookie)" \
+  -H "Content-Type: application/x-www-form-urlencoded")
+check "javascript: redirect URI rejected (stays on form)" "200" "$STATUS"
+
+# data: redirect URI rejected at registration (N3)
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b "admin_session=$COOKIE" \
+  -X POST "$BASE/admin/oauth/new" \
+  -d "_csrf=$CSRF&id=sec-test&name=Sec+Test&redirect_uris=data:text/html,%3Cscript%3Ex%3C/script%3E" \
+  -H "Content-Type: application/x-www-form-urlencoded")
+check "data: redirect URI rejected (stays on form)" "200" "$STATUS"
+
+# client_credentials without audience rejected (L2)
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b "admin_session=$COOKIE" \
+  -X POST "$BASE/admin/oauth/new" \
+  -d "_csrf=$CSRF&id=sec-test&name=Sec+Test&grant_types=client_credentials&redirect_uris=&audience=" \
+  -H "Content-Type: application/x-www-form-urlencoded")
+check "client_credentials without audience rejected" "200" "$STATUS"
+
+# Invalid client ID characters rejected (N6) — spaces and slashes not allowed
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b "admin_session=$COOKIE" \
+  -X POST "$BASE/admin/oauth/new" \
+  -d "_csrf=$CSRF&id=bad+id%2Fhere&name=Bad+ID&redirect_uris=https://example.com/cb" \
+  -H "Content-Type: application/x-www-form-urlencoded")
+check "Invalid client ID (spaces/slashes) rejected" "200" "$STATUS"
+
+# Discovery: issuer must not reflect forged Host header (M1)
+DISC_HOST=$(curl -s -H "Host: evil.attacker.com" "$BASE/.well-known/oauth-authorization-server")
+check_not_contains "Discovery ignores forged Host header" "evil.attacker.com" "$DISC_HOST"
+
 # ── 5. API login ──────────────────────────────────────────────────────
 
 echo ""

@@ -220,6 +220,10 @@ check_contains "Has grant_types_supported with client_credentials" "client_crede
 check_contains "Has jwks_uri" "jwks_uri" "$DISC_RESP"
 check_contains "Has introspection_endpoint" "introspection_endpoint" "$DISC_RESP"
 
+# Issuer must not reflect forged Host header (M1)
+DISC_HOST=$(curl -s -H "Host: evil.attacker.com" "$BASE/.well-known/oauth-authorization-server")
+check_not_contains "Discovery ignores forged Host header" "evil.attacker.com" "$DISC_HOST"
+
 # ── 7. Introspection ──────────────────────────────────────────────
 
 echo ""
@@ -304,6 +308,79 @@ STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/oauth/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=client_credentials")
 check "Old secret after clear = 401" "401" "$STATUS"
+
+# ── 9. Security invariants ────────────────────────────────────────
+#
+# Verify security properties that should hold for any client credentials
+# deployment: cross-client token isolation, aud in introspect response,
+# and service token rejection at user auth endpoints.
+
+echo ""
+echo "=== 9. Security invariants ==="
+
+# Create a second service client to act as "Client B" in isolation tests.
+FORM_HTML=$(curl -s -b "admin_session=$COOKIE" "$BASE/admin/oauth/new")
+CSRF=$(echo "$FORM_HTML" | grep '_csrf' | head -1 | sed 's/.*value="//;s/".*//')
+curl -s -o /dev/null -b "admin_session=$COOKIE" \
+  -X POST "$BASE/admin/oauth/new" \
+  -d "_csrf=$CSRF&id=e2e-other&name=E2E+Other&grant_types=client_credentials&token_endpoint_auth_method=client_secret_basic&redirect_uris=&scopes=read:users&audience=https://api.test" \
+  -H "Content-Type: application/x-www-form-urlencoded"
+FORM_HTML=$(curl -s -b "admin_session=$COOKIE" "$BASE/admin/oauth/e2e-other/edit")
+CSRF=$(echo "$FORM_HTML" | grep '_csrf' | head -1 | sed 's/.*value="//;s/".*//')
+OTHER_SECRET_RESP=$(curl -s -b "admin_session=$COOKIE" \
+  -X POST "$BASE/admin/oauth/e2e-other/generate-secret" \
+  -d "_csrf=$CSRF&admin_password=$ADMIN_PASS" \
+  -H "Content-Type: application/x-www-form-urlencoded")
+OTHER_SECRET=$(echo "$OTHER_SECRET_RESP" | grep -o '<code>[^<]*</code>' | head -1 | sed 's/<[^>]*>//g')
+OTHER_AUTH=$(echo -n "e2e-other:$OTHER_SECRET" | base64 -w0)
+
+# Mint a fresh e2e-service token (uses NEW_BASIC_AUTH after rotation in §8).
+rate_sleep
+FRESH_RESP=$(curl -s -X POST "$BASE/oauth/token" \
+  -H "Authorization: Basic $NEW_BASIC_AUTH" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials&scope=read:users")
+FRESH_TOKEN=$(echo "$FRESH_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || echo "")
+
+if [ -n "$FRESH_TOKEN" ] && [ "$FRESH_TOKEN" != "null" ] && [ -n "$OTHER_SECRET" ]; then
+  # N4: Client B introspects Client A's token → active: false (no claims leaked)
+  rate_sleep
+  INTRO_OTHER=$(curl -s -X POST "$BASE/oauth/introspect" \
+    -H "Authorization: Basic $OTHER_AUTH" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "token=$FRESH_TOKEN")
+  check_contains "Cross-client introspect returns active=false (N4)" '"active":false' "$INTRO_OTHER"
+  check_not_contains "Cross-client introspect withholds client_id (N4)" '"client_id"' "$INTRO_OTHER"
+
+  # N4: Client A introspects its own token → active: true
+  rate_sleep
+  INTRO_OWN=$(curl -s -X POST "$BASE/oauth/introspect" \
+    -H "Authorization: Basic $NEW_BASIC_AUTH" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "token=$FRESH_TOKEN")
+  check_contains "Own-client introspect returns active=true (N4)" '"active":true' "$INTRO_OWN"
+
+  # N5: Introspect response for service token must include aud claim
+  check_contains "Own introspect response includes aud (N5)" '"aud"' "$INTRO_OWN"
+
+  # M2: Service token rejected by user auth endpoint — audience mismatch → 403
+  # (RequireAuth accepts the token structure; RequireAudience blocks it because
+  # the service token's aud doesn't match the API server's configured issuer.)
+  STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/auth/me" \
+    -H "Authorization: Bearer $FRESH_TOKEN")
+  check "Service token blocked by /api/v1/auth/me = 403 (M2)" "403" "$STATUS"
+else
+  echo "  ✗ Skipping cross-client isolation — could not set up second client"
+  FAIL=$((FAIL+5))
+fi
+
+# Cleanup the second client (unconditional).
+FORM_HTML=$(curl -s -b "admin_session=$COOKIE" "$BASE/admin/oauth/e2e-other/edit")
+CSRF=$(echo "$FORM_HTML" | grep '_csrf' | head -1 | sed 's/.*value="//;s/".*//')
+curl -s -o /dev/null -b "admin_session=$COOKIE" \
+  -X POST "$BASE/admin/oauth/e2e-other/delete" \
+  -d "_csrf=$CSRF&admin_password=$ADMIN_PASS" \
+  -H "Content-Type: application/x-www-form-urlencoded"
 
 # ── Cleanup ───────────────────────────────────────────────────────
 
