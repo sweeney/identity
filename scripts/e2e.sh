@@ -10,8 +10,14 @@
 #   ./scripts/e2e.sh [base_url]
 #
 # Default base URL: http://localhost:8181
+#
+# Environment variables:
+#   ADMIN_PASSWORD   default: adminpassword1
+#   ADMIN_USERNAME   default: admin
 
 BASE="${1:-http://localhost:8181}"
+ADMIN_USER="${ADMIN_USERNAME:-admin}"
+ADMIN_PASS="${ADMIN_PASSWORD:-adminpassword1}"
 PASS=0
 FAIL=0
 
@@ -68,7 +74,7 @@ STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/admin/login" \
 check "Bad creds re-renders form" "200" "$STATUS"
 
 RESP=$(curl -s -D- -o /dev/null -X POST "$BASE/admin/login" \
-  -d "username=admin&password=adminpassword1" -H "Content-Type: application/x-www-form-urlencoded")
+  -d "username=$ADMIN_USER&password=$ADMIN_PASS" -H "Content-Type: application/x-www-form-urlencoded")
 check_contains "Login redirects" "303" "$RESP"
 COOKIE=$(echo "$RESP" | grep -i 'set-cookie' | head -1 | sed 's/.*admin_session=//;s/;.*//')
 check_contains "Session cookie set" "eyJ" "$COOKIE"
@@ -105,7 +111,7 @@ check_contains "Client list shows testapp" "testapp" "$BODY"
 
 STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b "admin_session=$COOKIE" \
   -X POST "$BASE/admin/oauth/testapp/edit" \
-  -d "_csrf=$CSRF&name=Test+App+v2&redirect_uris=http://localhost:3000/callback&admin_password=adminpassword1" \
+  -d "_csrf=$CSRF&name=Test+App+v2&redirect_uris=http://localhost:3000/callback&admin_password=$ADMIN_PASS" \
   -H "Content-Type: application/x-www-form-urlencoded")
 check "Edit client = 303" "303" "$STATUS"
 BODY=$(curl -s -b "admin_session=$COOKIE" "$BASE/admin/oauth")
@@ -117,7 +123,7 @@ echo ""
 echo "=== 5. API login ==="
 LOGIN=$(curl -s -X POST "$BASE/api/v1/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"adminpassword1","device_hint":"e2e-test"}')
+  -d '{"username":"'$ADMIN_USER'","password":"'$ADMIN_PASS'","device_hint":"e2e-test"}')
 ACCESS=$(echo "$LOGIN" | jq -r '.access_token')
 REFRESH=$(echo "$LOGIN" | jq -r '.refresh_token')
 check_contains "Returns access_token" "eyJ" "$ACCESS"
@@ -281,7 +287,7 @@ check_contains "Rejects plain PKCE" "S256" "$ERR"
 echo ""
 echo "=== 12. Logout ==="
 ADMIN_L=$(curl -s -X POST "$BASE/api/v1/auth/login" \
-  -H "Content-Type: application/json" -d '{"username":"admin","password":"adminpassword1"}')
+  -H "Content-Type: application/json" -d '{"username":"'$ADMIN_USER'","password":"'$ADMIN_PASS'"}')
 AT=$(echo "$ADMIN_L" | jq -r '.access_token')
 RT=$(echo "$ADMIN_L" | jq -r '.refresh_token')
 check "Logout = 204" "204" \
@@ -294,7 +300,7 @@ check "Logout = 204" "204" \
 echo ""
 echo "=== 13. Delete user + last admin guard ==="
 ADMIN_L2=$(curl -s -X POST "$BASE/api/v1/auth/login" \
-  -H "Content-Type: application/json" -d '{"username":"admin","password":"adminpassword1"}')
+  -H "Content-Type: application/json" -d '{"username":"'$ADMIN_USER'","password":"'$ADMIN_PASS'"}')
 AT2=$(echo "$ADMIN_L2" | jq -r '.access_token')
 
 check "Delete alice = 204" "204" \
@@ -323,7 +329,7 @@ echo ""
 echo "=== 15. Delete OAuth client ==="
 STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b "admin_session=$COOKIE" \
   -X POST "$BASE/admin/oauth/testapp/delete" \
-  -d "_csrf=$CSRF&admin_password=adminpassword1" \
+  -d "_csrf=$CSRF&admin_password=$ADMIN_PASS" \
   -H "Content-Type: application/x-www-form-urlencoded")
 check "Delete client = 303" "303" "$STATUS"
 BODY=$(curl -s -b "admin_session=$COOKIE" "$BASE/admin/oauth")

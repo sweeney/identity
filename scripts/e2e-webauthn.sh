@@ -15,10 +15,16 @@
 #      ./scripts/e2e-webauthn.sh [base_url]
 #
 # Default base URL: http://localhost:8181
+#
+# Environment variables:
+#   ADMIN_PASSWORD   default: adminpassword1
+#   ADMIN_USERNAME   default: admin
 
 set -euo pipefail
 
 BASE="${1:-http://localhost:8181}"
+ADMIN_USER="${ADMIN_USERNAME:-admin}"
+ADMIN_PASS="${ADMIN_PASSWORD:-adminpassword1}"
 PASS=0
 FAIL=0
 
@@ -60,7 +66,7 @@ check_not_empty() {
 echo "=== Setup ==="
 LOGIN=$(curl -s -X POST "$BASE/api/v1/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"adminpassword1"}')
+  -d '{"username":"'"$ADMIN_USER"'","password":"'"$ADMIN_PASS"'"}')
 ACCESS=$(echo "$LOGIN" | jq -r '.access_token')
 if [ -z "$ACCESS" ] || [ "$ACCESS" = "null" ]; then
   echo "FATAL: could not log in as admin — is the server running?"
