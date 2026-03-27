@@ -356,3 +356,132 @@ func TestDiscoveryEndpoint(t *testing.T) {
 	assert.Contains(t, grantTypes, "client_credentials")
 	assert.Contains(t, grantTypes, "authorization_code")
 }
+
+// --- N4: Introspect endpoint must not disclose service tokens to other clients ---
+
+func newIntrospectTestIssuer(t *testing.T) *auth.TokenIssuer {
+	t.Helper()
+	key, err := auth.GenerateKey()
+	require.NoError(t, err)
+	ti, err := auth.NewTokenIssuer(key, nil, "https://id.example.com", 15*time.Minute)
+	require.NoError(t, err)
+	return ti
+}
+
+func TestIntrospect_ServiceToken_WrongClient_ReturnsInactive(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	issuer := newIntrospectTestIssuer(t)
+
+	// client-A mints a service token
+	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
+		ClientID: "client-a",
+		Audience: "https://api.example.com",
+		Scope:    "read:users",
+	}, 15*time.Minute)
+	require.NoError(t, err)
+
+	// client-B authenticates to the introspect endpoint
+	hashB := mustHash("secret-b")
+	clientB := &domain.OAuthClient{
+		ID:                      "client-b",
+		SecretHash:              hashB,
+		GrantTypes:              []string{"client_credentials"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+	}
+	svc.EXPECT().GetClient("client-b").Return(clientB, nil)
+
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, "", "")
+
+	form := url.Values{"token": {serviceToken}}
+	req := httptest.NewRequest("POST", "/oauth/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("client-b:secret-b")))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, false, body["active"], "client-B must not see client-A's token as active")
+	_, hasClientID := body["client_id"]
+	assert.False(t, hasClientID, "client-B must not receive client-A's claims")
+}
+
+func TestIntrospect_ServiceToken_OwningClient_ReturnsActive(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	issuer := newIntrospectTestIssuer(t)
+
+	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
+		ClientID: "client-a",
+		Audience: "https://api.example.com",
+		Scope:    "read:users",
+	}, 15*time.Minute)
+	require.NoError(t, err)
+
+	hashA := mustHash("secret-a")
+	clientA := &domain.OAuthClient{
+		ID:                      "client-a",
+		SecretHash:              hashA,
+		GrantTypes:              []string{"client_credentials"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+	}
+	svc.EXPECT().GetClient("client-a").Return(clientA, nil)
+
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, "", "")
+
+	form := url.Values{"token": {serviceToken}}
+	req := httptest.NewRequest("POST", "/oauth/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("client-a:secret-a")))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, true, body["active"])
+	assert.Equal(t, "client-a", body["client_id"])
+	assert.Equal(t, "read:users", body["scope"])
+}
+
+func TestIntrospect_ServiceToken_IncludesAudClaim(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	issuer := newIntrospectTestIssuer(t)
+
+	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
+		ClientID: "client-a",
+		Audience: "https://api.example.com",
+		Scope:    "read:users",
+	}, 15*time.Minute)
+	require.NoError(t, err)
+
+	hashA := mustHash("secret-a")
+	clientA := &domain.OAuthClient{
+		ID:                      "client-a",
+		SecretHash:              hashA,
+		GrantTypes:              []string{"client_credentials"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+	}
+	svc.EXPECT().GetClient("client-a").Return(clientA, nil)
+
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, "", "")
+
+	form := url.Values{"token": {serviceToken}}
+	req := httptest.NewRequest("POST", "/oauth/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("client-a:secret-a")))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, true, body["active"])
+	assert.Equal(t, "https://api.example.com", body["aud"], "introspect response must include aud claim matching the token's audience")
+}

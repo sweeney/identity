@@ -785,6 +785,79 @@ func TestOAuthClientEdit_ClientCredentials_RequiresAudience(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "Audience is required for client_credentials")
 }
 
+func TestOAuthClientCreate_JavascriptRedirectURI_Rejected(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+	_ = oauthClients // no Create call expected — validation fires first
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":         {csrf},
+		"id":            {"evil-client"},
+		"name":          {"Evil Client"},
+		"redirect_uris": {"javascript:alert(1)"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Redirect URIs must not use javascript: or data: schemes.")
+}
+
+func TestOAuthClientCreate_DataRedirectURI_Rejected(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+	_ = oauthClients // no Create call expected — validation fires first
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":         {csrf},
+		"id":            {"evil-client"},
+		"name":          {"Evil Client"},
+		"redirect_uris": {"data:text/html,<script>alert(1)</script>"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Redirect URIs must not use javascript: or data: schemes.")
+}
+
+func TestOAuthClientEdit_JavascriptRedirectURI_Rejected(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+
+	existingClient := &domain.OAuthClient{
+		ID:           "test-client",
+		Name:         "Test Client",
+		RedirectURIs: []string{"https://example.com/callback"},
+	}
+	oauthClients.EXPECT().GetByID("test-client").Return(existingClient, nil)
+	// No Update call expected — validation fires first
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":          {csrf},
+		"name":           {"Test Client"},
+		"redirect_uris":  {"javascript:alert(1)"},
+		"admin_password": {adminPass},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Redirect URIs must not use javascript: or data: schemes.")
+}
+
 func TestAdminBackup_RequiresCSRF(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	userSvc := mocks.NewMockUserServicer(ctrl)
@@ -798,4 +871,48 @@ func TestAdminBackup_RequiresCSRF(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusForbidden, rr.Code)
+}
+
+// --- OAuth Client ID Validation ---
+
+func TestOAuthClientCreate_InvalidClientID(t *testing.T) {
+	handler, _, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf": {csrf},
+		"id":    {"bad id/here"},
+		"name":  {"Test Client"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Client ID may only contain")
+}
+
+func TestOAuthClientCreate_ValidClientID(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+
+	oauthClients.EXPECT().Create(gomock.Any()).Return(nil)
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf": {csrf},
+		"id":    {"my-client_1.0"},
+		"name":  {"Test Client"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+	assert.Equal(t, "/admin/oauth", rr.Header().Get("Location"))
 }

@@ -54,6 +54,7 @@ func TestLoad_RateLimitDisabledInProduction(t *testing.T) {
 	// The production guard in main.go overrides cfg.RateLimitDisabled when IsProduction() is true.
 	t.Setenv("RATE_LIMIT_DISABLED", "1")
 	t.Setenv("IDENTITY_ENV", "production")
+	t.Setenv("JWT_ISSUER", "https://id.example.com")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -94,6 +95,7 @@ func TestLoad_WebAuthnDefaultsInDevelopment(t *testing.T) {
 
 func TestLoad_WebAuthnExplicitConfig(t *testing.T) {
 	t.Setenv("IDENTITY_ENV", "production")
+	t.Setenv("JWT_ISSUER", "https://id.example.com")
 	t.Setenv("WEBAUTHN_RP_ID", "swee.net")
 	t.Setenv("WEBAUTHN_RP_DISPLAY_NAME", "Sweeney Identity")
 	t.Setenv("WEBAUTHN_RP_ORIGINS", "https://id.swee.net,https://other.swee.net")
@@ -110,6 +112,7 @@ func TestLoad_WebAuthnExplicitConfig(t *testing.T) {
 func TestLoad_WebAuthnDerivedOrigin(t *testing.T) {
 	// When RP ID is set but origins are not, derive from RP ID
 	t.Setenv("IDENTITY_ENV", "production")
+	t.Setenv("JWT_ISSUER", "https://id.example.com")
 	t.Setenv("WEBAUTHN_RP_ID", "example.com")
 
 	cfg, err := config.Load()
@@ -121,6 +124,7 @@ func TestLoad_WebAuthnDerivedOrigin(t *testing.T) {
 func TestLoad_WebAuthnDisabledInProduction(t *testing.T) {
 	// In production with no WEBAUTHN_RP_ID, passkeys are disabled
 	t.Setenv("IDENTITY_ENV", "production")
+	t.Setenv("JWT_ISSUER", "https://id.example.com")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -151,5 +155,32 @@ func TestLoad_WebAuthnDoesNotMergeCORSOrigins(t *testing.T) {
 	assert.Contains(t, cfg.WebAuthnRPOrigins, "http://localhost:8181")
 	assert.NotContains(t, cfg.WebAuthnRPOrigins, "http://localhost:9093")
 	assert.NotContains(t, cfg.WebAuthnRPOrigins, "http://localhost:3000")
+}
+
+func TestConfig_Production_JWTIssuer_RequiresHTTPS(t *testing.T) {
+	t.Setenv("IDENTITY_ENV", "production")
+	t.Setenv("JWT_ISSUER", "id.example.com")
+
+	_, err := config.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "https")
+}
+
+func TestConfig_Production_JWTIssuer_HTTPSIsValid(t *testing.T) {
+	t.Setenv("IDENTITY_ENV", "production")
+	t.Setenv("JWT_ISSUER", "https://id.example.com")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "https://id.example.com", cfg.JWTIssuer)
+}
+
+func TestConfig_Development_JWTIssuer_NoHTTPSRequired(t *testing.T) {
+	t.Setenv("IDENTITY_ENV", "development")
+	// JWT_ISSUER not set — defaults to SiteName ("Identity")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "Identity", cfg.JWTIssuer)
 }
 

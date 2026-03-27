@@ -54,6 +54,9 @@
             }
             return resp.json();
           }).then(function (data) {
+            if (!/^https?:\/\//i.test(data.redirect_uri)) {
+              throw new Error('Invalid redirect URI scheme');
+            }
             window.location.href = data.redirect_uri;
           });
         } else {

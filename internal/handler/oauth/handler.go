@@ -454,10 +454,16 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 	// Try parsing as service token
 	if h.tokenIssuer != nil {
 		if sc, err := h.tokenIssuer.ParseServiceToken(token); err == nil {
+			// Only the client that owns the token may introspect it.
+			if sc.ClientID != creds.ClientID {
+				jsonOK(w, map[string]any{"active": false})
+				return
+			}
 			resp := map[string]any{
 				"active":     true,
 				"sub":        sc.ClientID,
 				"client_id":  sc.ClientID,
+				"aud":        sc.Audience,
 				"scope":      sc.Scope,
 				"token_type": "Bearer",
 				"jti":        sc.JTI,

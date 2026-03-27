@@ -12,6 +12,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -695,6 +696,19 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validClientID(id) {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction":       "/admin/oauth/new",
+			"Error":            "Client ID may only contain letters, numbers, hyphens, underscores, and dots.",
+			"FormID":           id,
+			"FormName":         name,
+			"FormRedirectURIs": rawURIs,
+			"FormScopes":       rawScopes,
+			"FormAudience":     audience,
+		})
+		return
+	}
+
 	if len(grantTypes) == 0 {
 		grantTypes = []string{"authorization_code"}
 	}
@@ -706,6 +720,19 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction":       "/admin/oauth/new",
 			"Error":            "Audience is required for client_credentials grant type.",
+			"FormID":           id,
+			"FormName":         name,
+			"FormRedirectURIs": rawURIs,
+			"FormScopes":       rawScopes,
+			"FormAudience":     audience,
+		})
+		return
+	}
+
+	if hasUnsafeURIScheme(rawURIs) {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction":       "/admin/oauth/new",
+			"Error":            "Redirect URIs must not use javascript: or data: schemes.",
 			"FormID":           id,
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
@@ -805,6 +832,15 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 			"FormAction": "/admin/oauth/" + id + "/edit",
 			"Client":     client,
 			"Error":      "Audience is required for client_credentials grant type.",
+		})
+		return
+	}
+
+	if hasUnsafeURIScheme(rawURIs) {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction": "/admin/oauth/" + id + "/edit",
+			"Client":     client,
+			"Error":      "Redirect URIs must not use javascript: or data: schemes.",
 		})
 		return
 	}
@@ -1075,6 +1111,22 @@ func splitURIs(raw string) []string {
 	return uris
 }
 
+// hasUnsafeURIScheme returns true if any URI in the newline-separated list uses
+// a javascript: or data: scheme, which could be executed via client-side redirects.
+func hasUnsafeURIScheme(rawURIs string) bool {
+	for _, uri := range strings.Split(rawURIs, "\n") {
+		uri = strings.TrimSpace(uri)
+		if uri == "" {
+			continue
+		}
+		lower := strings.ToLower(uri)
+		if strings.HasPrefix(lower, "javascript:") || strings.HasPrefix(lower, "data:") {
+			return true
+		}
+	}
+	return false
+}
+
 // userFacingError maps service/domain errors to safe messages for the admin UI.
 func userFacingError(err error) string {
 	switch {
@@ -1188,6 +1240,13 @@ func headerOrQuery(r *http.Request, header, query string) string {
 		return v
 	}
 	return r.URL.Query().Get(query)
+}
+
+var validClientIDRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+// validClientID reports whether id contains only safe characters for an OAuth client ID.
+func validClientID(id string) bool {
+	return validClientIDRe.MatchString(id)
 }
 
 // Ensure *adminHandler satisfies compile-time checks.

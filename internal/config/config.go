@@ -119,6 +119,9 @@ func Load() (*Config, error) {
 	if cfg.JWTIssuer == "" {
 		cfg.JWTIssuer = cfg.SiteName
 	}
+	if cfg.Env == EnvProduction && !strings.HasPrefix(cfg.JWTIssuer, "https://") {
+		errs = append(errs, fmt.Errorf("JWT_ISSUER must be an https:// URL in production (got %q); set JWT_ISSUER=https://yourdomain.com", cfg.JWTIssuer))
+	}
 
 	// TRUST_PROXY: "cloudflare" trusts CF-Connecting-IP, anything else means use RemoteAddr
 	if v := os.Getenv("TRUST_PROXY"); v == "cloudflare" {
