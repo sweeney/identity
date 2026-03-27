@@ -20,7 +20,7 @@ servers:
   - url: https://{domain}/api/v1
     variables:
       domain:
-        default: id.swee.net
+        default: id.example.com
         description: Your deployment hostname
 
 security: []

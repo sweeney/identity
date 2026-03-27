@@ -45,7 +45,7 @@ For first-party apps that collect credentials directly (e.g. your own mobile app
 ## Flow B: OAuth 2.0 Authorization Code + PKCE
 
 For third-party apps, multi-domain web apps, or any app that redirects to
-`identity.swee.net` for login. This is the "Sign in with Identity" flow.
+`id.example.com` for login. This is the "Sign in with Identity" flow.
 
 ### Phase 1: Authorization
 

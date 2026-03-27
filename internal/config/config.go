@@ -56,9 +56,9 @@ type Config struct {
 	RateLimitDisabled bool
 
 	// WebAuthn / Passkeys
-	WebAuthnRPID          string   // Relying Party ID (domain, e.g. "swee.net")
+	WebAuthnRPID          string   // Relying Party ID (domain, e.g. "example.com")
 	WebAuthnRPDisplayName string   // Human-readable RP name shown in browser prompts
-	WebAuthnRPOrigins     []string // Allowed origins (e.g. "https://id.swee.net")
+	WebAuthnRPOrigins     []string // Allowed origins (e.g. "https://id.example.com")
 
 	// Cloudflare R2 (S3-compatible backup storage)
 	R2AccountID       string

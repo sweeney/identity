@@ -28,8 +28,8 @@ CORS_ORIGINS=http://localhost:9091,http://localhost:9093 ./bin/identity-server
 Set the Relying Party ID to your domain. Use the parent domain (not the subdomain) so passkeys work across subdomains and native apps:
 
 ```bash
-WEBAUTHN_RP_ID=swee.net
-WEBAUTHN_RP_ORIGINS=https://id.swee.net
+WEBAUTHN_RP_ID=example.com
+WEBAUTHN_RP_ORIGINS=https://id.example.com
 ```
 
 The RP ID is permanent — it's baked into every passkey at registration time. If you change it, all existing passkeys are invalidated.
@@ -75,7 +75,7 @@ Authorization: Bearer <access_token>
 Response:
 ```json
 {
-  "publicKey": { "challenge": "...", "rp": { "id": "swee.net" }, "user": { ... }, ... },
+  "publicKey": { "challenge": "...", "rp": { "id": "example.com" }, "user": { ... }, ... },
   "challenge_id": "uuid"
 }
 ```
@@ -244,8 +244,8 @@ For direct passkey APIs (without OAuth), use:
 - **Android**: `CredentialManager` API calling the same endpoints
 
 Both require an association file on your domain:
-- iOS: `https://swee.net/.well-known/apple-app-site-association`
-- Android: `https://swee.net/.well-known/assetlinks.json`
+- iOS: `https://example.com/.well-known/apple-app-site-association`
+- Android: `https://example.com/.well-known/assetlinks.json`
 
 ## Cross-device login
 

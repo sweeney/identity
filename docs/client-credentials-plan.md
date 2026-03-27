@@ -54,11 +54,11 @@ No refresh tokens — when the access token expires (15 minutes), the service re
 
 ```json
 {
-  "iss": "https://id.swee.net",
+  "iss": "https://id.example.com",
   "sub": "my-service",
   "client_id": "my-service",
   "jti": "550e8400-e29b-41d4-a716-446655440000",
-  "aud": "https://api.swee.net",
+  "aud": "https://api.example.com",
   "scope": "read:users write:users",
   "iat": 1711393200,
   "exp": 1711396800
@@ -183,10 +183,10 @@ New handler for `GET /.well-known/oauth-authorization-server`:
 
 ```json
 {
-  "issuer": "https://id.swee.net",
-  "token_endpoint": "https://id.swee.net/oauth/token",
-  "authorization_endpoint": "https://id.swee.net/oauth/authorize",
-  "jwks_uri": "https://id.swee.net/.well-known/jwks.json",
+  "issuer": "https://id.example.com",
+  "token_endpoint": "https://id.example.com/oauth/token",
+  "authorization_endpoint": "https://id.example.com/oauth/authorize",
+  "jwks_uri": "https://id.example.com/.well-known/jwks.json",
   "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token"],
   "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "none"],
   "response_types_supported": ["code"],

@@ -39,21 +39,21 @@ func TestExtractClientIP_CloudflareTrust_NoHeader(t *testing.T) {
 }
 
 func TestCheckOrigin_SameOrigin(t *testing.T) {
-	r := &http.Request{Host: "id.swee.net", Header: http.Header{"Origin": {"https://id.swee.net"}}}
+	r := &http.Request{Host: "id.example.com", Header: http.Header{"Origin": {"https://id.example.com"}}}
 	if !CheckOrigin(r) {
 		t.Error("same origin should pass")
 	}
 }
 
 func TestCheckOrigin_CrossOrigin(t *testing.T) {
-	r := &http.Request{Host: "id.swee.net", Header: http.Header{"Origin": {"https://evil.com"}}}
+	r := &http.Request{Host: "id.example.com", Header: http.Header{"Origin": {"https://evil.com"}}}
 	if CheckOrigin(r) {
 		t.Error("cross origin should fail")
 	}
 }
 
 func TestCheckOrigin_NoOriginHeader(t *testing.T) {
-	r := &http.Request{Host: "id.swee.net", Header: http.Header{}}
+	r := &http.Request{Host: "id.example.com", Header: http.Header{}}
 	if !CheckOrigin(r) {
 		t.Error("missing origin should pass (non-browser client)")
 	}

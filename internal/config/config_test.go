@@ -96,17 +96,17 @@ func TestLoad_WebAuthnDefaultsInDevelopment(t *testing.T) {
 func TestLoad_WebAuthnExplicitConfig(t *testing.T) {
 	t.Setenv("IDENTITY_ENV", "production")
 	t.Setenv("JWT_ISSUER", "https://id.example.com")
-	t.Setenv("WEBAUTHN_RP_ID", "swee.net")
-	t.Setenv("WEBAUTHN_RP_DISPLAY_NAME", "Sweeney Identity")
-	t.Setenv("WEBAUTHN_RP_ORIGINS", "https://id.swee.net,https://other.swee.net")
+	t.Setenv("WEBAUTHN_RP_ID", "example.com")
+	t.Setenv("WEBAUTHN_RP_DISPLAY_NAME", "Example Identity")
+	t.Setenv("WEBAUTHN_RP_ORIGINS", "https://id.example.com,https://other.example.com")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
 	assert.True(t, cfg.WebAuthnConfigured())
-	assert.Equal(t, "swee.net", cfg.WebAuthnRPID)
-	assert.Equal(t, "Sweeney Identity", cfg.WebAuthnRPDisplayName)
-	assert.Equal(t, []string{"https://id.swee.net", "https://other.swee.net"}, cfg.WebAuthnRPOrigins)
+	assert.Equal(t, "example.com", cfg.WebAuthnRPID)
+	assert.Equal(t, "Example Identity", cfg.WebAuthnRPDisplayName)
+	assert.Equal(t, []string{"https://id.example.com", "https://other.example.com"}, cfg.WebAuthnRPOrigins)
 }
 
 func TestLoad_WebAuthnDerivedOrigin(t *testing.T) {
