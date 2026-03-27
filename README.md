@@ -2,8 +2,6 @@
 
 A self-hosted authentication and identity management service. Single Go binary, SQLite database, OAuth 2.0 with PKCE.
 
-**Live at [id.swee.net](https://id.swee.net)**
-
 ## Features
 
 - **JWT authentication** — short-lived access tokens (15 min) + rotating refresh tokens (30-day sliding)
