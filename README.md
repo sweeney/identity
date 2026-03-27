@@ -1,6 +1,6 @@
 # Identity
 
-A self-hosted authentication and identity management service. Single Go binary, SQLite database, OAuth 2.0 with PKCE.
+An authentication and identity management service. Single Go binary, SQLite database, OAuth 2.0 with PKCE.
 
 ## Features
 
