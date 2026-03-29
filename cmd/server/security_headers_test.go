@@ -43,6 +43,30 @@ func TestIsAllowedOrigin_ProdModeEmptyAllowlistLocalhost(t *testing.T) {
 	assert.False(t, isAllowedOrigin("http://localhost:3000", allowed, false))
 }
 
+func TestIsAllowedOrigin_LocalhostWildcard_MatchesAnyPort(t *testing.T) {
+	allowed := map[string]bool{"http://localhost": true}
+	assert.True(t, isAllowedOrigin("http://localhost:3000", allowed, false))
+	assert.True(t, isAllowedOrigin("http://localhost:5173", allowed, false))
+	assert.True(t, isAllowedOrigin("http://localhost:8080", allowed, false))
+}
+
+func TestIsAllowedOrigin_LocalhostWildcard_ExactMatchStillWorks(t *testing.T) {
+	allowed := map[string]bool{"http://localhost": true}
+	assert.True(t, isAllowedOrigin("http://localhost", allowed, false))
+}
+
+func TestIsAllowedOrigin_LocalhostWildcard_DoesNotMatchNonLocalhost(t *testing.T) {
+	allowed := map[string]bool{"http://localhost": true}
+	assert.False(t, isAllowedOrigin("https://evil.com", allowed, false))
+}
+
+func TestIsAllowedOrigin_LocalhostWildcard_DoesNotMatchLocalhostSubdomain(t *testing.T) {
+	// "http://localhost" wildcard must not match attacker-controlled domains
+	// that start with the same prefix.
+	allowed := map[string]bool{"http://localhost": true}
+	assert.False(t, isAllowedOrigin("http://localhost.evil.com", allowed, false))
+}
+
 // ---------------------------------------------------------------------------
 // securityHeaders — CORS behaviour
 // ---------------------------------------------------------------------------

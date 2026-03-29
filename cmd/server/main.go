@@ -472,8 +472,14 @@ func jwksHandler(issuer *auth.TokenIssuer) http.Handler {
 
 // isAllowedOrigin checks whether the given origin is in the allowlist.
 // In dev mode with an empty allowlist, any http://localhost origin is allowed.
+// If "http://localhost" (no port) appears in the allowlist, it matches any
+// http://localhost:PORT origin, enabling a single CORS_ORIGINS entry to cover
+// all local dev ports.
 func isAllowedOrigin(origin string, allowed map[string]bool, devMode bool) bool {
 	if allowed[origin] {
+		return true
+	}
+	if allowed["http://localhost"] && strings.HasPrefix(origin, "http://localhost:") {
 		return true
 	}
 	if devMode && len(allowed) == 0 && strings.HasPrefix(origin, "http://localhost") {
