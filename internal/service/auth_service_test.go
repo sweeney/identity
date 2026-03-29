@@ -167,7 +167,7 @@ func TestAuthService_IssueTokensForUser_Success(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	result, err := svc.IssueTokensForUser("user-123")
+	result, err := svc.IssueTokensForUser("user-123", "")
 	require.NoError(t, err)
 	assert.NotEmpty(t, result.AccessToken)
 	assert.NotEmpty(t, result.RefreshToken)
@@ -185,7 +185,7 @@ func TestAuthService_IssueTokensForUser_DisabledUser(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	_, err := svc.IssueTokensForUser("user-123")
+	_, err := svc.IssueTokensForUser("user-123", "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrAccountDisabled)
 }

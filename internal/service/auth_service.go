@@ -62,6 +62,7 @@ type loginArgs struct {
 	oldTokenID string
 	familyID   string // empty = generate new family
 	deviceHint string
+	audience   string // optional aud claim; set for OAuth PKCE flow
 }
 
 // Login authenticates a user by username and password, returning JWT tokens.
@@ -134,8 +135,9 @@ func (s *AuthService) AuthorizeUser(username, password, clientIP string) (string
 }
 
 // IssueTokensForUser issues a token pair for a pre-authenticated user.
+// audience is the aud claim to embed in the access token; pass "" to omit it.
 // Used by OAuthService at the code exchange step.
-func (s *AuthService) IssueTokensForUser(userID string) (*LoginResult, error) {
+func (s *AuthService) IssueTokensForUser(userID, audience string) (*LoginResult, error) {
 	user, err := s.users.GetByID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
@@ -143,7 +145,7 @@ func (s *AuthService) IssueTokensForUser(userID string) (*LoginResult, error) {
 	if !user.IsActive {
 		return nil, ErrAccountDisabled
 	}
-	return s.issueTokens(user, loginArgs{})
+	return s.issueTokens(user, loginArgs{audience: audience})
 }
 
 // Refresh validates a refresh token and issues a new token pair via rotation.
@@ -273,6 +275,7 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		Username: user.Username,
 		Role:     user.Role,
 		IsActive: user.IsActive,
+		Audience: args.audience,
 	}
 
 	accessToken, err := s.issuer.Mint(claims)

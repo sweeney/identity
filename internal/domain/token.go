@@ -32,6 +32,7 @@ type TokenClaims struct {
 	Username string
 	Role     Role
 	IsActive bool
+	Audience string // optional; set for tokens issued via OAuth PKCE flow
 }
 
 // ServiceTokenClaims holds the parsed contents of a service (client credentials) JWT.

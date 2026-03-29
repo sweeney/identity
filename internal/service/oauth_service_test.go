@@ -113,7 +113,7 @@ func TestOAuthService_Authorize_BadCredentials(t *testing.T) {
 
 func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, authSvc, _, codes := newOAuthService(t, ctrl)
+	svc, authSvc, clients, codes := newOAuthService(t, ctrl)
 
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 	challenge := pkceChallenge(verifier)
@@ -133,6 +133,9 @@ func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 		ExpiresAt:     now.Add(60 * time.Second),
 	}
 
+	client := testClient()
+	client.Audience = "myapp"
+
 	loginResult := &service.LoginResult{
 		AccessToken:  "access.token",
 		TokenType:    "Bearer",
@@ -142,7 +145,8 @@ func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 	codes.EXPECT().MarkUsed("code-1", gomock.Any()).Return(nil)
-	authSvc.EXPECT().IssueTokensForUser("user-123").Return(loginResult, nil)
+	clients.EXPECT().GetByID("client-1").Return(client, nil)
+	authSvc.EXPECT().IssueTokensForUser("user-123", "myapp").Return(loginResult, nil)
 
 	result, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
 	require.NoError(t, err)

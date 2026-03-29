@@ -86,18 +86,22 @@ func NewTokenIssuer(key, prevKey *ecdsa.PrivateKey, issuer string, ttl time.Dura
 // Mint creates a signed JWT access token for the given claims.
 func (ti *TokenIssuer) Mint(claims domain.TokenClaims) (string, error) {
 	now := time.Now()
+	registered := jwt.RegisteredClaims{
+		Issuer:    ti.issuer,
+		Subject:   claims.UserID,
+		IssuedAt:  jwt.NewNumericDate(now),
+		NotBefore: jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(ti.ttl)),
+		ID:        uuid.New().String(),
+	}
+	if claims.Audience != "" {
+		registered.Audience = jwt.ClaimStrings{claims.Audience}
+	}
 	jwtClaims := identityClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    ti.issuer,
-			Subject:   claims.UserID,
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(ti.ttl)),
-			ID:        uuid.New().String(),
-		},
-		Username: claims.Username,
-		Role:     claims.Role,
-		IsActive: claims.IsActive,
+		RegisteredClaims: registered,
+		Username:         claims.Username,
+		Role:             claims.Role,
+		IsActive:         claims.IsActive,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwtClaims)

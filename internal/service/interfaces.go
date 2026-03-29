@@ -17,8 +17,9 @@ type AuthServicer interface {
 	AuthorizeUser(username, password, clientIP string) (string, error)
 
 	// IssueTokensForUser issues a token pair for a pre-authenticated user.
+	// audience is the aud claim to embed in the access token; pass "" to omit it.
 	// Used by OAuthService at the code exchange step.
-	IssueTokensForUser(userID string) (*LoginResult, error)
+	IssueTokensForUser(userID, audience string) (*LoginResult, error)
 }
 
 // UserServicer is the interface the API handler uses for user CRUD.

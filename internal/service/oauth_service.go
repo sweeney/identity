@@ -200,7 +200,12 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 		return nil, fmt.Errorf("mark code used: %w", err)
 	}
 
-	return s.auth.IssueTokensForUser(code.UserID)
+	var audience string
+	if client, err := s.clients.GetByID(clientID); err == nil {
+		audience = client.Audience
+	}
+
+	return s.auth.IssueTokensForUser(code.UserID, audience)
 }
 
 // RefreshToken delegates to the underlying auth service refresh.
