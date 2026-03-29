@@ -895,6 +895,164 @@ func TestOAuthClientCreate_InvalidClientID(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "Client ID may only contain")
 }
 
+// --- OAuth Client Backup Triggering ---
+
+// newRouterWithOAuthAndBackup is like newRouterWithOAuth but also returns the backup mock.
+func newRouterWithOAuthAndBackup(t *testing.T) (http.Handler, *mocks.MockOAuthClientRepository, *mocks.MockBackupService) {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	oauthClients := mocks.NewMockOAuthClientRepository(ctrl)
+	auditRepo := mocks.NewMockAuditRepository(ctrl)
+	backupSvc := mocks.NewMockBackupService(ctrl)
+	auditRepo.EXPECT().List(gomock.Any()).Return(nil, nil).AnyTimes()
+
+	authSvc.EXPECT().AuthorizeUser(adminUser, adminPass, gomock.Any()).Return("admin-id", nil).AnyTimes()
+	authSvc.EXPECT().AuthorizeUser(gomock.Any(), gomock.Any(), gomock.Any()).Return("", service.ErrInvalidCredentials).AnyTimes()
+	userSvc.EXPECT().GetByID("admin-id").Return(&domain.User{
+		ID: "admin-id", Username: adminUser, Role: domain.RoleAdmin, IsActive: true,
+	}, nil).AnyTimes()
+	userSvc.EXPECT().GetByUsername(adminUser).Return(&domain.User{
+		ID: "admin-id", Username: adminUser, Role: domain.RoleAdmin, IsActive: true,
+	}, nil).AnyTimes()
+	auditRepo.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
+
+	handler := admin.NewRouter(admin.Config{
+		SessionSecret: testSessionSecret,
+	}, authSvc, userSvc, oauthClients, auditRepo, backupSvc, nil, nil)
+	return handler, oauthClients, backupSvc
+}
+
+func TestOAuthClientCreate_BackupTriggered(t *testing.T) {
+	handler, oauthClients, backupSvc := newRouterWithOAuthAndBackup(t)
+	session := loginSession(t, handler)
+
+	oauthClients.EXPECT().Create(gomock.Any()).Return(nil)
+	backupSvc.EXPECT().TriggerAsync()
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf": {csrf},
+		"id":    {"test-client"},
+		"name":  {"Test Client"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+}
+
+func TestOAuthClientEdit_BackupTriggered(t *testing.T) {
+	handler, oauthClients, backupSvc := newRouterWithOAuthAndBackup(t)
+	session := loginSession(t, handler)
+
+	existingClient := &domain.OAuthClient{
+		ID:           "test-client",
+		Name:         "Old Name",
+		RedirectURIs: []string{"https://example.com/callback"},
+	}
+	oauthClients.EXPECT().GetByID("test-client").Return(existingClient, nil)
+	oauthClients.EXPECT().Update(gomock.Any()).Return(nil)
+	backupSvc.EXPECT().TriggerAsync()
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":          {csrf},
+		"name":           {"New Name"},
+		"redirect_uris":  {"https://example.com/callback"},
+		"admin_password": {adminPass},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+}
+
+func TestOAuthClientDelete_BackupTriggered(t *testing.T) {
+	handler, oauthClients, backupSvc := newRouterWithOAuthAndBackup(t)
+	session := loginSession(t, handler)
+
+	oauthClients.EXPECT().Delete("test-client").Return(nil)
+	backupSvc.EXPECT().TriggerAsync()
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{"_csrf": {csrf}, "admin_password": {adminPass}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/delete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+}
+
+func TestOAuthClientGenerateSecret_BackupTriggered(t *testing.T) {
+	handler, oauthClients, backupSvc := newRouterWithOAuthAndBackup(t)
+	session := loginSession(t, handler)
+
+	client := &domain.OAuthClient{ID: "test-client", Name: "Test Client"}
+	oauthClients.EXPECT().GetByID("test-client").Return(client, nil)
+	oauthClients.EXPECT().Update(gomock.Any()).Return(nil)
+	backupSvc.EXPECT().TriggerAsync()
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{"_csrf": {csrf}, "admin_password": {adminPass}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/generate-secret", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+func TestOAuthClientRotateSecret_BackupTriggered(t *testing.T) {
+	handler, oauthClients, backupSvc := newRouterWithOAuthAndBackup(t)
+	session := loginSession(t, handler)
+
+	client := &domain.OAuthClient{ID: "test-client", Name: "Test Client", SecretHash: "existing-hash"}
+	oauthClients.EXPECT().GetByID("test-client").Return(client, nil)
+	oauthClients.EXPECT().Update(gomock.Any()).Return(nil)
+	backupSvc.EXPECT().TriggerAsync()
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{"_csrf": {csrf}, "admin_password": {adminPass}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/rotate-secret", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+func TestOAuthClientClearPrevSecret_BackupTriggered(t *testing.T) {
+	handler, oauthClients, backupSvc := newRouterWithOAuthAndBackup(t)
+	session := loginSession(t, handler)
+
+	client := &domain.OAuthClient{ID: "test-client", Name: "Test Client", SecretHashPrev: "old-hash"}
+	oauthClients.EXPECT().GetByID("test-client").Return(client, nil)
+	oauthClients.EXPECT().Update(gomock.Any()).Return(nil)
+	backupSvc.EXPECT().TriggerAsync()
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{"_csrf": {csrf}, "admin_password": {adminPass}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/clear-prev-secret", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+}
+
 func TestOAuthClientCreate_ValidClientID(t *testing.T) {
 	handler, oauthClients, _ := newRouterWithOAuth(t)
 	session := loginSession(t, handler)

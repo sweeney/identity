@@ -771,6 +771,9 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := h.auditMeta(r)
 	h.recordAuditWithDetail(domain.EventOAuthClientCreated, "", meta.ActorUsername, meta.IPAddress, "created OAuth client "+id)
+	if h.backupSvc != nil {
+		h.backupSvc.TriggerAsync()
+	}
 	http.Redirect(w, r, "/admin/oauth", http.StatusSeeOther)
 }
 
@@ -861,6 +864,9 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := h.auditMeta(r)
 	h.recordAuditWithDetail(domain.EventOAuthClientUpdated, "", meta.ActorUsername, meta.IPAddress, "updated OAuth client "+id)
+	if h.backupSvc != nil {
+		h.backupSvc.TriggerAsync()
+	}
 	http.Redirect(w, r, "/admin/oauth", http.StatusSeeOther)
 }
 
@@ -905,6 +911,9 @@ func (h *adminHandler) oauthDeletePost(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := h.auditMeta(r)
 	h.recordAuditWithDetail(domain.EventOAuthClientDeleted, "", meta.ActorUsername, meta.IPAddress, "deleted OAuth client "+id)
+	if h.backupSvc != nil {
+		h.backupSvc.TriggerAsync()
+	}
 	http.Redirect(w, r, "/admin/oauth", http.StatusSeeOther)
 }
 
@@ -940,6 +949,9 @@ func (h *adminHandler) oauthGenerateSecret(w http.ResponseWriter, r *http.Reques
 
 	meta := h.auditMeta(r)
 	h.recordAuditWithDetail(domain.EventClientSecretRotated, "", meta.ActorUsername, meta.IPAddress, "generated secret for OAuth client "+id)
+	if h.backupSvc != nil {
+		h.backupSvc.TriggerAsync()
+	}
 	h.render(w, r, "oauth_client_form.html", map[string]any{
 		"FormAction":      "/admin/oauth/" + id + "/edit",
 		"Client":          client,
@@ -979,6 +991,9 @@ func (h *adminHandler) oauthRotateSecret(w http.ResponseWriter, r *http.Request)
 
 	meta := h.auditMeta(r)
 	h.recordAuditWithDetail(domain.EventClientSecretRotated, "", meta.ActorUsername, meta.IPAddress, "rotated secret for OAuth client "+id)
+	if h.backupSvc != nil {
+		h.backupSvc.TriggerAsync()
+	}
 	h.render(w, r, "oauth_client_form.html", map[string]any{
 		"FormAction":      "/admin/oauth/" + id + "/edit",
 		"Client":          client,
@@ -1011,6 +1026,9 @@ func (h *adminHandler) oauthClearPrevSecret(w http.ResponseWriter, r *http.Reque
 
 	meta := h.auditMeta(r)
 	h.recordAuditWithDetail(domain.EventClientSecretRotated, "", meta.ActorUsername, meta.IPAddress, "cleared previous secret for OAuth client "+id)
+	if h.backupSvc != nil {
+		h.backupSvc.TriggerAsync()
+	}
 	http.Redirect(w, r, "/admin/oauth/"+id+"/edit", http.StatusSeeOther)
 }
 
