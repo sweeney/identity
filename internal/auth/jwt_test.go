@@ -189,6 +189,58 @@ func TestTokenIssuer_JWKS(t *testing.T) {
 	assert.NotEmpty(t, k.Y)
 }
 
+func decodeJWTPayload(t *testing.T, token string) map[string]any {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	require.Len(t, parts, 3, "expected 3-part JWT")
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(payloadJSON, &payload))
+	return payload
+}
+
+func TestTokenIssuer_Mint_WithAudience(t *testing.T) {
+	issuer := newTestIssuer(t)
+	claims := domain.TokenClaims{
+		UserID:   "user-1",
+		Username: "alice",
+		Role:     domain.RoleUser,
+		IsActive: true,
+		Audience: "mqttproxy",
+	}
+
+	token, err := issuer.Mint(claims)
+	require.NoError(t, err)
+
+	payload := decodeJWTPayload(t, token)
+	aud, ok := payload["aud"]
+	require.True(t, ok, "aud claim should be present in token payload")
+	// JWT spec: aud is always an array when set via ClaimStrings
+	audSlice, ok := aud.([]any)
+	require.True(t, ok, "aud should be an array")
+	require.Len(t, audSlice, 1)
+	assert.Equal(t, "mqttproxy", audSlice[0])
+}
+
+func TestTokenIssuer_Mint_WithoutAudience(t *testing.T) {
+	issuer := newTestIssuer(t)
+	claims := domain.TokenClaims{
+		UserID:   "user-1",
+		Username: "alice",
+		Role:     domain.RoleUser,
+		IsActive: true,
+		// Audience intentionally empty
+	}
+
+	token, err := issuer.Mint(claims)
+	require.NoError(t, err)
+
+	payload := decodeJWTPayload(t, token)
+	_, hasAud := payload["aud"]
+	assert.False(t, hasAud, "aud claim should be absent when no audience is set")
+}
+
 func TestTokenIssuer_JWKS_WithPrevKey(t *testing.T) {
 	oldKey, err := auth.GenerateKey()
 	require.NoError(t, err)

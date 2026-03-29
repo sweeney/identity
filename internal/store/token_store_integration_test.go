@@ -63,6 +63,51 @@ func TestTokenStore_CreateAndGetByHash(t *testing.T) {
 	assert.False(t, got.IsRevoked)
 }
 
+func TestTokenStore_CreateAndGetByHash_WithAudience(t *testing.T) {
+	database := openTestDB(t)
+	us := store.NewUserStore(database)
+	ts := store.NewTokenStore(database)
+
+	u := seedUser(t, us, "grace-aud")
+	tok := newToken(u.ID, "family-aud", "rawtoken-aud1")
+	tok.Audience = "mqttproxy"
+
+	require.NoError(t, ts.Create(tok))
+
+	got, err := ts.GetByHash(sha256hex("rawtoken-aud1"))
+	require.NoError(t, err)
+	assert.Equal(t, "mqttproxy", got.Audience)
+}
+
+func TestTokenStore_RotateToken_PreservesAudience(t *testing.T) {
+	database := openTestDB(t)
+	us := store.NewUserStore(database)
+	ts := store.NewTokenStore(database)
+
+	u := seedUser(t, us, "aud-rotate")
+	old := newToken(u.ID, "family-aud-rotate", "rawtoken-aud-old")
+	old.Audience = "mqttproxy"
+	require.NoError(t, ts.Create(old))
+
+	newTok := &domain.RefreshToken{
+		ID:         "tok-aud-new",
+		TokenHash:  sha256hex("rawtoken-aud-new"),
+		IssuedAt:   time.Now().UTC(),
+		LastUsedAt: time.Now().UTC(),
+		ExpiresAt:  time.Now().UTC().Add(30 * 24 * time.Hour),
+	}
+
+	gotOld, err := ts.RotateToken(sha256hex("rawtoken-aud-old"), newTok)
+	require.NoError(t, err)
+	assert.Equal(t, "mqttproxy", gotOld.Audience, "returned old token should carry audience")
+	assert.Equal(t, "mqttproxy", newTok.Audience, "new token should inherit audience from old token")
+
+	// Verify new token was persisted with the audience
+	gotNew, err := ts.GetByHash(sha256hex("rawtoken-aud-new"))
+	require.NoError(t, err)
+	assert.Equal(t, "mqttproxy", gotNew.Audience)
+}
+
 func TestTokenStore_GetByHash_NotFound(t *testing.T) {
 	database := openTestDB(t)
 	ts := store.NewTokenStore(database)

@@ -24,14 +24,15 @@ func (s *TokenStore) Create(token *domain.RefreshToken) error {
 	_, err := s.db.DB().Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  issued_at, last_used_at, expires_at, is_revoked)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  audience, issued_at, last_used_at, expires_at, is_revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		token.ID,
 		token.UserID,
 		token.TokenHash,
 		token.FamilyID,
 		nullableString(token.ParentTokenID),
 		token.DeviceHint,
+		token.Audience,
 		formatTime(token.IssuedAt),
 		formatTime(token.LastUsedAt),
 		formatTime(token.ExpiresAt),
@@ -46,7 +47,7 @@ func (s *TokenStore) Create(token *domain.RefreshToken) error {
 func (s *TokenStore) GetByHash(tokenHash string) (*domain.RefreshToken, error) {
 	row := s.db.DB().QueryRow(
 		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
-		        device_hint, issued_at, last_used_at, expires_at, is_revoked
+		        device_hint, audience, issued_at, last_used_at, expires_at, is_revoked
 		 FROM refresh_tokens WHERE token_hash = ?`, tokenHash,
 	)
 	return scanToken(row)
@@ -72,14 +73,15 @@ func (s *TokenStore) Rotate(oldTokenID string, newToken *domain.RefreshToken) er
 	if _, err := tx.Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  issued_at, last_used_at, expires_at, is_revoked)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		  audience, issued_at, last_used_at, expires_at, is_revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		newToken.ID,
 		newToken.UserID,
 		newToken.TokenHash,
 		newToken.FamilyID,
 		nullableString(newToken.ParentTokenID),
 		newToken.DeviceHint,
+		newToken.Audience,
 		formatTime(newToken.IssuedAt),
 		formatTime(newToken.LastUsedAt),
 		formatTime(newToken.ExpiresAt),
@@ -114,7 +116,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	// Read old token within the transaction
 	row := tx.QueryRow(
 		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
-		        device_hint, issued_at, last_used_at, expires_at, is_revoked
+		        device_hint, audience, issued_at, last_used_at, expires_at, is_revoked
 		 FROM refresh_tokens WHERE token_hash = ?`, oldTokenHash,
 	)
 
@@ -124,7 +126,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 
 	scanErr := row.Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
-		&t.DeviceHint, &issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
+		&t.DeviceHint, &t.Audience, &issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
 	)
 	if scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
@@ -150,6 +152,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	newToken.FamilyID = t.FamilyID
 	newToken.ParentTokenID = t.ID
 	newToken.DeviceHint = t.DeviceHint
+	newToken.Audience = t.Audience
 	if newToken.ExpiresAt.IsZero() {
 		newToken.ExpiresAt = t.ExpiresAt
 	}
@@ -165,14 +168,15 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	if _, err := tx.Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  issued_at, last_used_at, expires_at, is_revoked)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		  audience, issued_at, last_used_at, expires_at, is_revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		newToken.ID,
 		newToken.UserID,
 		newToken.TokenHash,
 		newToken.FamilyID,
 		nullableString(newToken.ParentTokenID),
 		newToken.DeviceHint,
+		newToken.Audience,
 		formatTime(newToken.IssuedAt),
 		formatTime(newToken.LastUsedAt),
 		formatTime(newToken.ExpiresAt),
@@ -230,7 +234,7 @@ func scanToken(row *sql.Row) (*domain.RefreshToken, error) {
 
 	err := row.Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
-		&t.DeviceHint, &issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
+		&t.DeviceHint, &t.Audience, &issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound

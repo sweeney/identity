@@ -1,6 +1,9 @@
 package service_test
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +16,35 @@ import (
 	"github.com/sweeney/identity/internal/mocks"
 	"github.com/sweeney/identity/internal/service"
 )
+
+// jwtAudience decodes the JWT payload and returns the aud claim values.
+// Returns nil if no aud claim is present.
+func jwtAudience(t *testing.T, token string) []string {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	require.Len(t, parts, 3, "expected 3-part JWT")
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(payloadJSON, &payload))
+	raw, ok := payload["aud"]
+	if !ok {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []any:
+		out := make([]string, len(v))
+		for i, s := range v {
+			out[i] = s.(string)
+		}
+		return out
+	case string:
+		return []string{v}
+	default:
+		t.Fatalf("unexpected aud type %T", raw)
+		return nil
+	}
+}
 
 func newTestIssuer(t *testing.T) *auth.TokenIssuer {
 	t.Helper()
@@ -190,6 +222,43 @@ func TestAuthService_IssueTokensForUser_DisabledUser(t *testing.T) {
 	assert.ErrorIs(t, err, service.ErrAccountDisabled)
 }
 
+func TestAuthService_IssueTokensForUser_WithAudience(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userRepo := mocks.NewMockUserRepository(ctrl)
+	tokenRepo := mocks.NewMockTokenRepository(ctrl)
+	backupSvc := mocks.NewMockBackupService(ctrl)
+
+	userRepo.EXPECT().GetByID("user-123").Return(activeUser(), nil)
+	tokenRepo.EXPECT().Create(gomock.Any()).Return(nil)
+
+	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
+
+	result, err := svc.IssueTokensForUser("user-123", "mqttproxy")
+	require.NoError(t, err)
+
+	aud := jwtAudience(t, result.AccessToken)
+	require.NotNil(t, aud, "access token should contain aud claim")
+	assert.Equal(t, []string{"mqttproxy"}, aud)
+}
+
+func TestAuthService_IssueTokensForUser_NoAudience(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userRepo := mocks.NewMockUserRepository(ctrl)
+	tokenRepo := mocks.NewMockTokenRepository(ctrl)
+	backupSvc := mocks.NewMockBackupService(ctrl)
+
+	userRepo.EXPECT().GetByID("user-123").Return(activeUser(), nil)
+	tokenRepo.EXPECT().Create(gomock.Any()).Return(nil)
+
+	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
+
+	result, err := svc.IssueTokensForUser("user-123", "")
+	require.NoError(t, err)
+
+	aud := jwtAudience(t, result.AccessToken)
+	assert.Nil(t, aud, "access token should not contain aud claim when audience is empty")
+}
+
 // --- Refresh ---
 
 func TestAuthService_Refresh_Success(t *testing.T) {
@@ -327,6 +396,70 @@ func TestAuthService_Refresh_DisabledUser(t *testing.T) {
 	_, err := svc.Refresh(rawToken)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrAccountDisabled)
+}
+
+func TestAuthService_Refresh_PreservesAudience(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userRepo := mocks.NewMockUserRepository(ctrl)
+	tokenRepo := mocks.NewMockTokenRepository(ctrl)
+	backupSvc := mocks.NewMockBackupService(ctrl)
+
+	rawToken := "audience-bearing-refresh-token-long-ok"
+	tokenHash := service.HashToken(rawToken)
+
+	// Old token carries the audience stored at initial code exchange.
+	oldTok := &domain.RefreshToken{
+		ID:        "tok-aud",
+		UserID:    "user-123",
+		TokenHash: tokenHash,
+		FamilyID:  "family-aud",
+		Audience:  "mqttproxy",
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+		IsRevoked: false,
+	}
+
+	tokenRepo.EXPECT().RotateToken(tokenHash, gomock.Any()).Return(oldTok, nil)
+	userRepo.EXPECT().GetByID("user-123").Return(activeUser(), nil)
+
+	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
+
+	result, err := svc.Refresh(rawToken)
+	require.NoError(t, err)
+
+	aud := jwtAudience(t, result.AccessToken)
+	require.NotNil(t, aud, "refreshed access token should carry aud claim")
+	assert.Equal(t, []string{"mqttproxy"}, aud)
+}
+
+func TestAuthService_Refresh_NoAudienceWhenTokenHasNone(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userRepo := mocks.NewMockUserRepository(ctrl)
+	tokenRepo := mocks.NewMockTokenRepository(ctrl)
+	backupSvc := mocks.NewMockBackupService(ctrl)
+
+	rawToken := "no-audience-refresh-token-value-long-ok"
+	tokenHash := service.HashToken(rawToken)
+
+	oldTok := &domain.RefreshToken{
+		ID:        "tok-noaud",
+		UserID:    "user-123",
+		TokenHash: tokenHash,
+		FamilyID:  "family-noaud",
+		// Audience intentionally empty (direct login, not OAuth PKCE)
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+		IsRevoked: false,
+	}
+
+	tokenRepo.EXPECT().RotateToken(tokenHash, gomock.Any()).Return(oldTok, nil)
+	userRepo.EXPECT().GetByID("user-123").Return(activeUser(), nil)
+
+	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
+
+	result, err := svc.Refresh(rawToken)
+	require.NoError(t, err)
+
+	aud := jwtAudience(t, result.AccessToken)
+	assert.Nil(t, aud, "refreshed access token should not contain aud when token has no audience")
 }
 
 // --- Logout ---

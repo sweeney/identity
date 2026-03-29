@@ -13,6 +13,7 @@ type RefreshToken struct {
 	FamilyID      string // Groups a rotation chain; whole family invalidated on reuse detection
 	ParentTokenID string // ID of the token this one replaced (may be empty for first in family)
 	DeviceHint    string // Informational only, e.g. "iPhone 15 / iOS 18"
+	Audience      string // aud claim to carry into new access tokens on rotation
 	IssuedAt      time.Time
 	LastUsedAt    time.Time
 	ExpiresAt     time.Time

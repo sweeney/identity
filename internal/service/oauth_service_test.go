@@ -153,6 +153,41 @@ func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 	assert.Equal(t, "access.token", result.AccessToken)
 }
 
+func TestOAuthService_ExchangeCode_NoAudience(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, authSvc, clients, codes := newOAuthService(t, ctrl)
+
+	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	challenge := pkceChallenge(verifier)
+	rawCode := "no-aud-code-value"
+	codeHash := service.HashToken(rawCode)
+	now := time.Now().UTC()
+
+	authCode := &domain.AuthCode{
+		ID:            "code-noaud",
+		CodeHash:      codeHash,
+		ClientID:      "client-1",
+		UserID:        "user-123",
+		RedirectURI:   "https://myapp.example.com/callback",
+		CodeChallenge: challenge,
+		IssuedAt:      now,
+		ExpiresAt:     now.Add(60 * time.Second),
+	}
+
+	// Client has no audience configured
+	client := testClient()
+	loginResult := &service.LoginResult{AccessToken: "token", TokenType: "Bearer", ExpiresIn: 900}
+
+	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
+	codes.EXPECT().MarkUsed("code-noaud", gomock.Any()).Return(nil)
+	clients.EXPECT().GetByID("client-1").Return(client, nil)
+	// Audience must be empty string when client has no audience
+	authSvc.EXPECT().IssueTokensForUser("user-123", "").Return(loginResult, nil)
+
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
+	require.NoError(t, err)
+}
+
 func TestOAuthService_ExchangeCode_InvalidCode(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc, _, _, codes := newOAuthService(t, ctrl)

@@ -215,6 +215,7 @@ func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
 		Username: user.Username,
 		Role:     user.Role,
 		IsActive: user.IsActive,
+		Audience: oldTok.Audience,
 	}
 
 	accessToken, err := s.issuer.Mint(claims)
@@ -301,6 +302,7 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		FamilyID:      familyID,
 		ParentTokenID: args.oldTokenID,
 		DeviceHint:    args.deviceHint,
+		Audience:      args.audience,
 		IssuedAt:      now,
 		LastUsedAt:    now,
 		ExpiresAt:     now.Add(s.refreshTokenTTL),
