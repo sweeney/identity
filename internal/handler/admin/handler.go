@@ -332,7 +332,7 @@ func (h *adminHandler) passkeyPrompt(w http.ResponseWriter, r *http.Request) {
 	}
 	h.render(w, r, "passkey_prompt.html", map[string]any{
 		"HideNav": true,
-		"SkipURL": next,
+		"SkipURL": template.URL(next), //nolint:gosec // URL comes from the post-login redirect, which is /admin/ or set by server logic
 	})
 }
 

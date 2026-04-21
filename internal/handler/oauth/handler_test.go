@@ -7,7 +7,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -380,4 +382,55 @@ func TestNewRouter_NilService_Returns404(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+// --- Passkey prompt ---
+
+const oauthTestSessionKey = "test-oauth-session-key-long-enough"
+
+// mintPromptCookie creates a signed oauth_passkey_prompt cookie for the given userID.
+func mintPromptCookie(t *testing.T, userID string) *http.Cookie {
+	t.Helper()
+	claims := jwt.RegisteredClaims{
+		Subject:   userID,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := tok.SignedString([]byte(oauthTestSessionKey))
+	require.NoError(t, err)
+	return &http.Cookie{Name: "oauth_passkey_prompt", Value: signed}
+}
+
+// TestPasskeyPrompt_CustomSchemeSkipURL verifies that a custom-scheme next URL
+// (e.g. com.foo.bar://callback) is rendered verbatim in the "Not now" href
+// and not replaced with #ZgotmplZ by html/template's URL sanitizer.
+func TestPasskeyPrompt_CustomSchemeSkipURL(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	h := oauth.NewRouter(svc, "", nil, nil, nil, oauthTestSessionKey, "")
+
+	nextURL := "com.foo.bar://callback?code=abc123"
+	req := httptest.NewRequest(http.MethodGet, "/oauth/passkey-prompt?next="+url.QueryEscape(nextURL), nil)
+	req.AddCookie(mintPromptCookie(t, "user-1"))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, nextURL, "SkipURL must render with the custom scheme intact")
+	assert.NotContains(t, body, "#ZgotmplZ", "html/template must not sanitize the trusted URL")
+}
+
+// TestPasskeyPrompt_NoSession_Redirects verifies that hitting the prompt page
+// without a valid session cookie redirects rather than rendering.
+func TestPasskeyPrompt_NoSession_Redirects(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	h := oauth.NewRouter(svc, "", nil, nil, nil, oauthTestSessionKey, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/oauth/passkey-prompt?next=com.foo.bar://callback", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
 }

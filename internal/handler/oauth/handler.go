@@ -653,7 +653,7 @@ func (h *oauthHandler) passkeyPrompt(w http.ResponseWriter, r *http.Request) {
 	next := r.URL.Query().Get("next")
 	h.render(w, "passkey_prompt.html", map[string]any{
 		"HideNav":   true,
-		"SkipURL":   next,
+		"SkipURL":   template.URL(next), //nolint:gosec // URL validated against registered redirect_uri before being placed in query string
 		"OAuthFlow": true,
 	})
 }

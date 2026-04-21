@@ -1074,3 +1074,43 @@ func TestOAuthClientCreate_ValidClientID(t *testing.T) {
 	assert.Equal(t, http.StatusSeeOther, rr.Code)
 	assert.Equal(t, "/admin/oauth", rr.Header().Get("Location"))
 }
+
+// --- Passkey prompt ---
+
+// TestPasskeyPrompt_SkipURL_NotSanitized verifies that the SkipURL passed to
+// the passkey prompt page is rendered verbatim and not replaced with
+// #ZgotmplZ by html/template's URL sanitizer.
+func TestPasskeyPrompt_SkipURL_NotSanitized(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	handler := newRouter(t, userSvc)
+	session := loginSession(t, handler)
+
+	next := "/admin/some-page"
+	req := httptest.NewRequest(http.MethodGet, "/admin/passkeys/prompt?next="+url.QueryEscape(next), nil)
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, next, "SkipURL must render the next URL intact")
+	assert.NotContains(t, body, "#ZgotmplZ", "html/template must not sanitize the SkipURL")
+}
+
+// TestPasskeyPrompt_DefaultSkipURL verifies that when no next parameter is
+// provided, the SkipURL defaults to /admin/.
+func TestPasskeyPrompt_DefaultSkipURL(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	handler := newRouter(t, userSvc)
+	session := loginSession(t, handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/passkeys/prompt", nil)
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), `href="/admin/"`, "default SkipURL should link to /admin/")
+}
