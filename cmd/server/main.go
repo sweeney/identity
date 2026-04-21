@@ -30,6 +30,9 @@ import (
 	"github.com/sweeney/identity/internal/ui"
 )
 
+// version is set at build time via -ldflags "-X main.version=<git-sha>".
+var version = "dev"
+
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -355,8 +358,8 @@ func run() error {
 		homeTmpl.Execute(w, map[string]string{"SiteName": cfg.SiteName}) //nolint:errcheck
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","version":%q}`, version)
 	})
 	mux.Handle("GET /.well-known/jwks.json", jwksHandler(issuer))
 	mux.Handle("GET /.well-known/oauth-authorization-server", oauthRouter)
