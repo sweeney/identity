@@ -20,6 +20,7 @@ import (
 
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/service"
+	"github.com/sweeney/identity/internal/spec"
 )
 
 // maxBodyBytes caps the request body size the handlers will read. The
@@ -57,6 +58,21 @@ func NewRouter(d Deps) *Router {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"status":"ok","version":"`+jsonEscape(d.Version)+`"}`)
+	})
+
+	// OpenAPI spec — unauth, served as YAML or JSON.
+	mux.HandleFunc("GET /openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml")
+		_, _ = w.Write(spec.ConfigYAML)
+	})
+	mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, r *http.Request) {
+		data, err := spec.ConfigJSON()
+		if err != nil {
+			http.Error(w, "spec unavailable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
 	})
 
 	authed := func(h http.HandlerFunc) http.Handler {

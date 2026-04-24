@@ -425,6 +425,28 @@ func TestCreate_MalformedJSON_Returns400(t *testing.T) {
 	assert.Contains(t, string(body), "invalid_request")
 }
 
+// --- OpenAPI ---
+
+func TestOpenAPI_YAML_Unauth(t *testing.T) {
+	h := newHarness(t)
+	resp, body := h.do("GET", "/openapi.yaml", "", nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "yaml")
+	assert.Contains(t, string(body), "openapi:")
+	assert.Contains(t, string(body), "Config API")
+}
+
+func TestOpenAPI_JSON_Unauth(t *testing.T) {
+	h := newHarness(t)
+	resp, body := h.do("GET", "/openapi.json", "", nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "json")
+	var v map[string]any
+	require.NoError(t, json.Unmarshal(body, &v), "openapi.json must decode")
+	assert.Equal(t, "3.0.3", v["openapi"])
+	assert.Contains(t, v["info"].(map[string]any)["title"], "Config")
+}
+
 // Sanity: we don't leak a stack trace in errors.
 func TestErrors_NoInternalLeaks(t *testing.T) {
 	h := newHarness(t)
