@@ -38,7 +38,7 @@
     <form method="POST" action="/oauth/device" id="device-deny-form" style="margin-top:0.75rem">
         <input type="hidden" name="user_code" value="{{.UserCode}}">
         <input type="hidden" name="action" value="deny">
-        <button type="submit" class="btn-secondary">Deny this device</button>
+        <button type="submit" class="btn btn-secondary">Deny this device</button>
     </form>
     {{else if .Error}}
     <form method="GET" action="/oauth/device">
