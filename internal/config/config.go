@@ -114,10 +114,15 @@ func Load() (*Config, error) {
 		cfg.SiteName = "Identity"
 	}
 
-	// JWT_ISSUER: the "iss" claim in issued JWTs; defaults to SiteName
+	// JWT_ISSUER: the "iss" claim in issued JWTs; defaults to localhost URL in
+	// development so discovery metadata contains valid URLs.
 	cfg.JWTIssuer = os.Getenv("JWT_ISSUER")
 	if cfg.JWTIssuer == "" {
-		cfg.JWTIssuer = cfg.SiteName
+		if cfg.Env == EnvDevelopment {
+			cfg.JWTIssuer = fmt.Sprintf("http://localhost:%d", cfg.Port)
+		} else {
+			cfg.JWTIssuer = cfg.SiteName
+		}
 	}
 	if cfg.Env == EnvProduction && !strings.HasPrefix(cfg.JWTIssuer, "https://") {
 		errs = append(errs, fmt.Errorf("JWT_ISSUER must be an https:// URL in production (got %q); set JWT_ISSUER=https://yourdomain.com", cfg.JWTIssuer))
