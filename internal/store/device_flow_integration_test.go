@@ -279,6 +279,41 @@ func TestClaimCodeStore_Revoke(t *testing.T) {
 	assert.True(t, got.IsRevoked())
 }
 
+func TestClaimCodeStore_Delete(t *testing.T) {
+	database := openTestDB(t)
+	cs := store.NewOAuthClientStore(database)
+	ccs := store.NewClaimCodeStore(database)
+
+	client := newTestClient(t, cs, "claim-client-delete")
+	c := newClaimCode("cc-del", sha256hex("raw-del"), client.ID, "Garage")
+	require.NoError(t, ccs.Create(c))
+	require.NoError(t, ccs.Revoke("cc-del", time.Now().UTC()))
+
+	require.NoError(t, ccs.Delete("cc-del"))
+
+	_, err := ccs.GetByID("cc-del")
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestClaimCodeStore_Delete_NotRevoked(t *testing.T) {
+	database := openTestDB(t)
+	cs := store.NewOAuthClientStore(database)
+	ccs := store.NewClaimCodeStore(database)
+
+	client := newTestClient(t, cs, "claim-client-delete-active")
+	c := newClaimCode("cc-del-active", sha256hex("raw-del-active"), client.ID, "Front door")
+	require.NoError(t, ccs.Create(c))
+
+	err := ccs.Delete("cc-del-active")
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestClaimCodeStore_Delete_NotFound(t *testing.T) {
+	ccs := store.NewClaimCodeStore(openTestDB(t))
+	err := ccs.Delete("nonexistent")
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
 func TestClaimCodeStore_GetByHash_NotFound(t *testing.T) {
 	ccs := store.NewClaimCodeStore(openTestDB(t))
 	_, err := ccs.GetByHash("nope")

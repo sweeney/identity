@@ -83,6 +83,7 @@ func NewRouter(cfg Config, authSvc service.AuthServicer, userSvc service.UserSer
 		mux.Handle("GET /admin/oauth/{id}/claim-codes/new", h.requireSession(http.HandlerFunc(h.claimCodesNewGet)))
 		mux.Handle("POST /admin/oauth/{id}/claim-codes/new", h.requireSession(h.requireCSRF(http.HandlerFunc(h.claimCodesGenerate))))
 		mux.Handle("POST /admin/oauth/{id}/claim-codes/{claimID}/revoke", h.requireSession(h.requireCSRF(http.HandlerFunc(h.claimCodeRevoke))))
+		mux.Handle("POST /admin/oauth/{id}/claim-codes/{claimID}/delete", h.requireSession(h.requireCSRF(http.HandlerFunc(h.claimCodeDelete))))
 	}
 
 	// Passkeys

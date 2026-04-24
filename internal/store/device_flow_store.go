@@ -355,6 +355,21 @@ func (s *ClaimCodeStore) Revoke(id string, revokedAt time.Time) error {
 	return nil
 }
 
+func (s *ClaimCodeStore) Delete(id string) error {
+	res, err := s.db.DB().Exec(
+		`DELETE FROM oauth_claim_codes WHERE id = ? AND revoked_at IS NOT NULL`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("delete claim code: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func scanClaimCode(row *sql.Row) (*domain.ClaimCode, error) {
 	var c domain.ClaimCode
 	var boundUser sql.NullString

@@ -147,6 +147,19 @@ func (h *adminHandler) claimCodeRevoke(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/oauth/"+clientID+"/claim-codes", http.StatusSeeOther)
 }
 
+// claimCodeDelete permanently removes a revoked claim code.
+func (h *adminHandler) claimCodeDelete(w http.ResponseWriter, r *http.Request) {
+	clientID := r.PathValue("id")
+	claimID := r.PathValue("claimID")
+
+	ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
+	if err := h.deviceSvc.DeleteClaimCode(claimID, ip); err != nil && !errors.Is(err, service.ErrInvalidClaimCode) {
+		http.Error(w, "could not delete: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/admin/oauth/"+clientID+"/claim-codes", http.StatusSeeOther)
+}
+
 // verificationBaseURL returns the external scheme+host to put in claim-code
 // QR stickers. Derived from the TokenIssuer (which was pinned at startup) so
 // a spoofed Host header cannot poison the stickers.

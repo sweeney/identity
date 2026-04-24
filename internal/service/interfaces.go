@@ -66,4 +66,5 @@ type DeviceFlowServicer interface {
 	CreateClaimCodes(clientID string, labels []string, ip string) ([]*ClaimCodeResult, error)
 	ListClaimCodes(clientID string) ([]*domain.ClaimCode, error)
 	RevokeClaimCode(id, ip string) error
+	DeleteClaimCode(id, ip string) error
 }

@@ -114,6 +114,20 @@ func (mr *MockClaimCodeRepositoryMockRecorder) ListByClient(clientID any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByClient", reflect.TypeOf((*MockClaimCodeRepository)(nil).ListByClient), clientID)
 }
 
+// Delete mocks base method.
+func (m *MockClaimCodeRepository) Delete(id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Delete", id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Delete indicates an expected call of Delete.
+func (mr *MockClaimCodeRepositoryMockRecorder) Delete(id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockClaimCodeRepository)(nil).Delete), id)
+}
+
 // Revoke mocks base method.
 func (m *MockClaimCodeRepository) Revoke(id string, revokedAt time.Time) error {
 	m.ctrl.T.Helper()

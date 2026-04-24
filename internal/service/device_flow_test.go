@@ -518,6 +518,41 @@ func TestDeviceFlowService_RevokeClaimCode_NotFound(t *testing.T) {
 	assert.ErrorIs(t, err, service.ErrInvalidClaimCode)
 }
 
+// --- DeleteClaimCode ---
+
+func TestDeviceFlowService_DeleteClaimCode(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, _, _, claimCodes := newDeviceFlowService(t, ctrl)
+
+	now := time.Now().UTC()
+	cc := &domain.ClaimCode{ID: "cc-del", ClientID: "device-client", RevokedAt: &now}
+	claimCodes.EXPECT().GetByID("cc-del").Return(cc, nil)
+	claimCodes.EXPECT().Delete("cc-del").Return(nil)
+
+	require.NoError(t, svc.DeleteClaimCode("cc-del", "1.2.3.4"))
+}
+
+func TestDeviceFlowService_DeleteClaimCode_NotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, _, _, claimCodes := newDeviceFlowService(t, ctrl)
+
+	claimCodes.EXPECT().GetByID("missing").Return(nil, domain.ErrNotFound)
+
+	err := svc.DeleteClaimCode("missing", "1.2.3.4")
+	assert.ErrorIs(t, err, service.ErrInvalidClaimCode)
+}
+
+func TestDeviceFlowService_DeleteClaimCode_NotRevoked(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, _, _, claimCodes := newDeviceFlowService(t, ctrl)
+
+	cc := &domain.ClaimCode{ID: "cc-active", ClientID: "device-client"}
+	claimCodes.EXPECT().GetByID("cc-active").Return(cc, nil)
+
+	err := svc.DeleteClaimCode("cc-active", "1.2.3.4")
+	assert.ErrorIs(t, err, service.ErrInvalidClaimCode)
+}
+
 // --- LookupForVerification ---
 
 func TestDeviceFlowService_LookupForVerification_UserCode(t *testing.T) {

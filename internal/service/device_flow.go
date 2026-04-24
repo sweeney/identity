@@ -489,6 +489,33 @@ func (s *DeviceFlowService) RevokeClaimCode(id, ip string) error {
 	return nil
 }
 
+// DeleteClaimCode permanently removes a revoked claim code. Only revoked codes
+// may be deleted; attempting to delete an active or bound code returns
+// ErrInvalidClaimCode so callers can surface a clear error rather than
+// silently losing a live device binding.
+func (s *DeviceFlowService) DeleteClaimCode(id, ip string) error {
+	cc, err := s.claimCodes.GetByID(id)
+	if errors.Is(err, domain.ErrNotFound) {
+		return ErrInvalidClaimCode
+	}
+	if err != nil {
+		return fmt.Errorf("get claim code: %w", err)
+	}
+	if !cc.IsRevoked() {
+		return ErrInvalidClaimCode
+	}
+	if err := s.claimCodes.Delete(id); err != nil {
+		return fmt.Errorf("delete: %w", err)
+	}
+	s.record(&domain.AuthEvent{
+		EventType: domain.EventClaimCodeDeleted,
+		ClientID:  cc.ClientID,
+		IPAddress: ip,
+		Detail:    "claim_code_id=" + id,
+	})
+	return nil
+}
+
 // --- internal helpers ---
 
 type sessionHandle struct {

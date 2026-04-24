@@ -33,9 +33,14 @@
             <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
             <td>
                 {{if not .IsRevoked}}
-                <form method="POST" action="/admin/oauth/{{$.Client.ID}}/claim-codes/{{.ID}}/revoke" style="display:inline">
+                <form method="POST" action="/admin/oauth/{{$.Client.ID}}/claim-codes/{{.ID}}/revoke" style="display:inline" data-confirm="Revoke this claim code? The device will stop working.">
                     <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
-                    <button type="submit" class="btn-secondary btn-small" onclick="return confirm('Revoke this claim code? The device will stop working.');">Revoke</button>
+                    <button type="submit" class="btn-secondary btn-small">Revoke</button>
+                </form>
+                {{else}}
+                <form method="POST" action="/admin/oauth/{{$.Client.ID}}/claim-codes/{{.ID}}/delete" style="display:inline" data-confirm="Permanently delete this claim code?">
+                    <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                    <button type="submit" class="btn-danger btn-small">Delete</button>
                 </form>
                 {{end}}
             </td>

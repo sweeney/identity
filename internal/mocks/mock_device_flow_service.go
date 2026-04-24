@@ -172,3 +172,17 @@ func (mr *MockDeviceFlowServicerMockRecorder) RevokeClaimCode(id, ip any) *gomoc
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeClaimCode", reflect.TypeOf((*MockDeviceFlowServicer)(nil).RevokeClaimCode), id, ip)
 }
+
+// DeleteClaimCode mocks base method.
+func (m *MockDeviceFlowServicer) DeleteClaimCode(id, ip string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteClaimCode", id, ip)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteClaimCode indicates an expected call of DeleteClaimCode.
+func (mr *MockDeviceFlowServicerMockRecorder) DeleteClaimCode(id, ip any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteClaimCode", reflect.TypeOf((*MockDeviceFlowServicer)(nil).DeleteClaimCode), id, ip)
+}

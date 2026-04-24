@@ -69,6 +69,7 @@ const (
 	EventClaimCodeCreated        = "claim_code_created"
 	EventClaimCodeBound          = "claim_code_bound"
 	EventClaimCodeRevoked        = "claim_code_revoked"
+	EventClaimCodeDeleted        = "claim_code_deleted"
 )
 
 // DeviceAuthorizationRepository defines persistence operations for device
@@ -96,4 +97,5 @@ type ClaimCodeRepository interface {
 	ListByClient(clientID string) ([]*ClaimCode, error)
 	Bind(id, userID string, boundAt time.Time) error
 	Revoke(id string, revokedAt time.Time) error
+	Delete(id string) error
 }
