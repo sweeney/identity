@@ -39,7 +39,11 @@ func ServiceClaimsFromContext(ctx context.Context) *domain.ServiceTokenClaims {
 // RequireAuth is an HTTP middleware that validates the Bearer token in the
 // Authorization header and injects the claims into the request context.
 // Returns 401 if the token is missing or invalid, 403 if the user is inactive.
-func RequireAuth(issuer *TokenIssuer, next http.Handler) http.Handler {
+//
+// The first parameter accepts any TokenParser. Identity passes its
+// in-process *TokenIssuer; sibling services pass a *JWKSVerifier that
+// validates tokens against identity's published JWKS.
+func RequireAuth(parser TokenParser, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -56,7 +60,7 @@ func RequireAuth(issuer *TokenIssuer, next http.Handler) http.Handler {
 		}
 
 		// Try parsing as a service token first (has client_id claim)
-		svcClaims, svcErr := issuer.ParseServiceToken(parts[1])
+		svcClaims, svcErr := parser.ParseServiceToken(parts[1])
 		if svcErr == nil && svcClaims != nil {
 			ctx := context.WithValue(r.Context(), serviceClaimsContextKey, svcClaims)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -64,7 +68,7 @@ func RequireAuth(issuer *TokenIssuer, next http.Handler) http.Handler {
 		}
 
 		// Fall back to user token
-		claims, err := issuer.Parse(parts[1])
+		claims, err := parser.Parse(parts[1])
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")

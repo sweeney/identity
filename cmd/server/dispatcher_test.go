@@ -36,15 +36,12 @@ func TestDispatchConfigStubHelp(t *testing.T) {
 	}
 }
 
-// TestDispatchConfigServeStubErrors confirms that attempting to run the
-// config service in milestone 1 surfaces the explicit not-implemented
-// error. This test will be updated in milestone 3/4 when the service
-// becomes real; until then it guards against accidental activation.
-func TestDispatchConfigServeStubErrors(t *testing.T) {
-	err := dispatch([]string{"config"})
-	if assert.Error(t, err) {
-		assert.Contains(t, strings.ToLower(err.Error()), "not yet implemented")
-	}
+// TestDispatchUnknownConfigFlag surfaces errors on unknown config flags
+// (rather than silently falling through to start the server).
+func TestDispatchUnknownConfigFlag(t *testing.T) {
+	err := dispatch([]string{"config", "--not-a-real-flag"})
+	assert.Error(t, err)
+	assert.Contains(t, strings.ToLower(err.Error()), "unknown config flag")
 }
 
 // TestDispatchIdentityHelp ensures the identity subcommand's help form
