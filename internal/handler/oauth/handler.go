@@ -36,6 +36,7 @@ type oauthHandler struct {
 	svc         service.OAuthServicer
 	authSvc     service.AuthServicer
 	webauthnSvc service.WebAuthnServicer
+	deviceSvc   service.DeviceFlowServicer
 	tmpl        *tmplSet
 	trustProxy  string
 	tokenIssuer *auth.TokenIssuer
@@ -305,8 +306,10 @@ func (h *oauthHandler) token(w http.ResponseWriter, r *http.Request) {
 		h.tokenRefresh(w, r)
 	case "client_credentials":
 		h.tokenClientCredentials(w, r)
+	case service.GrantTypeDeviceCode:
+		h.tokenDeviceCode(w, r)
 	default:
-		oauthError(w, "unsupported_grant_type", "grant_type must be 'authorization_code', 'refresh_token', or 'client_credentials'")
+		oauthError(w, "unsupported_grant_type", "grant_type must be 'authorization_code', 'refresh_token', 'client_credentials', or '"+service.GrantTypeDeviceCode+"'")
 	}
 }
 
@@ -501,17 +504,24 @@ func (h *oauthHandler) discovery(w http.ResponseWriter, r *http.Request) {
 	// Use the configured issuer from the token issuer — never trust the Host header.
 	issuer := h.tokenIssuer.Issuer()
 
-	jsonOK(w, map[string]any{
+	grantTypes := []string{"authorization_code", "client_credentials", "refresh_token"}
+	meta := map[string]any{
 		"issuer":                                issuer,
 		"authorization_endpoint":                issuer + "/oauth/authorize",
 		"token_endpoint":                        issuer + "/oauth/token",
 		"introspection_endpoint":                issuer + "/oauth/introspect",
 		"jwks_uri":                              issuer + "/.well-known/jwks.json",
-		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token"},
 		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post", "none"},
 		"response_types_supported":              []string{"code"},
 		"code_challenge_methods_supported":      []string{"S256"},
-	})
+	}
+	if h.deviceSvc != nil {
+		grantTypes = append(grantTypes, service.GrantTypeDeviceCode)
+		meta["device_authorization_endpoint"] = issuer + "/oauth/device_authorization"
+	}
+	meta["grant_types_supported"] = grantTypes
+
+	jsonOK(w, meta)
 }
 
 type ccTokenResponseBody struct {

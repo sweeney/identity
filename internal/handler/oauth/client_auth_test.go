@@ -54,7 +54,7 @@ func TestClientCredentials_ValidBasicAuth(t *testing.T) {
 		Scope:       "read:users",
 	}, nil)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 
 	form := url.Values{"grant_type": {"client_credentials"}}
 	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
@@ -98,7 +98,7 @@ func TestClientCredentials_FormPost(t *testing.T) {
 		Scope:       "read:users",
 	}, nil)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 
 	form := url.Values{
 		"grant_type":    {"client_credentials"},
@@ -119,7 +119,7 @@ func TestClientCredentials_NoAuth(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := mocks.NewMockOAuthServicer(ctrl)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 
 	form := url.Values{"grant_type": {"client_credentials"}}
 	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
@@ -136,7 +136,7 @@ func TestClientCredentials_UnknownClient(t *testing.T) {
 
 	svc.EXPECT().GetClient("unknown").Return(nil, service.ErrUnknownClient)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 
 	form := url.Values{"grant_type": {"client_credentials"}}
 	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
@@ -162,7 +162,7 @@ func TestClientCredentials_BadSecret(t *testing.T) {
 
 	svc.EXPECT().GetClient("my-service").Return(client, nil)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 
 	form := url.Values{"grant_type": {"client_credentials"}}
 	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
@@ -190,7 +190,7 @@ func TestClientCredentials_WrongGrantType(t *testing.T) {
 	svc.EXPECT().GetClient("my-service").Return(client, nil)
 	svc.EXPECT().IssueClientCredentials(gomock.Any(), gomock.Eq(""), gomock.Any()).Return(nil, service.ErrUnauthorizedClient)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 
 	form := url.Values{"grant_type": {"client_credentials"}}
 	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
@@ -219,7 +219,7 @@ func TestClientCredentials_InvalidScope(t *testing.T) {
 	svc.EXPECT().GetClient("my-service").Return(client, nil)
 	svc.EXPECT().IssueClientCredentials(gomock.Any(), gomock.Eq("write:users"), gomock.Any()).Return(nil, service.ErrInvalidScope)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 
 	form := url.Values{"grant_type": {"client_credentials"}, "scope": {"write:users"}}
 	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
@@ -249,7 +249,7 @@ func TestClientCredentials_AuthMethodMismatch(t *testing.T) {
 
 	svc.EXPECT().GetClient("my-service").Return(client, nil)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 
 	form := url.Values{
 		"grant_type":    {"client_credentials"},
@@ -276,7 +276,7 @@ func TestClientCredentials_PublicClient_Rejected(t *testing.T) {
 
 	svc.EXPECT().GetClient("public-app").Return(client, nil)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 
 	form := url.Values{"grant_type": {"client_credentials"}}
 	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
@@ -313,7 +313,7 @@ func TestClientCredentials_SecretRotation(t *testing.T) {
 		Scope:       "read:users",
 	}, nil)
 
-	h := oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 
 	form := url.Values{"grant_type": {"client_credentials"}}
 	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
@@ -334,7 +334,7 @@ func TestDiscoveryEndpoint(t *testing.T) {
 	issuer, err := auth.NewTokenIssuer(key, nil, "https://id.example.com", 15*time.Minute)
 	require.NoError(t, err)
 
-	h := oauth.NewRouter(svc, "", issuer, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, nil, "", "")
 
 	req := httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)
 	req.Host = "evil.attacker.com" // Host header must be ignored
@@ -391,7 +391,7 @@ func TestIntrospect_ServiceToken_WrongClient_ReturnsInactive(t *testing.T) {
 	}
 	svc.EXPECT().GetClient("client-b").Return(clientB, nil)
 
-	h := oauth.NewRouter(svc, "", issuer, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, nil, "", "")
 
 	form := url.Values{"token": {serviceToken}}
 	req := httptest.NewRequest("POST", "/oauth/introspect", strings.NewReader(form.Encode()))
@@ -430,7 +430,7 @@ func TestIntrospect_ServiceToken_OwningClient_ReturnsActive(t *testing.T) {
 	}
 	svc.EXPECT().GetClient("client-a").Return(clientA, nil)
 
-	h := oauth.NewRouter(svc, "", issuer, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, nil, "", "")
 
 	form := url.Values{"token": {serviceToken}}
 	req := httptest.NewRequest("POST", "/oauth/introspect", strings.NewReader(form.Encode()))
@@ -469,7 +469,7 @@ func TestIntrospect_ServiceToken_IncludesAudClaim(t *testing.T) {
 	}
 	svc.EXPECT().GetClient("client-a").Return(clientA, nil)
 
-	h := oauth.NewRouter(svc, "", issuer, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, nil, "", "")
 
 	form := url.Values{"token": {serviceToken}}
 	req := httptest.NewRequest("POST", "/oauth/introspect", strings.NewReader(form.Encode()))

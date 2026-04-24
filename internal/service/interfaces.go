@@ -46,3 +46,24 @@ type OAuthServicer interface {
 	GetClient(clientID string) (*domain.OAuthClient, error)
 	IssueClientCredentials(client *domain.OAuthClient, requestedScope, ip string) (*ClientCredentialsResult, error)
 }
+
+// DeviceFlowServicer is the interface the OAuth handler and the admin handler
+// use for RFC 8628 device authorization and claim-code management.
+//
+//go:generate mockgen -destination=../mocks/mock_device_flow_service.go -package=mocks github.com/sweeney/identity/internal/service DeviceFlowServicer
+type DeviceFlowServicer interface {
+	// Device-facing
+	IssueDeviceAuthorization(clientID, scope, ip string) (*DeviceAuthorizationResult, error)
+	ClaimDevice(clientID, rawClaimCode, scope, ip string) (*DeviceAuthorizationResult, error)
+	PollForToken(clientID, rawDeviceCode, ip string) (*LoginResult, error)
+
+	// User-facing (verification page)
+	LookupForVerification(rawCode string) (*DeviceApprovalView, error)
+	Approve(rawCode, userID, username, ip string) error
+	Deny(rawCode, ip string) error
+
+	// Admin-facing
+	CreateClaimCodes(clientID string, labels []string, ip string) ([]*ClaimCodeResult, error)
+	ListClaimCodes(clientID string) ([]*domain.ClaimCode, error)
+	RevokeClaimCode(id, ip string) error
+}

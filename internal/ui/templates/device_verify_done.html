@@ -1,0 +1,15 @@
+{{define "title"}}Device authorization{{end}}
+{{define "content"}}
+<div class="login-box">
+    {{if .Approved}}
+    <h1>Device approved</h1>
+    <p>Your device is now signed in. You can close this page — it will connect automatically.</p>
+    {{else if .Denied}}
+    <h1>Device denied</h1>
+    <p>The device has been told to stop. If you didn't start this, consider rotating your password.</p>
+    {{else}}
+    <h1>Done</h1>
+    <p>You can close this page.</p>
+    {{end}}
+</div>
+{{end}}

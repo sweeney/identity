@@ -945,12 +945,15 @@ paths:
       tags: [oauth]
       summary: Token endpoint
       description: |
-        Supports three grant types:
+        Supports four grant types:
         - `authorization_code` — exchange an auth code + PKCE verifier for tokens
         - `refresh_token` — rotate a refresh token for a new token pair
         - `client_credentials` — service authenticates with client_id + client_secret, receives an access token (no refresh token)
+        - `urn:ietf:params:oauth:grant-type:device_code` — RFC 8628 device flow poll. The device polls with its device_code from `/oauth/device_authorization` or `/oauth/device/claim` and receives tokens once a user has approved.
 
         For `client_credentials`, authenticate via `Authorization: Basic base64(client_id:client_secret)` or form body.
+
+        Device flow poll responses reuse the RFC 6749 error envelope with codes `authorization_pending`, `slow_down`, `access_denied`, `expired_token`, or `invalid_grant`.
       requestBody:
         required: true
         content:
@@ -961,10 +964,14 @@ paths:
               properties:
                 grant_type:
                   type: string
-                  enum: [authorization_code, refresh_token, client_credentials]
+                  enum:
+                    - authorization_code
+                    - refresh_token
+                    - client_credentials
+                    - "urn:ietf:params:oauth:grant-type:device_code"
                 scope:
                   type: string
-                  description: Space-delimited scopes (client_credentials only)
+                  description: Space-delimited scopes (client_credentials, device_code)
                 client_id:
                   type: string
                 client_secret:
@@ -977,6 +984,9 @@ paths:
                   type: string
                 refresh_token:
                   type: string
+                device_code:
+                  type: string
+                  description: Opaque device code from /oauth/device_authorization (device flow only)
       responses:
         "200":
           description: Token(s) issued
@@ -1001,6 +1011,157 @@ paths:
           description: Invalid request, unsupported grant type, invalid scope, or unauthorized client
         "401":
           description: Invalid client credentials
+
+  /oauth/device_authorization:
+    post:
+      operationId: deviceAuthorization
+      tags: [oauth]
+      summary: Device authorization grant (RFC 8628)
+      description: |
+        Headless devices call this to begin a device flow. The device shows
+        the returned `user_code` and `verification_uri` to the user, then polls
+        `/oauth/token` with the `device_code` until the user approves.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [client_id]
+              properties:
+                client_id:
+                  type: string
+                scope:
+                  type: string
+                  description: Space-delimited scopes
+      responses:
+        "200":
+          description: Device authorization issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device_code, user_code, verification_uri, expires_in, interval]
+                properties:
+                  device_code:
+                    type: string
+                    description: Opaque polling secret — show only to the device
+                  user_code:
+                    type: string
+                    example: "ABCD-EFGH"
+                  verification_uri:
+                    type: string
+                    format: uri
+                  verification_uri_complete:
+                    type: string
+                    format: uri
+                    description: verification_uri with user_code pre-filled
+                  expires_in:
+                    type: integer
+                    example: 600
+                  interval:
+                    type: integer
+                    description: Minimum seconds between token-endpoint polls
+                    example: 5
+        "400":
+          description: Invalid request, unknown client, or unauthorized client
+
+  /oauth/device/claim:
+    post:
+      operationId: deviceClaim
+      tags: [oauth]
+      summary: Device flow claim-code exchange (screenless devices)
+      description: |
+        A device with a pre-shared claim code (printed on its sticker) exchanges
+        the claim code for a device_code it can poll with. If the claim code is
+        already bound to a user the session is auto-approved on the first poll —
+        no user interaction is needed on that boot.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [client_id, claim_code]
+              properties:
+                client_id:
+                  type: string
+                claim_code:
+                  type: string
+                scope:
+                  type: string
+      responses:
+        "200":
+          description: Device session created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device_code, verification_uri, expires_in, interval]
+                properties:
+                  device_code:
+                    type: string
+                  user_code:
+                    type: string
+                  claim_code:
+                    type: string
+                  verification_uri:
+                    type: string
+                  verification_uri_complete:
+                    type: string
+                  expires_in:
+                    type: integer
+                  interval:
+                    type: integer
+        "400":
+          description: Unknown or revoked claim code, unknown client, or unauthorized client
+
+  /oauth/device:
+    get:
+      operationId: deviceVerifyGet
+      tags: [oauth]
+      summary: Device verification page (HTML)
+      description: |
+        Server-rendered verification page. A user lands here from the device's
+        displayed verification_uri (or by scanning a claim-code QR sticker). The
+        `user_code` query param (or `code` for claim-code sessions) is pre-filled.
+      parameters:
+        - in: query
+          name: user_code
+          schema: { type: string }
+        - in: query
+          name: code
+          schema: { type: string }
+      responses:
+        "200":
+          description: HTML verification/approval page
+    post:
+      operationId: deviceVerifyPost
+      tags: [oauth]
+      summary: Device approval submission
+      description: |
+        User submits credentials and action. `action=approve` authenticates and
+        approves the session. `action=deny` rejects. Returns an HTML result page.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [user_code, action]
+              properties:
+                user_code:
+                  type: string
+                username:
+                  type: string
+                password:
+                  type: string
+                action:
+                  type: string
+                  enum: [approve, deny]
+      responses:
+        "200":
+          description: HTML confirmation page
 
   /oauth/introspect:
     post:

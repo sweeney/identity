@@ -1,0 +1,19 @@
+{{define "title"}}Generate claim codes — {{.Client.Name}}{{end}}
+{{define "content"}}
+<h1>Generate claim codes</h1>
+<p><small>For OAuth client <strong>{{.Client.Name}}</strong> (<code>{{.Client.ID}}</code>).</small></p>
+{{if .Error}}<p class="flash-error">{{.Error}}</p>{{end}}
+
+<p>One label per line — each line produces a fresh claim code. Labels help you identify which sticker goes on which device (e.g. <em>Kitchen sensor</em>, <em>Living room</em>).</p>
+<p><strong>You will see the raw codes exactly once</strong>, immediately after generation. Print the stickers before closing the page.</p>
+
+<form method="POST" action="/admin/oauth/{{.Client.ID}}/claim-codes/new">
+    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+    <label>
+        Labels (one per line, max 50)
+        <textarea name="labels" rows="8" cols="40" autofocus placeholder="Kitchen sensor&#10;Living room&#10;Garage"></textarea>
+    </label>
+    <button type="submit">Generate</button>
+    <a href="/admin/oauth/{{.Client.ID}}/claim-codes" class="btn-secondary">Cancel</a>
+</form>
+{{end}}

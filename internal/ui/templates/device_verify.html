@@ -1,0 +1,53 @@
+{{define "title"}}Authorize device{{end}}
+{{define "content"}}
+<div class="login-box">
+    <h1>Authorize device</h1>
+    {{if .Error}}<p class="flash-error">{{.Error}}</p>{{end}}
+    {{if not .UserCode}}
+    <p><small>Enter the code shown on your device to continue.</small></p>
+    <form method="GET" action="/oauth/device" id="code-form">
+        <label>
+            Device code
+            <input type="text" name="user_code" autofocus required autocapitalize="characters" autocorrect="off" spellcheck="false" pattern="[-A-Za-z0-9]+">
+        </label>
+        <button type="submit">Continue</button>
+    </form>
+    {{else if and .Found (not .Error)}}
+    <p>
+      {{if .ClaimLabel}}
+      <strong>{{.ClaimLabel}}</strong> ({{.ClientName}}) is asking to sign in as you.
+      {{else}}
+      A device using <strong>{{.ClientName}}</strong> is asking to sign in as you.
+      {{end}}
+    </p>
+    {{if .Scope}}<p><small>Requested scope: <code>{{.Scope}}</code></small></p>{{end}}
+    <p><small>Only continue if you started this on your own device.</small></p>
+    <form method="POST" action="/oauth/device" id="device-approve-form">
+        <input type="hidden" name="user_code" value="{{.UserCode}}">
+        <input type="hidden" name="action" value="approve">
+        <label>
+            Username
+            <input type="text" name="username" required autocapitalize="none" autocorrect="off" spellcheck="false">
+        </label>
+        <label>
+            Password
+            <input type="password" name="password" required autocomplete="current-password">
+        </label>
+        <button type="submit">Approve</button>
+    </form>
+    <form method="POST" action="/oauth/device" id="device-deny-form" style="margin-top:0.75rem">
+        <input type="hidden" name="user_code" value="{{.UserCode}}">
+        <input type="hidden" name="action" value="deny">
+        <button type="submit" class="btn-secondary">Deny this device</button>
+    </form>
+    {{else if .Error}}
+    <form method="GET" action="/oauth/device">
+        <label>
+            Device code
+            <input type="text" name="user_code" value="{{.UserCode}}" autofocus required autocapitalize="characters">
+        </label>
+        <button type="submit">Try again</button>
+    </form>
+    {{end}}
+</div>
+{{end}}

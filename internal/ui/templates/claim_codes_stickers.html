@@ -1,0 +1,58 @@
+{{define "title"}}Print stickers — {{.Client.Name}}{{end}}
+{{define "content"}}
+<div class="no-print">
+<h1>Print these stickers now</h1>
+<p class="flash-success">Claim codes generated. These codes are <strong>shown only once</strong> — only their hashes are stored on the server.</p>
+<p>
+    <button onclick="window.print()">Print stickers</button>
+    <a href="/admin/oauth/{{.Client.ID}}/claim-codes" class="btn-secondary">Done</a>
+</p>
+<p><small>Each sticker shows a QR code that links straight to the verification page with the claim code pre-filled. Stick one on each device before deploying.</small></p>
+</div>
+
+<div class="sticker-sheet">
+{{range .Stickers}}
+<div class="sticker">
+    <div class="sticker-qr">{{.QR}}</div>
+    <div class="sticker-body">
+        <div class="sticker-label">{{.Label}}</div>
+        <div class="sticker-code"><code>{{.RawCode}}</code></div>
+    </div>
+</div>
+{{end}}
+</div>
+
+<style>
+.sticker-sheet {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 1rem;
+}
+.sticker {
+    border: 1px dashed #999;
+    padding: 8px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    page-break-inside: avoid;
+}
+.sticker-qr svg {
+    display: block;
+}
+.sticker-label {
+    font-weight: 600;
+    font-size: 12px;
+}
+.sticker-code code {
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    word-break: break-all;
+}
+@media print {
+    .no-print { display: none !important; }
+    nav, .flash-success, .flash-error { display: none !important; }
+    .sticker { border: 1px solid #000; }
+}
+</style>
+{{end}}

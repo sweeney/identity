@@ -14,7 +14,7 @@ GET /openapi.yaml   # OpenAPI 3.0 spec as YAML
 ```
 
 Human-readable guides are in `docs/`:
-- `docs/api.md` — integration guide with Swift/Kotlin examples and error reference
+- `docs/api.md` — integration guide with Swift/Kotlin examples and error reference. The Device Authorization Grant section ([#device-authorization-flow-rfc-8628--firmware-guide](docs/api.md#device-authorization-flow-rfc-8628--firmware-guide)) is the canonical **firmware guide** for ESP32 / Arduino / IoT developers and AI coding agents building devices.
 - `docs/api-walkthrough.md` — executable walkthrough showing every endpoint with real output
 - `docs/auth-flows.md` — ASCII art diagrams of all auth flows
 - `docs/passkeys.md` — passkey/WebAuthn setup, API reference, and integration guide

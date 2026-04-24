@@ -175,12 +175,12 @@ func TestConfig_Production_JWTIssuer_HTTPSIsValid(t *testing.T) {
 	assert.Equal(t, "https://id.example.com", cfg.JWTIssuer)
 }
 
-func TestConfig_Development_JWTIssuer_NoHTTPSRequired(t *testing.T) {
+func TestConfig_Development_JWTIssuer_DefaultsToLocalhost(t *testing.T) {
 	t.Setenv("IDENTITY_ENV", "development")
-	// JWT_ISSUER not set — defaults to SiteName ("Identity")
+	// JWT_ISSUER not set — defaults to http://localhost:{Port} so discovery metadata has valid URLs
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	assert.Equal(t, "Identity", cfg.JWTIssuer)
+	assert.Equal(t, "http://localhost:8181", cfg.JWTIssuer)
 }
 

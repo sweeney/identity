@@ -40,7 +40,7 @@ func TestDiscovery_UsesConfiguredIssuer_NotHostHeader(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := mocks.NewMockOAuthServicer(ctrl)
 	issuer := newSecurityTestIssuer(t, "https://id.example.com")
-	h := oauth.NewRouter(svc, "", issuer, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, nil, "", "")
 
 	req := httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)
 	req.Host = "evil.attacker.com" // must be ignored
@@ -78,7 +78,7 @@ func TestAuthorizePasskey_ServiceToken_Rejected(t *testing.T) {
 	}, 15*time.Minute)
 	require.NoError(t, err)
 
-	h := oauth.NewRouter(svc, "", issuer, nil, nil, "", "")
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, nil, "", "")
 
 	form := url.Values{
 		"access_token":   {serviceToken},

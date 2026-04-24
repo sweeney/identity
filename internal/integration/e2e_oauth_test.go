@@ -68,10 +68,10 @@ func setupE2EServer(t *testing.T) (http.Handler, *db.Database) {
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/", apihandler.NewRouter(issuer, authSvc, userSvc, nil, ""))
-	mux.Handle("/oauth/", oauthhandler.NewRouter(oauthSvc, "", issuer, authSvc, nil, e2eJWTSecret, "Test"))
+	mux.Handle("/oauth/", oauthhandler.NewRouter(oauthSvc, "", issuer, authSvc, nil, nil, e2eJWTSecret, "Test"))
 	mux.Handle("/admin/", admin.NewRouter(admin.Config{
 		SessionSecret: e2eJWTSecret,
-	}, authSvc, userSvc, oauthClientStore, auditStore, backupMgr, issuer, nil))
+	}, authSvc, userSvc, oauthClientStore, auditStore, backupMgr, issuer, nil, nil))
 
 	return mux, database
 }
