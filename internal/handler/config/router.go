@@ -19,6 +19,7 @@ import (
 	"net/http"
 
 	"github.com/sweeney/identity/internal/auth"
+	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/spec"
 )
@@ -54,11 +55,16 @@ func NewRouter(d Deps) *Router {
 	mux := http.NewServeMux()
 
 	// Unauth health check so systemd and load balancers can probe the
-	// process without a token.
+	// process without a token. The body is deliberately minimal — exposing
+	// a build version here would turn every exposed endpoint into a
+	// vulnerability fingerprint for scanners. The version is still
+	// surfaced internally via logs at startup (see runConfigServer) and
+	// via the /openapi.json spec version.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"status":"ok","version":"`+jsonEscape(d.Version)+`"}`)
+		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	})
+	_ = d.Version // kept in Deps for parity with identity; not echoed at /healthz
 
 	// OpenAPI spec — unauth, served as YAML or JSON.
 	mux.HandleFunc("GET /openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
@@ -89,13 +95,22 @@ func NewRouter(d Deps) *Router {
 	return &Router{mux: mux}
 }
 
-// requireUserToken rejects requests that authed with a service token.
-// Config endpoints are user-only for v1 (admin users for writes; users
-// for reads of user-role namespaces).
+// requireUserToken rejects requests that authed with a service token AND
+// requests whose user token carries an unrecognised role claim. Config
+// endpoints are user-only for v1 (admin users for writes; users for
+// reads of user-role namespaces). The role whitelist is defence-in-depth:
+// today roleAllows silently denies unknown roles, but an attacker-shaped
+// role string flowing into policy is a bug surface we can close cheaply.
 func requireUserToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if auth.ClaimsFromContext(r.Context()) == nil {
+		c := auth.ClaimsFromContext(r.Context())
+		if c == nil {
 			writeErr(w, http.StatusForbidden, "forbidden", "user token required")
+			return
+		}
+		role := string(c.Role)
+		if role != domain.ConfigRoleAdmin && role != domain.ConfigRoleUser {
+			writeErr(w, http.StatusForbidden, "forbidden", "unrecognised role in token")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -103,8 +118,8 @@ func requireUserToken(next http.Handler) http.Handler {
 }
 
 // callerFromRequest extracts the config service Caller from the request
-// context. RequireAuth guarantees ClaimsFromContext is non-nil by this
-// point.
+// context. RequireAuth + requireUserToken guarantee the claims are
+// non-nil and carry a whitelisted role by the time this runs.
 func callerFromRequest(r *http.Request) service.Caller {
 	c := auth.ClaimsFromContext(r.Context())
 	return service.Caller{Sub: c.UserID, Role: string(c.Role)}
@@ -174,14 +189,12 @@ func putHandler(svc *service.ConfigService) http.HandlerFunc {
 			translateError(w, err)
 			return
 		}
-		resp := map[string]any{"name": ns, "changed": changed}
-		status := http.StatusOK
-		if !changed {
-			// 200 either way — callers that care about change detection
-			// read resp.changed. Keeping status 200 simplifies scripting.
-			status = http.StatusOK
-		}
-		writeJSON(w, status, resp)
+		// 200 either way — callers that care about change detection read
+		// resp.changed. A single status simplifies scripting.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"name":    ns,
+			"changed": changed,
+		})
 	}
 }
 
@@ -310,17 +323,6 @@ func translateError(w http.ResponseWriter, err error) {
 	default:
 		writeErr(w, http.StatusInternalServerError, "internal_error", "internal error")
 	}
-}
-
-// jsonEscape minimally escapes a string for embedding in a static JSON
-// literal (used only by /healthz to avoid a json.Encode allocation).
-func jsonEscape(s string) string {
-	b, _ := json.Marshal(s)
-	// marshaled string includes quotes; strip them
-	if len(b) >= 2 {
-		return string(b[1 : len(b)-1])
-	}
-	return s
 }
 
 // Compile-time assertion that Router implements http.Handler.

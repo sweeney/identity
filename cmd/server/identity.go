@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -486,10 +487,21 @@ func isAllowedOrigin(origin string, allowed map[string]bool, devMode bool) bool 
 	if allowed[origin] {
 		return true
 	}
-	if allowed["http://localhost"] && strings.HasPrefix(origin, "http://localhost:") {
+	// HasPrefix-on-string checks are unsafe for host matching because
+	// "http://localhost.attacker.example" would match. Parse the origin
+	// and compare host explicitly.
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	isLocalhostHost := u.Host == "localhost" || strings.HasPrefix(u.Host, "localhost:")
+	if !isLocalhostHost {
+		return false
+	}
+	if allowed["http://localhost"] {
 		return true
 	}
-	if devMode && len(allowed) == 0 && strings.HasPrefix(origin, "http://localhost") {
+	if devMode && len(allowed) == 0 {
 		return true
 	}
 	return false

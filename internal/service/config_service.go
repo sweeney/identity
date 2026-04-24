@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"time"
 
@@ -15,6 +16,13 @@ import (
 // limit applies after JSON re-encoding so a tidy 63KB document with
 // insignificant whitespace will not be rejected for 65KB of spaces.
 const MaxConfigDocumentBytes = 64 * 1024
+
+// MaxConfigDocumentDepth caps JSON nesting depth to prevent stack-exhaustion
+// DOS via pathological payloads like `{"a":{"a":{...}}}`. A byte budget
+// alone is not enough: 128KB of braces fits tens of thousands of nesting
+// levels, which can crash the runtime or burn significant CPU on recovery.
+// 64 is generous for any plausible homelab config shape.
+const MaxConfigDocumentDepth = 64
 
 // configNameRE defines the namespace name grammar: lowercase letters,
 // digits, underscore, hyphen — 1..64 characters. Kept strict so names map
@@ -54,7 +62,10 @@ func (s *ConfigService) ListVisible(caller Caller) ([]domain.ConfigNamespaceSumm
 	if err != nil {
 		return nil, err
 	}
-	visible := all[:0]
+	// Copy into a fresh slice rather than aliasing `all`'s backing array —
+	// so nothing downstream accidentally relies on the repo returning a
+	// fresh slice on every call.
+	visible := make([]domain.ConfigNamespaceSummary, 0, len(all))
 	for _, ns := range all {
 		if roleAllows(ns.ReadRole, caller.Role) {
 			visible = append(visible, ns)
@@ -66,19 +77,33 @@ func (s *ConfigService) ListVisible(caller Caller) ([]domain.ConfigNamespaceSumm
 // Get returns the full namespace if caller has read access. Returns
 // ErrConfigNamespaceNotFound both when the namespace is missing and when
 // the caller lacks the read role, so namespace existence is not leaked.
+//
+// The role check is done against a tiny ACL-only projection first, so the
+// "missing" and "forbidden" code paths perform the same work (fast PK
+// lookup; no document read). Only after a successful role check do we
+// fetch the full row.
 func (s *ConfigService) Get(caller Caller, name string) (*domain.ConfigNamespace, error) {
 	if !configNameRE.MatchString(name) {
 		return nil, ErrConfigInvalidName
 	}
-	ns, err := s.repo.Get(name)
+	readRole, _, err := s.repo.GetACL(name)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, ErrConfigNamespaceNotFound
 		}
 		return nil, err
 	}
-	if !roleAllows(ns.ReadRole, caller.Role) {
+	if !roleAllows(readRole, caller.Role) {
 		return nil, ErrConfigNamespaceNotFound
+	}
+	ns, err := s.repo.Get(name)
+	if err != nil {
+		// TOCTOU: the namespace could have been deleted between GetACL and
+		// Get. Translate to 404 as if it had never been there.
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, ErrConfigNamespaceNotFound
+		}
+		return nil, err
 	}
 	return ns, nil
 }
@@ -100,6 +125,9 @@ func (s *ConfigService) CreateNamespace(caller Caller, in CreateNamespaceInput) 
 		return nil, ErrConfigInvalidName
 	}
 	if !domain.IsValidConfigRole(in.ReadRole) || !domain.IsValidConfigRole(in.WriteRole) {
+		return nil, ErrConfigInvalidRole
+	}
+	if !writersAreReaders(in.ReadRole, in.WriteRole) {
 		return nil, ErrConfigInvalidRole
 	}
 	normalizedDoc, err := validateDocument(in.Document)
@@ -142,6 +170,29 @@ func (s *ConfigService) PutDocument(caller Caller, name string, document []byte)
 		return false, err
 	}
 
+	// ACL-only projection first so the "forbidden" and "not found" paths
+	// perform the same amount of work.
+	readRole, writeRole, err := s.repo.GetACL(name)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return false, ErrConfigNamespaceNotFound
+		}
+		return false, err
+	}
+	if !roleAllows(writeRole, caller.Role) {
+		// Callers who can neither read nor write get 404 (no existence
+		// leak). The ACL invariant (writers-are-readers) means anyone who
+		// satisfies write_role also satisfies read_role, so "can write but
+		// not read" is an unreachable state.
+		if !roleAllows(readRole, caller.Role) {
+			return false, ErrConfigNamespaceNotFound
+		}
+		return false, ErrConfigForbidden
+	}
+
+	// Caller is allowed — fetch the existing document for the byte-equal
+	// no-op check. Safe vs. read-oracle: the ACL invariant guarantees a
+	// writer can already read the document.
 	existing, err := s.repo.Get(name)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -149,17 +200,6 @@ func (s *ConfigService) PutDocument(caller Caller, name string, document []byte)
 		}
 		return false, err
 	}
-	if !roleAllows(existing.WriteRole, caller.Role) {
-		// No-existence leak: 404-style for readers, but writers who can
-		// read get ErrConfigForbidden. We expose the ns when the caller
-		// can read it (to avoid "invisible writes"); otherwise pretend it
-		// does not exist.
-		if !roleAllows(existing.ReadRole, caller.Role) {
-			return false, ErrConfigNamespaceNotFound
-		}
-		return false, ErrConfigForbidden
-	}
-
 	if bytes.Equal(existing.Document, normalizedDoc) {
 		return false, nil
 	}
@@ -174,7 +214,10 @@ func (s *ConfigService) PutDocument(caller Caller, name string, document []byte)
 	return true, nil
 }
 
-// UpdateACL changes a namespace's read/write roles. Admin-only.
+// UpdateACL changes a namespace's read/write roles. Admin-only. The
+// caller's Sub is recorded as updated_by so the audit trail for ACL
+// changes reflects the admin who made them (not whoever last wrote the
+// document body).
 func (s *ConfigService) UpdateACL(caller Caller, name, readRole, writeRole string) error {
 	if caller.Role != domain.ConfigRoleAdmin {
 		return ErrConfigForbidden
@@ -185,7 +228,10 @@ func (s *ConfigService) UpdateACL(caller Caller, name, readRole, writeRole strin
 	if !domain.IsValidConfigRole(readRole) || !domain.IsValidConfigRole(writeRole) {
 		return ErrConfigInvalidRole
 	}
-	if err := s.repo.UpdateACL(name, readRole, writeRole, s.now()); err != nil {
+	if !writersAreReaders(readRole, writeRole) {
+		return ErrConfigInvalidRole
+	}
+	if err := s.repo.UpdateACL(name, readRole, writeRole, caller.Sub, s.now()); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return ErrConfigNamespaceNotFound
 		}
@@ -223,30 +269,62 @@ func (s *ConfigService) fireBackup() {
 }
 
 // validateDocument verifies the input is a non-empty JSON object and
-// returns a normalized (compact) serialization used for storage. Returns
-// ErrConfigInvalidDocument if the input is not an object and
-// ErrConfigDocumentTooLarge if the normalized bytes exceed the limit.
+// returns a normalized serialization used for storage. json.Unmarshal
+// rejects trailing garbage and non-object inputs natively, so a single
+// Unmarshal + Marshal pair is enough.
+//
+// NOTE: the wrapped error here contains raw json-decoder output that may
+// quote fragments of the attacker-controlled input. It is suitable for
+// logs only — callers MUST NOT echo err.Error() to clients. router.go's
+// translateError maps this sentinel to a static message for that reason.
 func validateDocument(doc []byte) ([]byte, error) {
 	if len(doc) == 0 {
 		return nil, ErrConfigInvalidDocument
 	}
+	if err := enforceJSONDepth(doc, MaxConfigDocumentDepth); err != nil {
+		return nil, err
+	}
 	var raw map[string]json.RawMessage
-	dec := json.NewDecoder(bytes.NewReader(doc))
-	dec.DisallowUnknownFields() // no effect for map target but preserves strictness posture
-	if err := dec.Decode(&raw); err != nil {
+	if err := json.Unmarshal(doc, &raw); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConfigInvalidDocument, err)
 	}
-	if dec.More() {
-		return nil, ErrConfigInvalidDocument
-	}
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, doc); err != nil {
+	out, err := json.Marshal(raw)
+	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConfigInvalidDocument, err)
 	}
-	if buf.Len() > MaxConfigDocumentBytes {
+	if len(out) > MaxConfigDocumentBytes {
 		return nil, ErrConfigDocumentTooLarge
 	}
-	return buf.Bytes(), nil
+	return out, nil
+}
+
+// enforceJSONDepth scans doc with a streaming decoder and rejects inputs
+// that nest object/array delimiters beyond maxDepth. It runs before full
+// Unmarshal so a pathological payload can never reach the recursive
+// encoder/json parser that would blow the goroutine stack.
+func enforceJSONDepth(doc []byte, maxDepth int) error {
+	dec := json.NewDecoder(bytes.NewReader(doc))
+	depth := 0
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrConfigInvalidDocument, err)
+		}
+		if delim, ok := tok.(json.Delim); ok {
+			switch delim {
+			case '{', '[':
+				depth++
+				if depth > maxDepth {
+					return ErrConfigInvalidDocument
+				}
+			case '}', ']':
+				depth--
+			}
+		}
+	}
 }
 
 // roleAllows reports whether a token holder with callerRole satisfies the
@@ -260,4 +338,18 @@ func roleAllows(required, callerRole string) bool {
 		return true
 	}
 	return false
+}
+
+// writersAreReaders enforces the ACL invariant that every role which
+// satisfies write_role must also satisfy read_role. Combined with
+// roleAllows, this prevents a PUT with byte-equality comparison from
+// becoming a read oracle for the stored document.
+//
+//	write_role=admin  → only admins can write; admins can read any role → always OK
+//	write_role=user   → users can also write; users can read only when read_role=user
+func writersAreReaders(readRole, writeRole string) bool {
+	if writeRole == domain.ConfigRoleAdmin {
+		return true
+	}
+	return readRole == domain.ConfigRoleUser
 }

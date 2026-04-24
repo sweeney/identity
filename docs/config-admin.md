@@ -197,6 +197,55 @@ No restart needed. Throttling prevents a bad-token storm from stampeding
 identity; observed fetch rate is bounded by `RefetchMinInterval`
 (default 10s).
 
+### Revocation lag
+
+Config validates tokens statelessly (signature + `exp` + `iss`) against
+identity's public JWKS. That means **disabling a user on identity, or
+logging them out of all devices, does not immediately revoke their
+access on config**. An already-issued access token stays valid until
+its `exp` — up to **15 minutes** (identity's default access-token TTL).
+
+Implications:
+
+- Firing an admin on identity means they retain config write access for
+  up to 15 min.
+- A session-compromise detection on identity
+  (`token_family_compromised`) clears tokens on identity but not on
+  config.
+- There is no introspection / blacklist path exposed to config.
+
+This is the fundamental tradeoff of JWKS-based auth (fast, stateless,
+no coupling — at the cost of delayed revocation). Mitigations if you
+need tighter revocation:
+
+- **Shorten identity's access token TTL.** 5 min is reasonable for
+  high-security deployments. Refresh rotation already runs on every use.
+- **Route config mutations through an introspection round-trip.**
+  Identity's `POST /oauth/introspect` can answer "is this token still
+  live?" against its own token table. Adds a hop to every write but
+  keeps reads fast via JWKS.
+- **Rotate identity's JWT key immediately after disabling a principal.**
+  Forces the verifier to refetch JWKS and invalidates *every* token
+  signed by the old key — blunt but effective.
+
+For a homelab, the default 15-min window is usually fine.
+
+### Cross-service token replay
+
+Identity currently issues user tokens with no `aud` claim. Any such
+token is therefore valid on every service that trusts identity's JWKS —
+config, plus any future sibling. If that matters for your deployment:
+
+1. Set `REQUIRED_AUDIENCE=config` in config's env file. The verifier
+   will then reject any token whose `aud` claim does not include
+   `config`.
+2. Have identity stamp `aud: "config"` (or a space-delimited list
+   including it) on tokens intended for config use.
+
+Both sides must be in lockstep: leaving config flagged on while
+identity doesn't emit `aud` will reject every request. The feature is
+off by default to keep the v1 JWT shape compatible.
+
 ## Configuration reference
 
 Environment variables for the config service (systemd env file typically

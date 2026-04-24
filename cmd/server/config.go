@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -108,7 +109,7 @@ func runConfigServer() error {
 			Env:         string(cfg.Env),
 			ServiceName: "config",
 			MinInterval: cfg.BackupMinInterval,
-		}, uploader, nil)
+		}, uploader, stdoutAudit{})
 		backupMgr = mgr
 	} else {
 		log.Println("warning: R2 backup not configured — config backups disabled")
@@ -117,15 +118,21 @@ func runConfigServer() error {
 
 	// JWKS verifier points at the identity service.
 	verifier, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
-		IssuerURL: cfg.IdentityIssuerURL,
-		Issuer:    cfg.IdentityIssuer,
-		CacheTTL:  cfg.JWKSCacheTTL,
+		IssuerURL:        cfg.IdentityIssuerURL,
+		Issuer:           cfg.IdentityIssuer,
+		CacheTTL:         cfg.JWKSCacheTTL,
+		RequiredAudience: cfg.RequiredAudience,
 	})
 	if err != nil {
 		return fmt.Errorf("jwks verifier: %w", err)
 	}
-	log.Printf("config: verifying tokens via JWKS at %s/.well-known/jwks.json (expected iss=%s)",
-		cfg.IdentityIssuerURL, cfg.IdentityIssuer)
+	if cfg.RequiredAudience == "" {
+		log.Printf("config: verifying tokens via JWKS at %s/.well-known/jwks.json (expected iss=%s)",
+			cfg.IdentityIssuerURL, cfg.IdentityIssuer)
+	} else {
+		log.Printf("config: verifying tokens via JWKS at %s/.well-known/jwks.json (expected iss=%s, aud=%s)",
+			cfg.IdentityIssuerURL, cfg.IdentityIssuer, cfg.RequiredAudience)
+	}
 
 	svc := service.NewConfigService(repo, backupMgr)
 
@@ -150,7 +157,11 @@ func runConfigServer() error {
 	}
 	var handler http.Handler = router
 	if !cfg.RateLimitDisabled {
-		limiter := ratelimit.NewLimiter(30.0/60.0, 10, cfg.TrustProxy)
+		// 5 rps (300/min) with burst 20. Chosen higher than identity's 30/min
+		// because the primary callers are sibling homelab services that read
+		// config on boot — a ~8-service parallel power-on burst must not
+		// throttle legitimate reads.
+		limiter := ratelimit.NewLimiter(5.0, 20, cfg.TrustProxy)
 		handler = limiter.Middleware(router)
 		log.Println("rate limiting enabled")
 	} else {
@@ -173,20 +184,80 @@ func runConfigServer() error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
+	// Send listen errors into a channel so we can run the graceful-shutdown
+	// path even when ListenAndServe fails (port in use, bind permission
+	// denied, etc.) — log.Fatalf would have skipped cancel()+srv.Shutdown
+	// and dropped any in-flight backup upload.
+	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("config: listening on :%d [%s]", cfg.Port, cfg.Env)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server error: %v", err)
+			errCh <- err
 		}
 	}()
 
-	<-stop
-	log.Println("config: shutting down...")
+	var exitErr error
+	select {
+	case <-stop:
+		log.Println("config: shutting down...")
+	case err := <-errCh:
+		log.Printf("config: listen error: %v", err)
+		exitErr = err
+	}
 	cancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
-	return srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil && exitErr == nil {
+		exitErr = err
+	}
+	return exitErr
+}
+
+// stdoutAudit is a minimal domain.AuditRepository that logs every Record
+// call to stdout (picked up by systemd's journal). The config service has
+// no persistent audit table in v1 so this is the only sink — the backup
+// manager's success/failure events would otherwise be silently dropped.
+// The List/Count methods are stubs because the config service does not
+// expose an audit API yet; wire in a real repository if that changes.
+type stdoutAudit struct{}
+
+func (stdoutAudit) Record(e *domain.AuthEvent) error {
+	if e.Detail != "" {
+		log.Printf("audit: %s user=%s detail=%s", e.EventType, e.Username, e.Detail)
+	} else {
+		log.Printf("audit: %s user=%s", e.EventType, e.Username)
+	}
+	return nil
+}
+func (stdoutAudit) List(int) ([]*domain.AuthEvent, error) { return nil, nil }
+func (stdoutAudit) ListForUser(string, int) ([]*domain.AuthEvent, error) {
+	return nil, nil
+}
+func (stdoutAudit) ListFiltered(string, string, int, int) ([]*domain.AuthEvent, error) {
+	return nil, nil
+}
+func (stdoutAudit) CountFiltered(string, string) (int, error) { return 0, nil }
+
+// originAllowed reports whether the given Origin header value is allowlisted.
+// HasPrefix-on-string matching was unsafe because
+// "http://localhost.attacker.example" would match; we parse the origin and
+// compare host explicitly.
+func originAllowed(origin string, allowed map[string]bool, devMode bool) bool {
+	if allowed[origin] {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	if u.Host != "localhost" && !strings.HasPrefix(u.Host, "localhost:") {
+		return false
+	}
+	if allowed["http://localhost"] {
+		return true
+	}
+	return devMode && len(allowed) == 0
 }
 
 // configSecurityHeaders wraps the router with a slimmer CSP than identity's.
@@ -207,7 +278,7 @@ func configSecurityHeaders(next http.Handler, corsOrigins []string, devMode bool
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Vary", "Origin")
 			origin := r.Header.Get("Origin")
-			if origin != "" && (allowed[origin] || (devMode && len(allowed) == 0 && strings.HasPrefix(origin, "http://localhost"))) {
+			if origin != "" && originAllowed(origin, allowed, devMode) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")

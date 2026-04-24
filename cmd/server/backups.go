@@ -97,6 +97,16 @@ func restoreBackupForService(serviceName, dbPath, key string) error {
 		return err
 	}
 
+	// When the caller supplies a key directly on the command line, require
+	// that it belongs to this service. The interactive path filters the
+	// listing by the same prefix, but a raw --restore-backup <key>
+	// invocation would otherwise happily overwrite e.g. config.db with
+	// identity's tables — a devastating paste-and-restore mistake.
+	if key != "" && !strings.HasPrefix(path.Base(key), serviceName+"-") {
+		return fmt.Errorf("key %q does not belong to service %q (filename must start with %q-)",
+			key, serviceName, serviceName)
+	}
+
 	if key == "" {
 		prefix := string(cfg.Env) + "/backups/"
 		fmt.Printf("Restoring %s backup for environment: %s\n\n", serviceName, cfg.Env)

@@ -44,6 +44,16 @@ func (r *fakeRepo) List() ([]domain.ConfigNamespaceSummary, error) {
 	}
 	return out, nil
 }
+func (r *fakeRepo) GetACL(name string) (string, string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ns, ok := r.data[name]
+	if !ok {
+		return "", "", domain.ErrNotFound
+	}
+	return ns.ReadRole, ns.WriteRole, nil
+}
+
 func (r *fakeRepo) Get(name string) (*domain.ConfigNamespace, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -76,14 +86,14 @@ func (r *fakeRepo) UpdateDocument(name string, document []byte, updatedBy string
 	ns.UpdatedAt = at
 	return nil
 }
-func (r *fakeRepo) UpdateACL(name, rRole, wRole string, at time.Time) error {
+func (r *fakeRepo) UpdateACL(name, rRole, wRole, updatedBy string, at time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ns, ok := r.data[name]
 	if !ok {
 		return domain.ErrNotFound
 	}
-	ns.ReadRole, ns.WriteRole, ns.UpdatedAt = rRole, wRole, at
+	ns.ReadRole, ns.WriteRole, ns.UpdatedBy, ns.UpdatedAt = rRole, wRole, updatedBy, at
 	return nil
 }
 func (r *fakeRepo) Delete(name string) error {

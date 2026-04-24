@@ -38,10 +38,18 @@ type ConfigNamespaceSummary struct {
 // when a uniqueness constraint is violated (e.g. Create on an existing name).
 type ConfigRepository interface {
 	List() ([]ConfigNamespaceSummary, error)
+	// GetACL returns only the ACL columns so the service can make a
+	// role-check decision without reading the document body. The size
+	// disparity between "row missing" (fast) and "row present with a 64KB
+	// document" (slow) would otherwise be a timing-oracle for namespace
+	// existence to callers who lack read access.
+	GetACL(name string) (readRole, writeRole string, err error)
 	Get(name string) (*ConfigNamespace, error)
 	Create(ns *ConfigNamespace) error
 	UpdateDocument(name string, document []byte, updatedBy string, at time.Time) error
-	UpdateACL(name, readRole, writeRole string, at time.Time) error
+	// UpdateACL stamps updatedBy so the audit trail for ACL changes is
+	// distinguishable from document writes.
+	UpdateACL(name, readRole, writeRole, updatedBy string, at time.Time) error
 	Delete(name string) error
 }
 

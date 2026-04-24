@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -145,7 +146,11 @@ func (ti *TokenIssuer) MintServiceToken(claims domain.ServiceTokenClaims, ttl ti
 
 // ParseServiceToken validates a JWT and returns ServiceTokenClaims if the token
 // contains a client_id claim. Returns ErrTokenInvalid if it's not a service token.
-func (ti *TokenIssuer) ParseServiceToken(tokenStr string) (*domain.ServiceTokenClaims, error) {
+//
+// ctx is accepted to satisfy the TokenParser interface but is unused here —
+// TokenIssuer performs no I/O during parse. JWKSVerifier uses it to bound
+// JWKS refetches.
+func (ti *TokenIssuer) ParseServiceToken(_ context.Context, tokenStr string) (*domain.ServiceTokenClaims, error) {
 	if tokenStr == "" {
 		return nil, ErrTokenInvalid
 	}
@@ -165,6 +170,7 @@ func (ti *TokenIssuer) ParseServiceToken(tokenStr string) (*domain.ServiceTokenC
 				}
 				return &key.PublicKey, nil
 			},
+			jwt.WithValidMethods([]string{"ES256"}),
 			jwt.WithIssuer(ti.issuer),
 			jwt.WithExpirationRequired(),
 		)
@@ -206,8 +212,9 @@ func (ti *TokenIssuer) ParseServiceToken(tokenStr string) (*domain.ServiceTokenC
 
 // Parse validates a JWT and returns the embedded TokenClaims.
 // Returns ErrTokenExpired if the token has expired, ErrTokenInvalid for all
-// other validation failures.
-func (ti *TokenIssuer) Parse(tokenStr string) (*domain.TokenClaims, error) {
+// other validation failures. ctx is accepted to satisfy TokenParser; it is
+// unused by the in-process issuer (no I/O).
+func (ti *TokenIssuer) Parse(_ context.Context, tokenStr string) (*domain.TokenClaims, error) {
 	if tokenStr == "" {
 		return nil, ErrTokenInvalid
 	}
@@ -256,6 +263,7 @@ func (ti *TokenIssuer) parseWithKey(tokenStr string, key *ecdsa.PrivateKey) (*do
 			}
 			return &key.PublicKey, nil
 		},
+		jwt.WithValidMethods([]string{"ES256"}),
 		jwt.WithIssuer(ti.issuer),
 		jwt.WithExpirationRequired(),
 	)

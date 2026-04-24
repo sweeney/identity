@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/sweeney/identity/internal/db"
@@ -44,6 +45,24 @@ func (s *ConfigStore) List() ([]domain.ConfigNamespaceSummary, error) {
 		out = append(out, sum)
 	}
 	return out, rows.Err()
+}
+
+// GetACL projects only the ACL columns. Kept cheap so the service layer
+// can role-check before incurring the cost of reading the document blob
+// (prevents a timing-oracle against namespace existence).
+func (s *ConfigStore) GetACL(name string) (string, string, error) {
+	row := s.db.DB().QueryRow(
+		`SELECT read_role, write_role FROM config_namespaces WHERE name = ?`,
+		name,
+	)
+	var readRole, writeRole string
+	if err := row.Scan(&readRole, &writeRole); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", domain.ErrNotFound
+		}
+		return "", "", fmt.Errorf("get config acl: %w", err)
+	}
+	return readRole, writeRole, nil
 }
 
 func (s *ConfigStore) Get(name string) (*domain.ConfigNamespace, error) {
@@ -112,14 +131,15 @@ func (s *ConfigStore) UpdateDocument(name string, document []byte, updatedBy str
 	return nil
 }
 
-func (s *ConfigStore) UpdateACL(name, readRole, writeRole string, at time.Time) error {
+func (s *ConfigStore) UpdateACL(name, readRole, writeRole, updatedBy string, at time.Time) error {
 	res, err := s.db.DB().Exec(
 		`UPDATE config_namespaces
-		 SET read_role = ?, write_role = ?, updated_at = ?
+		 SET read_role = ?, write_role = ?, updated_at = ?, updated_by = ?
 		 WHERE name = ?`,
 		readRole,
 		writeRole,
 		formatTime(at),
+		updatedBy,
 		name,
 	)
 	if err != nil {
@@ -144,10 +164,14 @@ func (s *ConfigStore) Delete(name string) error {
 	return nil
 }
 
-// parseTime parses an RFC3339Nano timestamp stored by formatTime. Returns
-// the zero value if parsing fails — callers should treat this as a
-// corrupted row (should never happen in practice).
+// parseTime parses an RFC3339Nano timestamp stored by formatTime. The only
+// writer is formatTime so any parse failure implies a corrupted row —
+// fall back to the zero value so the rest of the response can still be
+// served, but log loudly so the condition doesn't stay silent.
 func parseTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339Nano, s)
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		log.Printf("config_store: corrupted timestamp %q: %v", s, err)
+	}
 	return t
 }

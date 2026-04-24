@@ -11,8 +11,8 @@
 #   /tmp/config-env.example    — config env file template (optional)
 #
 # Usage:
-#   sudo bash /tmp/install.sh            # install both services
-#   INSTALL_CONFIG=0 sudo bash install.sh  # identity only
+#   sudo bash /tmp/install.sh                    # install both services
+#   INSTALL_CONFIG=0 sudo bash /tmp/install.sh   # identity only
 #
 set -euo pipefail
 

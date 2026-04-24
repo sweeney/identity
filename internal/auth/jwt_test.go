@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"strings"
@@ -37,7 +38,7 @@ func TestTokenIssuer_MintAndParse(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 
-	parsed, err := issuer.Parse(token)
+	parsed, err := issuer.Parse(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "user-123", parsed.UserID)
 	assert.Equal(t, "alice", parsed.Username)
@@ -56,7 +57,7 @@ func TestTokenIssuer_ExpiredToken(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 
-	_, err = issuer.Parse(token)
+	_, err = issuer.Parse(context.Background(), token)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, auth.ErrTokenExpired)
 }
@@ -75,7 +76,7 @@ func TestTokenIssuer_InvalidSignature(t *testing.T) {
 	token, err := issuer1.Mint(domain.TokenClaims{UserID: "u1", Username: "alice", Role: domain.RoleUser, IsActive: true})
 	require.NoError(t, err)
 
-	_, err = issuer2.Parse(token)
+	_, err = issuer2.Parse(context.Background(), token)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, auth.ErrTokenInvalid)
 }
@@ -92,7 +93,7 @@ func TestTokenIssuer_WrongIssuer(t *testing.T) {
 	token, err := issuer1.Mint(domain.TokenClaims{UserID: "u1", Username: "alice", Role: domain.RoleUser, IsActive: true})
 	require.NoError(t, err)
 
-	_, err = issuer2.Parse(token)
+	_, err = issuer2.Parse(context.Background(), token)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, auth.ErrTokenInvalid)
 }
@@ -115,7 +116,7 @@ func TestTokenIssuer_PreviousKeyFallback(t *testing.T) {
 	newIssuer, err := auth.NewTokenIssuer(newKey, oldKey, "identity.home", 15*time.Minute)
 	require.NoError(t, err)
 
-	parsed, err := newIssuer.Parse(token)
+	parsed, err := newIssuer.Parse(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "u1", parsed.UserID)
 }
@@ -123,7 +124,7 @@ func TestTokenIssuer_PreviousKeyFallback(t *testing.T) {
 func TestTokenIssuer_MalformedToken(t *testing.T) {
 	issuer := newTestIssuer(t)
 
-	_, err := issuer.Parse("this.is.not.a.jwt")
+	_, err := issuer.Parse(context.Background(), "this.is.not.a.jwt")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, auth.ErrTokenInvalid)
 }
@@ -131,7 +132,7 @@ func TestTokenIssuer_MalformedToken(t *testing.T) {
 func TestTokenIssuer_EmptyToken(t *testing.T) {
 	issuer := newTestIssuer(t)
 
-	_, err := issuer.Parse("")
+	_, err := issuer.Parse(context.Background(), "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, auth.ErrTokenInvalid)
 }

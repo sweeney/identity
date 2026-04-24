@@ -45,6 +45,16 @@ func (r *fakeConfigRepo) List() ([]domain.ConfigNamespaceSummary, error) {
 	return out, nil
 }
 
+func (r *fakeConfigRepo) GetACL(name string) (string, string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ns, ok := r.data[name]
+	if !ok {
+		return "", "", domain.ErrNotFound
+	}
+	return ns.ReadRole, ns.WriteRole, nil
+}
+
 func (r *fakeConfigRepo) Get(name string) (*domain.ConfigNamespace, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -80,7 +90,7 @@ func (r *fakeConfigRepo) UpdateDocument(name string, document []byte, updatedBy 
 	return nil
 }
 
-func (r *fakeConfigRepo) UpdateACL(name, readRole, writeRole string, at time.Time) error {
+func (r *fakeConfigRepo) UpdateACL(name, readRole, writeRole, updatedBy string, at time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ns, ok := r.data[name]
@@ -89,6 +99,7 @@ func (r *fakeConfigRepo) UpdateACL(name, readRole, writeRole string, at time.Tim
 	}
 	ns.ReadRole = readRole
 	ns.WriteRole = writeRole
+	ns.UpdatedBy = updatedBy
 	ns.UpdatedAt = at
 	return nil
 }
@@ -212,6 +223,43 @@ func TestCreate_DocumentTooLarge(t *testing.T) {
 		Name: "n", ReadRole: "admin", WriteRole: "admin", Document: doc,
 	})
 	assert.ErrorIs(t, err, service.ErrConfigDocumentTooLarge)
+}
+
+// TestCreate_RejectsWriteWithoutRead enforces the ACL invariant that every
+// writer must also be a reader — otherwise a write-but-not-read role can
+// turn PUT's byte-equality no-op detection into a read oracle for the
+// document contents they are not allowed to see.
+func TestCreate_RejectsWriteWithoutRead(t *testing.T) {
+	svc, _, _ := newConfigSvc(t)
+	_, err := svc.CreateNamespace(admin, service.CreateNamespaceInput{
+		Name: "n", ReadRole: "admin", WriteRole: "user", Document: []byte(`{}`),
+	})
+	assert.ErrorIs(t, err, service.ErrConfigInvalidRole,
+		"read_role=admin + write_role=user must be rejected (writers-are-not-readers)")
+}
+
+// TestValidateDocument_DeepNestingRejected guards against the stack-
+// exhaustion DOS surfaced in the red-team review: 128KB of nested braces
+// must not reach the full json.Unmarshal recursion.
+func TestValidateDocument_DeepNestingRejected(t *testing.T) {
+	svc, _, _ := newConfigSvc(t)
+
+	// Build a ~1000-deep nested object. Well over MaxConfigDocumentDepth
+	// (64) but small enough to keep the test fast.
+	var sb strings.Builder
+	for i := 0; i < 1000; i++ {
+		sb.WriteString(`{"a":`)
+	}
+	sb.WriteString(`1`)
+	for i := 0; i < 1000; i++ {
+		sb.WriteString(`}`)
+	}
+
+	_, err := svc.CreateNamespace(admin, service.CreateNamespaceInput{
+		Name: "n", ReadRole: "admin", WriteRole: "admin", Document: []byte(sb.String()),
+	})
+	assert.ErrorIs(t, err, service.ErrConfigInvalidDocument,
+		"pathological nesting must be rejected before reaching json.Unmarshal")
 }
 
 func TestCreate_DuplicateReturnsExists(t *testing.T) {

@@ -1,6 +1,8 @@
 package auth_test
 
 import (
+	"sync"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -59,7 +61,7 @@ func TestJWKSVerifier_Parse_ValidUserToken(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	claims, err := v.Parse(tok)
+	claims, err := v.Parse(context.Background(), tok)
 	require.NoError(t, err)
 	assert.Equal(t, "user-1", claims.UserID)
 	assert.Equal(t, "alice", claims.Username)
@@ -80,7 +82,7 @@ func TestJWKSVerifier_Parse_WrongIssuer_Rejected(t *testing.T) {
 	tok, err := ti.Mint(domain.TokenClaims{UserID: "u", Username: "u", Role: domain.RoleUser, IsActive: true})
 	require.NoError(t, err)
 
-	_, err = v.Parse(tok)
+	_, err = v.Parse(context.Background(), tok)
 	assert.Error(t, err)
 }
 
@@ -100,7 +102,7 @@ func TestJWKSVerifier_Parse_Expired_ReturnsTokenExpired(t *testing.T) {
 	require.NoError(t, err)
 	time.Sleep(10 * time.Millisecond)
 
-	_, err = v.Parse(tok)
+	_, err = v.Parse(context.Background(), tok)
 	assert.ErrorIs(t, err, auth.ErrTokenExpired)
 }
 
@@ -114,7 +116,7 @@ func TestJWKSVerifier_Parse_Malformed_ReturnsTokenInvalid(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = v.Parse("not-a-jwt")
+	_, err = v.Parse(context.Background(), "not-a-jwt")
 	assert.ErrorIs(t, err, auth.ErrTokenInvalid)
 }
 
@@ -125,7 +127,7 @@ func TestJWKSVerifier_Parse_EmptyToken_ReturnsTokenInvalid(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = v.Parse("")
+	_, err = v.Parse(context.Background(), "")
 	assert.ErrorIs(t, err, auth.ErrTokenInvalid)
 }
 
@@ -144,7 +146,7 @@ func TestJWKSVerifier_CachesJWKS(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := 0; i < 5; i++ {
-		_, err := v.Parse(tok)
+		_, err := v.Parse(context.Background(), tok)
 		require.NoError(t, err)
 	}
 
@@ -166,13 +168,13 @@ func TestJWKSVerifier_RefetchesAfterTTL(t *testing.T) {
 	tok, err := ti.Mint(domain.TokenClaims{UserID: "u", Username: "u", Role: domain.RoleUser, IsActive: true})
 	require.NoError(t, err)
 
-	_, err = v.Parse(tok)
+	_, err = v.Parse(context.Background(), tok)
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), fetches.Load())
 
 	time.Sleep(80 * time.Millisecond)
 
-	_, err = v.Parse(tok)
+	_, err = v.Parse(context.Background(), tok)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), fetches.Load(), "second Parse after TTL expiry should refetch")
 }
@@ -210,7 +212,7 @@ func TestJWKSVerifier_PicksUpRotatedKey(t *testing.T) {
 	// Prime the cache with the original key.
 	tokOld, err := originalIssuer.Mint(domain.TokenClaims{UserID: "u", Username: "u", Role: domain.RoleUser, IsActive: true})
 	require.NoError(t, err)
-	_, err = v.Parse(tokOld)
+	_, err = v.Parse(context.Background(), tokOld)
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), fetches.Load())
 
@@ -225,7 +227,7 @@ func TestJWKSVerifier_PicksUpRotatedKey(t *testing.T) {
 	// JWKS (which now advertises the new key), and successfully verifies.
 	// Throttle is 1ms so the refetch happens immediately.
 	time.Sleep(5 * time.Millisecond)
-	_, err = v.Parse(tokNew)
+	_, err = v.Parse(context.Background(), tokNew)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, fetches.Load(), int32(2),
 		"an unknown kid must trigger a JWKS refetch")
@@ -248,7 +250,7 @@ func TestJWKSVerifier_ThrottlesUnknownKid(t *testing.T) {
 	// Prime cache with a valid token.
 	tok, err := ti.Mint(domain.TokenClaims{UserID: "u", Username: "u", Role: domain.RoleUser, IsActive: true})
 	require.NoError(t, err)
-	_, err = v.Parse(tok)
+	_, err = v.Parse(context.Background(), tok)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), fetches.Load())
 
@@ -259,7 +261,7 @@ func TestJWKSVerifier_ThrottlesUnknownKid(t *testing.T) {
 
 	// Hammer verifier with 20 lookups of the unknown kid inside the throttle window.
 	for i := 0; i < 20; i++ {
-		_, _ = v.Parse(bad)
+		_, _ = v.Parse(context.Background(), bad)
 	}
 
 	// One additional refetch is allowed (the first miss), but not 20.
@@ -286,7 +288,7 @@ func TestJWKSVerifier_ParseServiceToken_Valid(t *testing.T) {
 	}, 5*time.Minute)
 	require.NoError(t, err)
 
-	got, err := v.ParseServiceToken(tok)
+	got, err := v.ParseServiceToken(context.Background(), tok)
 	require.NoError(t, err)
 	assert.Equal(t, "svc-1", got.ClientID)
 	assert.Equal(t, "config", got.Audience)
@@ -311,8 +313,102 @@ func TestJWKSVerifier_Parse_RejectsServiceToken(t *testing.T) {
 	}, 5*time.Minute)
 	require.NoError(t, err)
 
-	_, err = v.Parse(svcTok)
+	_, err = v.Parse(context.Background(), svcTok)
 	assert.ErrorIs(t, err, auth.ErrTokenInvalid)
+}
+
+// TestJWKSVerifier_StaleCacheFallback exercises the availability guarantee
+// that a cached-but-stale key continues to verify tokens when a JWKS
+// refetch fails. A transient identity-service blip must not cascade into
+// a config-side auth outage if we already hold the signing key.
+func TestJWKSVerifier_StaleCacheFallback(t *testing.T) {
+	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
+
+	var healthy atomic.Bool
+	healthy.Store(true)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, r *http.Request) {
+		if !healthy.Load() {
+			http.Error(w, "boom", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ti.JWKS())
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+		IssuerURL: srv.URL,
+		Issuer:    "https://id.example.com",
+		CacheTTL:  30 * time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	tok, err := ti.Mint(domain.TokenClaims{
+		UserID: "u", Username: "u", Role: domain.RoleUser, IsActive: true,
+	})
+	require.NoError(t, err)
+
+	// Prime the cache while JWKS is reachable.
+	_, err = v.Parse(context.Background(), tok)
+	require.NoError(t, err)
+
+	// Make JWKS unavailable, then wait past the cache TTL so the next
+	// Parse is forced to try a refetch.
+	healthy.Store(false)
+	time.Sleep(60 * time.Millisecond)
+
+	// Refetch will fail, but the kid is still in the stale cache —
+	// Parse must succeed and the claims must come through cleanly.
+	claims, err := v.Parse(context.Background(), tok)
+	require.NoError(t, err, "stale-cache fallback must keep parsing working during a JWKS outage")
+	assert.Equal(t, "u", claims.UserID)
+}
+
+// TestJWKSVerifier_RefetchDeduplicated ensures the singleflight group
+// collapses concurrent refetches into a single outbound request even when
+// many goroutines hit an empty cache simultaneously.
+func TestJWKSVerifier_RefetchDeduplicated(t *testing.T) {
+	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
+
+	var fetches atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, r *http.Request) {
+		fetches.Add(1)
+		// Slow response so concurrent callers race into singleflight before
+		// the first request completes.
+		time.Sleep(40 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ti.JWKS())
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+		IssuerURL: srv.URL,
+		Issuer:    "https://id.example.com",
+		CacheTTL:  time.Hour,
+	})
+	require.NoError(t, err)
+
+	tok, err := ti.Mint(domain.TokenClaims{
+		UserID: "u", Username: "u", Role: domain.RoleUser, IsActive: true,
+	})
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = v.Parse(context.Background(), tok)
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, int32(1), fetches.Load(),
+		"singleflight must collapse concurrent refetches to one outbound request; got %d", fetches.Load())
 }
 
 func TestJWKSVerifier_NetworkFailure_ReturnsTokenInvalid(t *testing.T) {
@@ -328,7 +424,7 @@ func TestJWKSVerifier_NetworkFailure_ReturnsTokenInvalid(t *testing.T) {
 	tok, err := ti.Mint(domain.TokenClaims{UserID: "u", Username: "u", Role: domain.RoleUser, IsActive: true})
 	require.NoError(t, err)
 
-	_, err = v.Parse(tok)
+	_, err = v.Parse(context.Background(), tok)
 	assert.ErrorIs(t, err, auth.ErrTokenInvalid,
 		"network failure during JWKS fetch should surface as ErrTokenInvalid")
 }

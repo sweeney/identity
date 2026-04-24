@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -37,6 +38,12 @@ type ConfigSvcConfig struct {
 	// BackupMinInterval is the cooldown window between consecutive
 	// triggered backups. Defaults to 30 seconds.
 	BackupMinInterval time.Duration
+
+	// RequiredAudience, when non-empty, forces the JWKS verifier to
+	// assert the `aud` claim on every incoming token. Intended as the
+	// config-side half of cross-service token-replay mitigation; keep
+	// empty until identity stamps a matching audience on issuance.
+	RequiredAudience string
 
 	TrustProxy        string
 	CORSOrigins       []string
@@ -100,11 +107,21 @@ func LoadConfigSvc() (*ConfigSvcConfig, error) {
 	if cfg.Env == EnvProduction && cfg.IdentityIssuerURL != "" && !strings.HasPrefix(cfg.IdentityIssuerURL, "https://") {
 		errs = append(errs, fmt.Errorf("IDENTITY_ISSUER_URL must be an https:// URL in production (got %q)", cfg.IdentityIssuerURL))
 	}
+	// Validate URL shape. Catches query strings, fragments, or accidental
+	// whitespace early instead of silently producing a malformed JWKS
+	// request URL at the first login.
+	if cfg.IdentityIssuerURL != "" {
+		if err := validateIdentityIssuerURL(cfg.IdentityIssuerURL); err != nil {
+			errs = append(errs, fmt.Errorf("IDENTITY_ISSUER_URL: %w", err))
+		}
+	}
 
 	cfg.IdentityIssuer = os.Getenv("IDENTITY_ISSUER")
 	if cfg.IdentityIssuer == "" {
 		cfg.IdentityIssuer = cfg.IdentityIssuerURL
 	}
+
+	cfg.RequiredAudience = os.Getenv("REQUIRED_AUDIENCE")
 
 	if v := os.Getenv("JWKS_CACHE_TTL"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -150,6 +167,38 @@ func LoadConfigSvc() (*ConfigSvcConfig, error) {
 		return nil, errors.Join(errs...)
 	}
 	return cfg, nil
+}
+
+// validateIdentityIssuerURL rejects ill-shaped values early (at startup)
+// so operators see a clear error instead of a cryptic JWKS-fetch failure
+// on the first request.
+func validateIdentityIssuerURL(raw string) error {
+	if strings.TrimSpace(raw) != raw {
+		return errors.New("must not contain leading/trailing whitespace")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("parse: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("scheme must be http or https (got %q)", u.Scheme)
+	}
+	if u.Host == "" {
+		return errors.New("host is required")
+	}
+	if u.RawQuery != "" {
+		return errors.New("must not contain a query string")
+	}
+	if u.Fragment != "" {
+		return errors.New("must not contain a fragment")
+	}
+	// A trailing slash is fine (we strip it elsewhere); a non-trivial path
+	// is not — JWKS lives at a known path off the root.
+	p := strings.TrimSuffix(u.Path, "/")
+	if p != "" {
+		return fmt.Errorf("must not contain a path (got %q)", u.Path)
+	}
+	return nil
 }
 
 // R2Configured reports whether all R2 credentials are present for the

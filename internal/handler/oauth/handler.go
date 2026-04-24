@@ -255,7 +255,7 @@ func (h *oauthHandler) authorizePasskey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	claims, err := h.tokenIssuer.Parse(accessToken)
+	claims, err := h.tokenIssuer.Parse(r.Context(), accessToken)
 	if err != nil {
 		errResp(http.StatusUnauthorized, "invalid_token", "Invalid or expired token.")
 		return
@@ -456,7 +456,7 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 
 	// Try parsing as service token
 	if h.tokenIssuer != nil {
-		if sc, err := h.tokenIssuer.ParseServiceToken(token); err == nil {
+		if sc, err := h.tokenIssuer.ParseServiceToken(r.Context(), token); err == nil {
 			// Only the client that owns the token may introspect it.
 			if sc.ClientID != creds.ClientID {
 				jsonOK(w, map[string]any{"active": false})
@@ -484,7 +484,7 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 
 	// Try parsing as user token
 	if h.tokenIssuer != nil {
-		if uc, err := h.tokenIssuer.Parse(token); err == nil {
+		if uc, err := h.tokenIssuer.Parse(r.Context(), token); err == nil {
 			jsonOK(w, map[string]any{
 				"active":     true,
 				"sub":        uc.UserID,

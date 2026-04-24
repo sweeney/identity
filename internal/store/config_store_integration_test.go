@@ -117,18 +117,20 @@ func TestConfigStore_UpdateACL(t *testing.T) {
 	require.NoError(t, s.Create(ns))
 
 	later := now.Add(time.Minute)
-	require.NoError(t, s.UpdateACL("prefs", "user", "admin", later))
+	require.NoError(t, s.UpdateACL("prefs", "user", "admin", "admin-2", later))
 
 	got, err := s.Get("prefs")
 	require.NoError(t, err)
 	assert.Equal(t, "user", got.ReadRole)
 	assert.Equal(t, "admin", got.WriteRole)
 	assert.True(t, got.UpdatedAt.Equal(later))
+	assert.Equal(t, "admin-2", got.UpdatedBy,
+		"UpdateACL must record the admin who changed the ACL, not the last document writer")
 }
 
 func TestConfigStore_UpdateACL_NotFound(t *testing.T) {
 	s := store.NewConfigStore(openConfigDB(t))
-	err := s.UpdateACL("missing", "user", "admin", time.Now().UTC())
+	err := s.UpdateACL("missing", "user", "admin", "admin-1", time.Now().UTC())
 	assert.ErrorIs(t, err, domain.ErrNotFound)
 }
 

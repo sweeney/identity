@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -59,16 +60,26 @@ func RequireAuth(parser TokenParser, next http.Handler) http.Handler {
 			return
 		}
 
-		// Try parsing as a service token first (has client_id claim)
-		svcClaims, svcErr := parser.ParseServiceToken(parts[1])
-		if svcErr == nil && svcClaims != nil {
+		// Peek the JWT header's `typ` claim (unsigned inspection; the
+		// signed parse below is the actual verification). Branching here
+		// avoids the 2× ECDSA verification + 2× JWKS keyForKid lookup
+		// that the previous "try service token, then user token"
+		// fall-through incurred, and makes the two flows mutually
+		// exclusive by construction.
+		token := parts[1]
+		if peekJWTTyp(token) == "at+jwt" {
+			svcClaims, svcErr := parser.ParseServiceToken(r.Context(), token)
+			if svcErr != nil || svcClaims == nil {
+				w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+				writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
+				return
+			}
 			ctx := context.WithValue(r.Context(), serviceClaimsContextKey, svcClaims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
-		// Fall back to user token
-		claims, err := parser.Parse(parts[1])
+		claims, err := parser.Parse(r.Context(), token)
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
@@ -155,6 +166,30 @@ func RequireAudience(audience string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// peekJWTTyp extracts the `typ` header claim from a compact JWT *without*
+// verifying the signature. Used only to decide which parse path to take
+// downstream — the actual verification still runs against JWKS / the
+// in-process issuer. Returns "" on any parse failure; the caller must
+// treat "" as the user-token path (which will then reject an invalid
+// token via the signed parse).
+func peekJWTTyp(token string) string {
+	dot := strings.IndexByte(token, '.')
+	if dot <= 0 {
+		return ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token[:dot])
+	if err != nil {
+		return ""
+	}
+	var h struct {
+		Typ string `json:"typ"`
+	}
+	if err := json.Unmarshal(raw, &h); err != nil {
+		return ""
+	}
+	return h.Typ
 }
 
 // writeError writes a JSON error response.
