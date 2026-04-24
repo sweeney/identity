@@ -1,0 +1,40 @@
+[Unit]
+Description=Homelab config service
+After=network.target identity.service
+Wants=identity.service
+Documentation=https://github.com/sweeney/identity
+
+[Service]
+Type=simple
+User=identity
+Group=identity
+
+ExecStart=/opt/identity/bin/identity-server config
+WorkingDirectory=/var/lib/identity
+
+EnvironmentFile=/etc/identity/config.env
+
+Restart=always
+RestartSec=5
+
+# Hardening (mirrors identity.service)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/identity
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=config
+
+[Install]
+WantedBy=multi-user.target
