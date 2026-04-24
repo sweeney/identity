@@ -37,6 +37,10 @@
             <input type="checkbox" name="grant_types" value="client_credentials" {{if .Client}}{{if .Client.HasGrantType "client_credentials"}}checked{{end}}{{end}}>
             Client Credentials (service-to-service)
         </label>
+        <label class="checkbox-label">
+            <input type="checkbox" name="grant_types" value="urn:ietf:params:oauth:grant-type:device_code" {{if .Client}}{{if .Client.HasGrantType "urn:ietf:params:oauth:grant-type:device_code"}}checked{{end}}{{end}}>
+            Device Authorization (RFC 8628 — headless/IoT devices)
+        </label>
     </fieldset>
     <label>
         Token Endpoint Auth Method
