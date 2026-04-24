@@ -4,55 +4,114 @@
 <h1>Print these stickers now</h1>
 <p class="flash-success">Claim codes generated. These codes are <strong>shown only once</strong> — only their hashes are stored on the server.</p>
 <p>
-    <button onclick="window.print()">Print stickers</button>
-    <a href="/admin/oauth/{{.Client.ID}}/claim-codes" class="btn-secondary">Done</a>
+    <button id="print-btn">Print stickers</button>
+    <a href="/admin/oauth/{{.Client.ID}}/claim-codes" class="btn btn-secondary">Done</a>
 </p>
-<p><small>Each sticker shows a QR code that links straight to the verification page with the claim code pre-filled. Stick one on each device before deploying.</small></p>
+<p><small>Each sticker encodes a QR that links straight to the verification page with the claim code pre-filled. Stick one on each device before deploying. Choose the size that fits your device.</small></p>
 </div>
 
-<div class="sticker-sheet">
+<p class="sticker-size-label">Large — 2×2 inch (51×51 mm)</p>
+<div class="sticker-sheet sticker-sheet-large">
 {{range .Stickers}}
-<div class="sticker">
+<div class="sticker sticker-large">
     <div class="sticker-qr">{{.QR}}</div>
-    <div class="sticker-body">
-        <div class="sticker-label">{{.Label}}</div>
-        <div class="sticker-code"><code>{{.RawCode}}</code></div>
-    </div>
+    <div class="sticker-label">{{.Label}}</div>
+    <div class="sticker-code"><code>{{.RawCode}}</code></div>
+</div>
+{{end}}
+</div>
+
+<div class="sticker-divider"></div>
+
+<p class="sticker-size-label">Small — 1×1 inch (25×25 mm)</p>
+<div class="sticker-sheet sticker-sheet-small">
+{{range .Stickers}}
+<div class="sticker sticker-small">
+    <div class="sticker-qr">{{.QR}}</div>
+    <div class="sticker-label">{{.Label}}</div>
+    <div class="sticker-code"><code>{{.RawCode}}</code></div>
 </div>
 {{end}}
 </div>
 
 <style>
-.sticker-sheet {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    margin-top: 1rem;
+.sticker-size-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin: 1rem 0 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
+.sticker-divider {
+    margin: 2rem 0;
+    border-top: 2px dashed var(--border);
+}
+.sticker-sheet {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4mm;
+}
+
+/* Large: 51×51 mm (2×2 inch) */
+.sticker-large {
+    width: 51mm;
+    height: 51mm;
+    padding: 3mm;
+    gap: 1.5mm;
+}
+.sticker-large .sticker-qr svg {
+    width: 34mm !important;
+    height: 34mm !important;
+}
+.sticker-large .sticker-label { font-size: 8pt; }
+.sticker-large .sticker-code code { font-size: 11pt; }
+
+/* Small: 25×25 mm (1×1 inch) */
+.sticker-small {
+    width: 25mm;
+    height: 25mm;
+    padding: 2mm;
+    gap: 0.5mm;
+}
+.sticker-small .sticker-qr svg {
+    width: 14mm !important;
+    height: 14mm !important;
+}
+.sticker-small .sticker-label { font-size: 6pt; }
+.sticker-small .sticker-code code { font-size: 7pt; }
+
+/* Shared sticker styles */
 .sticker {
     border: 1px dashed #999;
-    padding: 8px;
     display: flex;
-    gap: 10px;
+    flex-direction: column;
     align-items: center;
+    justify-content: center;
     page-break-inside: avoid;
+    box-sizing: border-box;
 }
-.sticker-qr svg {
-    display: block;
-}
+.sticker-qr svg { display: block; }
 .sticker-label {
     font-weight: 600;
-    font-size: 12px;
+    text-align: center;
+    line-height: 1.2;
 }
 .sticker-code code {
-    font-size: 11px;
     font-family: ui-monospace, monospace;
-    word-break: break-all;
+    white-space: nowrap;
+    letter-spacing: 0.3px;
 }
+
 @media print {
     .no-print { display: none !important; }
     nav, .flash-success, .flash-error { display: none !important; }
+    body, main.container { margin: 0 !important; padding: 0 !important; }
+    @page { margin: 10mm; }
     .sticker { border: 1px solid #000; }
+    .sticker-size-label { font-size: 7pt; margin: 4mm 0 2mm; }
+    .sticker-divider { margin: 6mm 0; }
 }
 </style>
+<script src="/static/print.js"></script>
 {{end}}
