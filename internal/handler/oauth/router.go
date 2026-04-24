@@ -13,7 +13,8 @@ import (
 // If svc is nil, all routes return 404 (no clients registered).
 // tokenIssuer may be nil if passkeys are not enabled.
 // authSvc and webauthnSvc are used for the post-login passkey prompt (may be nil).
-func NewRouter(svc service.OAuthServicer, trustProxy string, tokenIssuer *auth.TokenIssuer, authSvc service.AuthServicer, webauthnSvc service.WebAuthnServicer, sessionKey, siteName string) http.Handler {
+// deviceSvc enables RFC 8628 device flow endpoints when non-nil.
+func NewRouter(svc service.OAuthServicer, trustProxy string, tokenIssuer *auth.TokenIssuer, authSvc service.AuthServicer, webauthnSvc service.WebAuthnServicer, deviceSvc service.DeviceFlowServicer, sessionKey, siteName string) http.Handler {
 	if svc == nil {
 		return http.NotFoundHandler()
 	}
@@ -29,6 +30,7 @@ func NewRouter(svc service.OAuthServicer, trustProxy string, tokenIssuer *auth.T
 		svc:         svc,
 		authSvc:     authSvc,
 		webauthnSvc: webauthnSvc,
+		deviceSvc:   deviceSvc,
 		tmpl:        &tmplSet{base: baseTmpl, funcs: funcs},
 		trustProxy:  trustProxy,
 		tokenIssuer: tokenIssuer,
@@ -45,6 +47,15 @@ func NewRouter(svc service.OAuthServicer, trustProxy string, tokenIssuer *auth.T
 	mux.HandleFunc("POST /oauth/passkey-prompt/register/finish", h.passkeyPromptRegisterFinish)
 	mux.HandleFunc("POST /oauth/token", h.token)
 	mux.HandleFunc("POST /oauth/introspect", h.introspect)
+
+	// Device authorization grant (RFC 8628) — only advertised if enabled.
+	if deviceSvc != nil {
+		mux.HandleFunc("POST /oauth/device_authorization", h.deviceAuthorize)
+		mux.HandleFunc("POST /oauth/device/claim", h.deviceClaim)
+		mux.HandleFunc("GET /oauth/device", h.deviceVerifyGet)
+		mux.HandleFunc("POST /oauth/device", h.deviceVerifyPost)
+	}
+
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", h.discovery)
 	return mux
 }

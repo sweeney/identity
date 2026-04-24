@@ -1,0 +1,51 @@
+{{define "title"}}Claim codes — {{.Client.Name}}{{end}}
+{{define "content"}}
+<h1>Claim codes</h1>
+<p><small>For OAuth client <strong>{{.Client.Name}}</strong> (<code>{{.Client.ID}}</code>). <a href="/admin/oauth/{{.Client.ID}}/edit">Edit client</a></small></p>
+
+{{if .MissingGrantType}}
+<p class="flash-error">This client does not have the <code>urn:ietf:params:oauth:grant-type:device_code</code> grant type enabled. <a href="/admin/oauth/{{.Client.ID}}/edit">Edit client</a> to enable it before generating claim codes.</p>
+{{else}}
+
+<p><a href="/admin/oauth/{{.Client.ID}}/claim-codes/new" class="btn">Generate claim codes</a></p>
+
+{{if .Codes}}
+<table>
+    <thead>
+        <tr>
+            <th>Label</th>
+            <th>Status</th>
+            <th>Bound to</th>
+            <th>Created</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {{range .Codes}}
+        <tr>
+            <td>{{if .Label}}{{.Label}}{{else}}<em>(no label)</em>{{end}}</td>
+            <td>
+              {{if .IsRevoked}}<span class="badge-revoked">Revoked</span>
+              {{else if .IsBound}}<span class="badge-bound">Bound</span>
+              {{else}}<span class="badge-unbound">Unbound</span>{{end}}
+            </td>
+            <td>{{if .BoundUserID}}{{.BoundUserID}}{{else}}—{{end}}</td>
+            <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+            <td>
+                {{if not .IsRevoked}}
+                <form method="POST" action="/admin/oauth/{{$.Client.ID}}/claim-codes/{{.ID}}/revoke" style="display:inline">
+                    <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                    <button type="submit" class="btn-secondary btn-small" onclick="return confirm('Revoke this claim code? The device will stop working.');">Revoke</button>
+                </form>
+                {{end}}
+            </td>
+        </tr>
+    {{end}}
+    </tbody>
+</table>
+{{else}}
+<p><em>No claim codes yet. Generate some for your devices.</em></p>
+{{end}}
+
+{{end}}
+{{end}}

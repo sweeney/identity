@@ -49,7 +49,7 @@ func newRouter(t *testing.T, userSvc *mocks.MockUserServicer) http.Handler {
 
 	return admin.NewRouter(admin.Config{
 		SessionSecret: testSessionSecret,
-	}, authSvc, userSvc, oauthClients, auditRepo, nil, nil, nil)
+	}, authSvc, userSvc, oauthClients, auditRepo, nil, nil, nil, nil)
 }
 
 func loginSession(t *testing.T, handler http.Handler) *http.Cookie {
@@ -378,7 +378,7 @@ func newRouterWithUserState(t *testing.T, user *domain.User, userErr error) http
 
 	return admin.NewRouter(admin.Config{
 		SessionSecret: testSessionSecret,
-	}, authSvc, userSvc, oauthClients, auditRepo, nil, nil, nil)
+	}, authSvc, userSvc, oauthClients, auditRepo, nil, nil, nil, nil)
 }
 
 func TestAdminRequireSession_DeactivatedAdmin(t *testing.T) {
@@ -471,7 +471,7 @@ func newRouterWithOAuth(t *testing.T) (http.Handler, *mocks.MockOAuthClientRepos
 
 	handler := admin.NewRouter(admin.Config{
 		SessionSecret: testSessionSecret,
-	}, authSvc, userSvc, oauthClients, auditRepo, nil, nil, nil)
+	}, authSvc, userSvc, oauthClients, auditRepo, nil, nil, nil, nil)
 	return handler, oauthClients, auditRepo
 }
 
@@ -920,7 +920,7 @@ func newRouterWithOAuthAndBackup(t *testing.T) (http.Handler, *mocks.MockOAuthCl
 
 	handler := admin.NewRouter(admin.Config{
 		SessionSecret: testSessionSecret,
-	}, authSvc, userSvc, oauthClients, auditRepo, backupSvc, nil, nil)
+	}, authSvc, userSvc, oauthClients, auditRepo, backupSvc, nil, nil, nil)
 	return handler, oauthClients, backupSvc
 }
 

@@ -21,11 +21,11 @@ import (
 )
 
 func newTestRouter(svc service.OAuthServicer) http.Handler {
-	return oauth.NewRouter(svc, "", nil, nil, nil, "", "")
+	return oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 }
 
 func newTestRouterWithAuth(svc service.OAuthServicer, authSvc service.AuthServicer) http.Handler {
-	return oauth.NewRouter(svc, "", nil, authSvc, nil, "", "")
+	return oauth.NewRouter(svc, "", nil, authSvc, nil, nil, "", "")
 }
 
 func getAuthorize(t *testing.T, h http.Handler, params map[string]string) *httptest.ResponseRecorder {
@@ -377,7 +377,7 @@ func TestTokenEndpoint_UnsupportedGrantType(t *testing.T) {
 }
 
 func TestNewRouter_NilService_Returns404(t *testing.T) {
-	h := oauth.NewRouter(nil, "", nil, nil, nil, "", "")
+	h := oauth.NewRouter(nil, "", nil, nil, nil, nil, "", "")
 	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -407,7 +407,7 @@ func mintPromptCookie(t *testing.T, userID string) *http.Cookie {
 func TestPasskeyPrompt_CustomSchemeSkipURL(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := mocks.NewMockOAuthServicer(ctrl)
-	h := oauth.NewRouter(svc, "", nil, nil, nil, oauthTestSessionKey, "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, oauthTestSessionKey, "")
 
 	nextURL := "com.foo.bar://callback?code=abc123"
 	req := httptest.NewRequest(http.MethodGet, "/oauth/passkey-prompt?next="+url.QueryEscape(nextURL), nil)
@@ -426,7 +426,7 @@ func TestPasskeyPrompt_CustomSchemeSkipURL(t *testing.T) {
 func TestPasskeyPrompt_NoSession_Redirects(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := mocks.NewMockOAuthServicer(ctrl)
-	h := oauth.NewRouter(svc, "", nil, nil, nil, oauthTestSessionKey, "")
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, oauthTestSessionKey, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/oauth/passkey-prompt?next=com.foo.bar://callback", nil)
 	rr := httptest.NewRecorder()

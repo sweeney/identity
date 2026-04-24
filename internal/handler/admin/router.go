@@ -19,7 +19,7 @@ type Config struct {
 }
 
 // NewRouter builds the /admin mux.
-func NewRouter(cfg Config, authSvc service.AuthServicer, userSvc service.UserServicer, oauthClients domain.OAuthClientRepository, auditRepo domain.AuditRepository, backupSvc domain.BackupService, tokenIssuer *auth.TokenIssuer, webauthnSvc service.WebAuthnServicer) http.Handler {
+func NewRouter(cfg Config, authSvc service.AuthServicer, userSvc service.UserServicer, oauthClients domain.OAuthClientRepository, auditRepo domain.AuditRepository, backupSvc domain.BackupService, tokenIssuer *auth.TokenIssuer, webauthnSvc service.WebAuthnServicer, deviceSvc service.DeviceFlowServicer) http.Handler {
 	funcs := template.FuncMap{
 		"assetVer": func() string { return ui.AssetVersion },
 	}
@@ -35,6 +35,7 @@ func NewRouter(cfg Config, authSvc service.AuthServicer, userSvc service.UserSer
 		authSvc:      authSvc,
 		userSvc:      userSvc,
 		webauthnSvc:  webauthnSvc,
+		deviceSvc:    deviceSvc,
 		oauthClients: oauthClients,
 		auditRepo:    auditRepo,
 		backupSvc:    backupSvc,
@@ -75,6 +76,14 @@ func NewRouter(cfg Config, authSvc service.AuthServicer, userSvc service.UserSer
 	mux.Handle("POST /admin/oauth/{id}/generate-secret", h.requireSession(h.requireCSRF(http.HandlerFunc(h.oauthGenerateSecret))))
 	mux.Handle("POST /admin/oauth/{id}/rotate-secret", h.requireSession(h.requireCSRF(http.HandlerFunc(h.oauthRotateSecret))))
 	mux.Handle("POST /admin/oauth/{id}/clear-prev-secret", h.requireSession(h.requireCSRF(http.HandlerFunc(h.oauthClearPrevSecret))))
+
+	// Device flow claim codes (per OAuth client)
+	if deviceSvc != nil {
+		mux.Handle("GET /admin/oauth/{id}/claim-codes", h.requireSession(http.HandlerFunc(h.claimCodesList)))
+		mux.Handle("GET /admin/oauth/{id}/claim-codes/new", h.requireSession(http.HandlerFunc(h.claimCodesNewGet)))
+		mux.Handle("POST /admin/oauth/{id}/claim-codes/new", h.requireSession(h.requireCSRF(http.HandlerFunc(h.claimCodesGenerate))))
+		mux.Handle("POST /admin/oauth/{id}/claim-codes/{claimID}/revoke", h.requireSession(h.requireCSRF(http.HandlerFunc(h.claimCodeRevoke))))
+	}
 
 	// Passkeys
 	mux.Handle("GET /admin/passkeys/prompt", h.requireSession(http.HandlerFunc(h.passkeyPrompt)))

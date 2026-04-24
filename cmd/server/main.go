@@ -191,6 +191,8 @@ func run() error {
 	oauthClientStore := store.NewOAuthClientStore(database)
 	oauthCodeStore := store.NewOAuthCodeStore(database)
 	auditStore := store.NewAuditStore(database)
+	deviceAuthStore := store.NewDeviceAuthorizationStore(database)
+	claimCodeStore := store.NewClaimCodeStore(database)
 
 	// JWT signing keys and session secret (all DB-managed, generated on first run)
 	secrets, err := resolveServerSecrets(database)
@@ -230,6 +232,11 @@ func run() error {
 	authSvc := service.NewAuthService(issuer, userStore, tokenStore, backupMgr, auditStore, cfg.RefreshTokenTTL)
 	userSvc := service.NewUserService(userStore, tokenStore, backupMgr, auditStore, 10)
 	oauthSvc := service.NewOAuthService(authSvc, issuer, oauthClientStore, oauthCodeStore, auditStore, 60*time.Second)
+	deviceSvc := service.NewDeviceFlowService(authSvc, oauthClientStore, deviceAuthStore, claimCodeStore, auditStore, service.DeviceFlowConfig{
+		DeviceCodeTTL:   10 * time.Minute,
+		PollInterval:    5,
+		VerificationURI: cfg.JWTIssuer + "/oauth/device",
+	})
 
 	// WebAuthn / Passkeys (optional — enabled when WEBAUTHN_RP_ID is set, or automatically in development)
 	var webauthnSvc service.WebAuthnServicer
@@ -280,6 +287,9 @@ func run() error {
 				if err := oauthCodeStore.DeleteExpiredAndUsed(); err != nil {
 					log.Printf("oauth code cleanup error: %v", err)
 				}
+				if err := deviceAuthStore.DeleteExpired(); err != nil {
+					log.Printf("device authorization cleanup error: %v", err)
+				}
 				if waChallengeStore != nil {
 					if err := waChallengeStore.DeleteExpired(); err != nil {
 						log.Printf("webauthn challenge cleanup error: %v", err)
@@ -325,7 +335,7 @@ func run() error {
 	mux.Handle("/api/v1/", apiRouter)
 	// All auth endpoints that accept credentials must use the strict rate limiter:
 	//   POST /api/v1/auth/login, POST /oauth/token, POST /oauth/authorize, POST /admin/login
-	oauthRouter := oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy, issuer, authSvc, webauthnSvc, secrets.Session, cfg.SiteName)
+	oauthRouter := oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy, issuer, authSvc, webauthnSvc, deviceSvc, secrets.Session, cfg.SiteName)
 	mux.Handle("POST /oauth/token", wrapAuth(oauthRouter))
 	mux.Handle("POST /oauth/authorize", wrapAuth(oauthRouter))
 	mux.Handle("POST /oauth/introspect", wrapAuth(oauthRouter))
@@ -335,7 +345,7 @@ func run() error {
 		Production:    cfg.IsProduction(),
 		TrustProxy:    cfg.TrustProxy,
 		SiteName:      cfg.SiteName,
-	}, authSvc, userSvc, oauthClientStore, auditStore, backupMgr, issuer, webauthnSvc)
+	}, authSvc, userSvc, oauthClientStore, auditStore, backupMgr, issuer, webauthnSvc, deviceSvc)
 	mux.Handle("POST /admin/login", wrapAuth(adminRouter))
 	// All admin POST endpoints that call verifyAdminPassword must use the strict rate
 	// limiter (5/min) so password re-confirmation cannot be brute-forced faster than login.

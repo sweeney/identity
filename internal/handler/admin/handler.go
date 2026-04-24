@@ -54,6 +54,7 @@ type adminHandler struct {
 	authSvc      service.AuthServicer
 	userSvc      service.UserServicer
 	webauthnSvc  service.WebAuthnServicer
+	deviceSvc    service.DeviceFlowServicer
 	oauthClients domain.OAuthClientRepository
 	auditRepo    domain.AuditRepository
 	backupSvc    domain.BackupService
