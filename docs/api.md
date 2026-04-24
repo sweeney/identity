@@ -455,9 +455,30 @@ Zero-downtime — the service continues authenticating throughout.
 
 ---
 
-## Device Authorization Flow (RFC 8628)
+## Device Authorization Flow (RFC 8628) — Firmware Guide
 
 For embedded devices and headless hardware that cannot open a browser. The device asks the server to start a session, then polls until a human approves it from any browser. Two modes are supported: **standard** (device has a screen) and **claim-code** (device has no screen, ships with a pre-baked code).
+
+> **If you are a firmware developer or AI coding agent building a device:** read this entire section top to bottom. The HTTP contract is below; the gotchas that will actually bite you on a constrained device (clock, TLS roots, atomic NVS writes, refresh rotation ordering, polling jitter) are in [Firmware Implementation Notes](#firmware-implementation-notes) near the bottom. Don't skip them.
+
+### Choose a flow
+
+```
+Does the device have a display that can render ≥ 20 characters?
+│
+├─ Yes ──► Standard flow. User types the code at your verification URL.
+│         Each boot is a fresh pairing unless you persist the refresh token.
+│
+└─ No ───► Claim-code flow. Bake a 12-char code into firmware, print it on a sticker.
+          User scans the sticker once to pair. Re-boots auto-pair forever
+          unless an admin revokes the code.
+```
+
+### What you need from the admin before you can build
+
+1. A **client_id** (a short string like `my-sensor`) — bake this into firmware as a compile-time constant.
+2. For claim-code devices: **one raw claim code per unit** — generated at `/admin/oauth/{client_id}/claim-codes`. The admin sees them exactly once; they get flashed into each device and printed on its sticker.
+3. The **verification URL base** — usually `https://<your-identity-host>/oauth/device`. Hard-code this or fetch it from `verification_uri` at runtime.
 
 ### Prerequisites
 
@@ -647,26 +668,125 @@ If a device is decommissioned or stolen, an admin revokes its claim code at `/ad
 
 ---
 
-### Token Storage on Embedded Devices
+### Firmware Implementation Notes
+
+Constrained devices have a handful of failure modes that a server-side OAuth client never has to think about. Get these right up front.
+
+#### Quick DO / DON'T checklist
+
+| Do | Don't |
+|---|---|
+| Sync the system clock via NTP **before** making any HTTPS call | Assume the MCU clock is correct on first boot |
+| Ship a pinned CA bundle or the server's fingerprint | Trust the platform default CA pool on an ESP32 — there isn't one |
+| Persist the new refresh token **before** returning success from your refresh function | Keep the old refresh token around "just in case" — rotation is instantaneous |
+| Add random jitter (±20%) to every poll interval | Poll at the exact same second as every other device on your network |
+| Treat `slow_down` as a one-way ratchet — add 5 s to your interval for the rest of the session | Reset the interval back to 5 s after any successful poll |
+| Retry transient network errors (DNS, TCP RST, TLS handshake fail) with exponential backoff | Treat a network error the same as `access_denied` |
+| Keep `device_code` in RAM only; zero it after exchange | Store `device_code` in NVS |
+| Treat the claim code as the device's permanent identity | Regenerate the claim code at runtime |
+
+#### Clock and NTP
+
+Access tokens are JWTs with an `exp` claim. The server validates `exp` against **its own** clock, so your device clock only matters if your firmware inspects the JWT locally.
+
+- If you treat the access token as opaque and just use the server-provided `expires_in` to schedule the next refresh, you can skip NTP entirely. This is the recommended approach.
+- If you do parse the JWT (to check `exp` before sending a request, for example), sync via NTP first — SNTP is fine, pool.ntp.org works, ±10 s is plenty.
+- TLS itself is tolerant: Go's `crypto/tls` on the server side doesn't care about the client's clock, and `modernc/sqlite`'s cert chain only cares about the server-presented certificate.
+
+#### TLS root certificates
+
+In production the identity server is fronted by Cloudflare Tunnel, so the cert chain terminates at a well-known public CA. On an MCU with no preinstalled CA pool you have two choices:
+
+- **Bundle a CA**: flash Cloudflare's root (and one backup) as a PEM string into your firmware. Smaller, easier to audit, but you must re-flash devices if the root rotates (Cloudflare re-issues every few years).
+- **Pin the SPKI fingerprint**: compute SHA-256 of the server cert's SubjectPublicKeyInfo and compare on every handshake. No re-flash needed when the cert is re-issued as long as the same key pair is reused. Most IoT deployments do this.
+
+Arduino's `WiFiClientSecure.setCACert(pem)` and ESP-IDF's `esp_tls_cfg_t.cacert_pem_buf` both work. Don't use `setInsecure()` in production.
+
+#### Atomic NVS writes
+
+Flash loses state if power is cut between an erase and a program. If your platform exposes atomic NVS (ESP-IDF's `nvs_flash` is durable per-key but **not** across keys; Zephyr NVS is per-entry atomic), prefer the native API. Otherwise:
+
+1. Write the new refresh token to a **shadow key** (`refresh_token.new`).
+2. Commit/flush.
+3. Rename atomically to the canonical key.
+
+A half-written refresh token bricks the device — it doesn't match server state and every future refresh returns `token_family_compromised`, which forces you back through the claim-code flow. That's survivable but embarrassing.
+
+#### Refresh rotation ordering (critical)
+
+Every `POST /api/v1/auth/refresh` invalidates the old refresh token **the moment the server processes it**. Your firmware sees the response window, but the server has already moved on. Therefore:
+
+```
+1. Hold a local copy of the current refresh token in RAM.
+2. POST /api/v1/auth/refresh with it.
+3. On 200 OK: write the *new* refresh token to NVS.  ← this step must not fail.
+4. Update the in-RAM access token.
+```
+
+If step 3 fails (NVS write error, power loss) you have lost access to this device's refresh chain. Recovery is the claim-code flow (auto-approves; no human interaction). This is why claim-code is a nicer answer than standard device flow for unattended hardware — recovery is graceful.
+
+Never retry a failed `/auth/refresh` with the same refresh token. The second call will fail with `token_family_compromised` and revoke every session for that user.
+
+#### Polling etiquette: jitter and rate limiting
+
+The server rate-limits `POST /oauth/token` at 5 requests per minute per IP. Two or three devices behind the same NAT polling in lockstep can starve each other.
+
+- **Add jitter**: `sleep(interval * (1 + random(-0.2, +0.2)))`.
+- **Increase interval on `slow_down`**: permanently add 5 seconds. Never decrease it within a session.
+- **Transient network errors get exponential backoff**: 1 s, 2 s, 4 s, up to `interval`. Don't treat network errors as auth errors.
+- **After 15 minutes of `authorization_pending`**: the `device_code` will expire. Start over from Step 1 rather than polling forever.
+
+#### Token and claim-code storage
 
 Embedded devices cannot use a hardware keychain. Store tokens in non-volatile storage (NVS, EEPROM, or a dedicated flash partition) and treat the storage as the security boundary.
 
 ```
-NVS key              Value
-──────────────────── ──────────────────────────────────────────
-"refresh_token"      opaque string, 30-day sliding lifetime
-"access_token"       JWT, 15-min lifetime (optional — re-derive on boot)
-"access_expiry"      Unix timestamp of access token expiry
+NVS key              Value                                     Write frequency
+──────────────────── ───────────────────────────────────────── ────────────────
+"refresh_token"      opaque string, 30-day sliding lifetime    every refresh (~15 min)
+"access_token"       JWT, 15-min lifetime (optional)           every refresh
+"access_expiry"      Unix timestamp of access token expiry     every refresh
+"claim_code"         12-char code (claim-code flow only)       once, at factory
 ```
+
+**Flash wear**: a refresh every 15 minutes is ~100 writes/day, ~35 K writes/year. ESP32 internal NVS is rated for ~100 K erase cycles per sector, which the NVS library spreads across sectors, so 10+ years of life is realistic. If you need more, persist access tokens in RAM only and only write `refresh_token` on change (it changes every refresh, so the saving is small).
 
 **Recommended boot strategy**:
 
 1. Read `refresh_token` from NVS.
-2. If present and not too old, try `POST /api/v1/auth/refresh` → new access + refresh tokens. Store both.
-3. If refresh fails (`invalid_refresh_token` / `token_family_compromised`) or NVS is empty, run the claim-code flow from scratch (Steps 1–2 above).
+2. If present, try `POST /api/v1/auth/refresh` → new access + refresh tokens. Persist both.
+3. If refresh fails (`invalid_refresh_token` / `token_family_compromised`) or NVS is empty, fall through to the claim-code flow.
 4. Never store the `device_code` — it is single-use per boot and expires in 10 minutes.
 
 **Claim code storage**: The claim code never changes. Flash it at the factory or include it in signed firmware. If you store it in NVS for flexibility, write it once and treat it as read-only. Losing the claim code is recoverable (admin can look it up by label); leaking it is not (an attacker could impersonate the device until the admin revokes it).
+
+#### Handling revocation
+
+If an admin revokes a device's claim code or an attacker triggers family-compromise detection:
+
+- Ongoing polls return `access_denied` (claim) or `token_family_compromised` (refresh).
+- Stop network traffic, clear `refresh_token` from NVS, and either enter an "unpaired" state or hard-reboot into the claim-code flow.
+- **Do not retry automatically** on `access_denied` — doing so flares rate limits and audit logs.
+
+#### Testing without hardware
+
+Every step is reachable over plain `curl`. If you're wiring up firmware in an LLM-driven loop, validate the server contract with curl first, then port to your MCU SDK. See `scripts/e2e-device-flow.sh` at the repo root for a working end-to-end script you can crib from — it exercises both flows and the error paths in 25 checks.
+
+```bash
+# Standard flow, start a session:
+curl -X POST https://id.example.com/oauth/device_authorization \
+  -d "client_id=my-sensor"
+
+# Claim-code flow:
+curl -X POST https://id.example.com/oauth/device/claim \
+  -d "client_id=my-sensor&claim_code=DQLC-V379-9RAQ"
+
+# Poll:
+curl -X POST https://id.example.com/oauth/token \
+  --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:device_code" \
+  --data-urlencode "client_id=my-sensor" \
+  --data-urlencode "device_code=Tz9Kw…"
+```
 
 ---
 
