@@ -1,6 +1,6 @@
 # Identity API — Integration Guide
 
-This document covers everything a client developer needs to integrate with the Identity service, including the direct API login flow and the OAuth 2.0 authorization code flow with PKCE.
+This document covers everything a client developer needs to integrate with the Identity service, including the direct API login flow, the OAuth 2.0 authorization code flow with PKCE, and the device authorization flow for embedded and headless hardware.
 
 ---
 
@@ -16,7 +16,7 @@ The Identity service is a self-hosted JWT authentication and identity management
 
 ---
 
-## Three Ways to Authenticate
+## Four Ways to Authenticate
 
 ### Option A: Direct API Login
 
@@ -48,6 +48,17 @@ Best for backend services, cron jobs, and microservices that need to call APIs w
 4. When the token expires (15 min), re-authenticate with the same credentials (no refresh token)
 
 See [Client Credentials Flow](#client-credentials-flow) below for details.
+
+### Option D: Device Authorization Grant (RFC 8628)
+
+Best for embedded hardware, IoT sensors, and any device that cannot open a browser — ESP32s, Raspberry Pis, headless servers, smart appliances.
+
+Two variants depending on whether the device has a screen:
+
+- **Standard flow** — device displays an 8-char code (`ABCD-EFGH`) and a URL; user visits the URL, types the code, logs in. Device polls until approved.
+- **Claim-code flow** — device ships with a 12-char code pre-baked in firmware and printed as a QR sticker. User scans the sticker once to pair. On every subsequent boot the device authenticates automatically without any user interaction.
+
+See [Device Authorization Flow](#device-authorization-flow-rfc-8628) below for details.
 
 ---
 
@@ -444,7 +455,336 @@ Zero-downtime — the service continues authenticating throughout.
 
 ---
 
-## Token Lifecycle
+## Device Authorization Flow (RFC 8628)
+
+For embedded devices and headless hardware that cannot open a browser. The device asks the server to start a session, then polls until a human approves it from any browser. Two modes are supported: **standard** (device has a screen) and **claim-code** (device has no screen, ships with a pre-baked code).
+
+### Prerequisites
+
+1. In the admin UI at `/admin/oauth/new`, register an OAuth client with:
+   - **Grant Types**: `urn:ietf:params:oauth:grant-type:device_code` checked
+   - **Client ID**: a short identifier such as `my-sensor` (no secret required)
+   - **Scopes** and **Audience**: configure as needed for your API
+2. Note the **Client ID** — it is baked into device firmware.
+3. For the claim-code flow only: go to `/admin/oauth/{client_id}/claim-codes`, generate one claim code per physical device, and attach the printed sticker (or flash the code into firmware) before shipping.
+
+---
+
+### Standard Device Flow (device has a screen)
+
+Use this when the device can display at least a short alphanumeric string and a URL.
+
+#### Step 1 — Request a device session
+
+```
+POST /oauth/device_authorization
+Content-Type: application/x-www-form-urlencoded
+
+client_id=my-sensor
+&scope=read:data          (optional)
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `client_id` | Yes | Registered client ID |
+| `scope` | No | Space-delimited scopes; defaults to all client scopes |
+
+**Response 200**:
+
+```json
+{
+  "device_code":              "Tz9Kw…",
+  "user_code":                "ABCD-EFGH",
+  "verification_uri":         "https://id.example.com/oauth/device",
+  "verification_uri_complete": "https://id.example.com/oauth/device?user_code=ABCD-EFGH",
+  "expires_in":               600,
+  "interval":                 5
+}
+```
+
+| Field | Description |
+|---|---|
+| `device_code` | Opaque polling secret — keep in RAM only, never log |
+| `user_code` | 8-char code to show to the user (`XXXX-XXXX` format) |
+| `verification_uri` | URL to display alongside the code |
+| `verification_uri_complete` | URL with the code pre-filled — embed in a QR if the device has a display |
+| `expires_in` | Seconds until both codes expire (600 s / 10 min) |
+| `interval` | Minimum seconds between polls — start here, increase on `slow_down` |
+
+#### Step 2 — Show the code to the user
+
+Display `user_code` and `verification_uri` on the device screen (or print them to a serial console for development). If the device can render a QR code, use `verification_uri_complete` so the user does not have to type the code manually.
+
+The user opens the URL in any browser, logs in, and clicks Approve. The device does not need to know when this happens — it finds out by polling.
+
+#### Step 3 — Poll for tokens
+
+```
+POST /oauth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:device_code
+&client_id=my-sensor
+&device_code=Tz9Kw…
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `grant_type` | Yes | Must be `urn:ietf:params:oauth:grant-type:device_code` |
+| `client_id` | Yes | Same client ID as Step 1 |
+| `device_code` | Yes | The `device_code` from Step 1 |
+
+**On approval — Response 200**:
+
+```json
+{
+  "access_token":  "eyJhbGc…",
+  "token_type":    "Bearer",
+  "expires_in":    900,
+  "refresh_token": "dGhpcyBpcyBhIHJhbmRvbSB0b2tlbg"
+}
+```
+
+Tokens are identical to those from direct login — the same refresh rotation and theft detection apply. Store the refresh token in non-volatile storage; see [Token Storage on Embedded Devices](#token-storage-on-embedded-devices).
+
+**While waiting — error responses**:
+
+| `error` | Action |
+|---|---|
+| `authorization_pending` | Not approved yet — wait `interval` seconds and poll again |
+| `slow_down` | Polling too fast — add 5 seconds to your interval permanently, then retry |
+| `access_denied` | User clicked Deny — stop polling, show an error, restart the flow if needed |
+| `expired_token` | The 10-minute window closed — restart from Step 1 |
+| `invalid_grant` | `device_code` unknown or mismatched `client_id` — restart from Step 1 |
+
+> **Do not poll faster than `interval` seconds.** The server returns `slow_down` if you do, which increases the required interval. Every `slow_down` response must permanently increase your interval by 5 seconds for the remainder of that session.
+
+---
+
+### Claim-Code Flow (screenless device)
+
+Use this when the device has no display and cannot show a code to the user. The claim code is a 12-char string (`XXXX-XXXX-XXXX`) generated by the admin, printed on a QR sticker attached to the device or flashed into firmware. The user scans the sticker once to pair. From then on the device authenticates on its own.
+
+#### Boot sequence
+
+```
+Boot
+ │
+ ├─ POST /oauth/device/claim  (claim_code from firmware)
+ │      │
+ │      └─► device_code  (valid for 10 min)
+ │
+ ├─ Poll POST /oauth/token with device_code
+ │      │
+ │      ├─ authorization_pending  →  (first boot, unbound) wait for user to scan sticker
+ │      │                            user visits verification_uri, logs in, approves
+ │      │                            polling resumes → tokens issued
+ │      │
+ │      └─ access_token + refresh_token  →  (bound) store in NVS, proceed
+ │
+ └─ Use access_token, refresh before expiry
+```
+
+#### Step 1 — Exchange claim code for a device session
+
+```
+POST /oauth/device/claim
+Content-Type: application/x-www-form-urlencoded
+
+client_id=my-sensor
+&claim_code=DQLC-V379-9RAQ
+&scope=read:data          (optional)
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `client_id` | Yes | Registered client ID (baked in firmware) |
+| `claim_code` | Yes | 12-char claim code (baked in firmware or NVS) |
+| `scope` | No | Space-delimited scopes |
+
+**Response 200**:
+
+```json
+{
+  "device_code":              "Hz4Rm…",
+  "user_code":                "QHLP-5B2W",
+  "claim_code":               "DQLC-V379-9RAQ",
+  "verification_uri":         "https://id.example.com/oauth/device",
+  "verification_uri_complete": "https://id.example.com/oauth/device?code=DQLC-V379-9RAQ",
+  "expires_in":               600,
+  "interval":                 5
+}
+```
+
+Note that `verification_uri_complete` uses the claim code (`?code=…`), not the session user code, so the sticker QR remains valid across reboots.
+
+**Error responses**:
+
+| `error` | Cause |
+|---|---|
+| `invalid_grant` | Claim code not found or already revoked — contact admin |
+| `invalid_client` | Unknown `client_id` |
+| `unauthorized_client` | Client not configured for device flow |
+
+#### Step 2 — Poll for tokens (same as standard flow)
+
+Poll `POST /oauth/token` with the `device_code` from Step 1 using the same request format and error-handling rules as the standard flow above.
+
+**First boot (unbound claim code):** The server returns `authorization_pending` until the user scans the QR sticker on the device and approves. After approval, the claim code is permanently bound to that user — no further user interaction is ever needed for this device.
+
+**Subsequent boots (bound claim code):** The session is auto-approved the moment it is created. Your first poll (or second at most) returns tokens immediately.
+
+#### Re-authentication on every boot
+
+Because the claim code is permanent, the device can always get fresh tokens by repeating Steps 1–2 — even if its NVS is wiped or the refresh token is corrupted. This is the intended recovery path for factory resets.
+
+#### Revocation
+
+If a device is decommissioned or stolen, an admin revokes its claim code at `/admin/oauth/{client_id}/claim-codes`. After revocation:
+- Any ongoing poll returns `access_denied`
+- Future calls to `POST /oauth/device/claim` return `invalid_grant`
+- Existing refresh tokens derived from the claim code continue to work until they expire or are explicitly invalidated — call `POST /api/v1/auth/logout` (all sessions) to clear them immediately if needed
+
+---
+
+### Token Storage on Embedded Devices
+
+Embedded devices cannot use a hardware keychain. Store tokens in non-volatile storage (NVS, EEPROM, or a dedicated flash partition) and treat the storage as the security boundary.
+
+```
+NVS key              Value
+──────────────────── ──────────────────────────────────────────
+"refresh_token"      opaque string, 30-day sliding lifetime
+"access_token"       JWT, 15-min lifetime (optional — re-derive on boot)
+"access_expiry"      Unix timestamp of access token expiry
+```
+
+**Recommended boot strategy**:
+
+1. Read `refresh_token` from NVS.
+2. If present and not too old, try `POST /api/v1/auth/refresh` → new access + refresh tokens. Store both.
+3. If refresh fails (`invalid_refresh_token` / `token_family_compromised`) or NVS is empty, run the claim-code flow from scratch (Steps 1–2 above).
+4. Never store the `device_code` — it is single-use per boot and expires in 10 minutes.
+
+**Claim code storage**: The claim code never changes. Flash it at the factory or include it in signed firmware. If you store it in NVS for flexibility, write it once and treat it as read-only. Losing the claim code is recoverable (admin can look it up by label); leaking it is not (an attacker could impersonate the device until the admin revokes it).
+
+---
+
+### C Example (ESP32 / Arduino)
+
+```c
+// Pseudocode — adapt HTTPClient calls to your WiFi library.
+// Assumes wifi_post(url, body, response_buf, buf_len) returns HTTP status.
+
+#define IDENTITY_URL   "https://id.example.com"
+#define CLIENT_ID      "my-sensor"
+#define CLAIM_CODE_KEY "claim_code"    // NVS key
+#define REFRESH_KEY    "refresh_token" // NVS key
+
+// Claim-code boot sequence. Returns 0 on success, -1 on error.
+int device_authenticate(char *access_token_out) {
+    char claim_code[20];
+    nvs_get_str(CLAIM_CODE_KEY, claim_code, sizeof(claim_code));
+
+    // Step 1: exchange claim code for a device session
+    char body[256], resp[1024];
+    snprintf(body, sizeof(body),
+        "client_id=" CLIENT_ID "&claim_code=%s", claim_code);
+    if (wifi_post(IDENTITY_URL "/oauth/device/claim", body, resp, sizeof(resp)) != 200)
+        return -1; // invalid/revoked claim code — contact admin
+
+    char device_code[128];
+    int interval = 5; // seconds
+    json_get_str(resp, "device_code", device_code, sizeof(device_code));
+    json_get_int(resp, "interval", &interval);
+
+    // Step 2: poll until approved
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(interval * 1000));
+
+        snprintf(body, sizeof(body),
+            "grant_type=urn:ietf:params:oauth:grant-type:device_code"
+            "&client_id=" CLIENT_ID
+            "&device_code=%s", device_code);
+        int status = wifi_post(IDENTITY_URL "/oauth/token", body, resp, sizeof(resp));
+
+        if (status == 200) {
+            char refresh[256];
+            json_get_str(resp, "access_token",  access_token_out, 512);
+            json_get_str(resp, "refresh_token", refresh, sizeof(refresh));
+            nvs_set_str(REFRESH_KEY, refresh); // persist for next boot
+            return 0;
+        }
+
+        char err[64];
+        json_get_str(resp, "error", err, sizeof(err));
+
+        if (strcmp(err, "authorization_pending") == 0) {
+            continue; // keep waiting
+        } else if (strcmp(err, "slow_down") == 0) {
+            interval += 5; // back off permanently for this session
+        } else {
+            // access_denied / expired_token / invalid_grant — give up
+            return -1;
+        }
+    }
+}
+
+void app_main(void) {
+    char access_token[512] = {0};
+
+    // Try refresh first (fast path on subsequent boots)
+    char saved_refresh[256];
+    if (nvs_get_str(REFRESH_KEY, saved_refresh, sizeof(saved_refresh)) == OK) {
+        char body[512], resp[1024];
+        snprintf(body, sizeof(body),
+            "{\"refresh_token\":\"%s\"}", saved_refresh);
+        if (http_post_json(IDENTITY_URL "/api/v1/auth/refresh",
+                           body, resp, sizeof(resp)) == 200) {
+            json_get_str(resp, "access_token",  access_token,    sizeof(access_token));
+            json_get_str(resp, "refresh_token", saved_refresh,   sizeof(saved_refresh));
+            nvs_set_str(REFRESH_KEY, saved_refresh);
+            goto authenticated;
+        }
+        // Refresh failed — fall through to claim-code flow
+        nvs_erase_key(REFRESH_KEY);
+    }
+
+    // Claim-code flow (first boot or after refresh failure)
+    if (device_authenticate(access_token) != 0) {
+        ESP_LOGE("auth", "Authentication failed — check claim code or admin");
+        esp_restart();
+    }
+
+authenticated:
+    // access_token is valid; use it on every request
+    // Repeat the refresh/claim flow when it expires (check expires_in or handle 401)
+}
+```
+
+---
+
+### Device Flow Error Reference
+
+Errors from `POST /oauth/token` use RFC 6749 format:
+
+```json
+{ "error": "authorization_pending", "error_description": "The user has not yet approved this device." }
+```
+
+| `error` | Meaning | Action |
+|---|---|---|
+| `authorization_pending` | User has not approved yet | Wait `interval` seconds, poll again |
+| `slow_down` | Polling interval too short | Add 5 s to interval permanently, then poll again |
+| `access_denied` | User denied or account disabled | Stop polling; restart flow or surface error to user |
+| `expired_token` | `device_code` expired (10 min window) | Restart from Step 1 |
+| `invalid_grant` | Unknown `device_code` or claim code revoked | Restart from Step 1 (standard) or contact admin (claim-code) |
+| `invalid_client` | Unknown `client_id` | Fix firmware — client ID is wrong |
+| `unauthorized_client` | Client not enabled for device flow | Admin must enable the `device_code` grant on the client |
+
+---
+
+
 
 ```
 App Launch
@@ -618,6 +958,9 @@ Uses RFC 6749 format — see the OAuth section above.
 | GET | `/oauth/authorize` | None | Render login form for OAuth client |
 | POST | `/oauth/authorize` | None | Submit credentials, receive redirect with code |
 | POST | `/oauth/token` | None | Exchange code or refresh token for tokens |
+| POST | `/oauth/device_authorization` | None | Begin standard device flow — returns `device_code` + `user_code` |
+| POST | `/oauth/device/claim` | None | Begin claim-code flow — exchange pre-shared claim code for `device_code` |
+| GET | `/oauth/device` | None | Browser-facing device verification page (user types/scans code here) |
 
 ### Admin UI
 
@@ -677,6 +1020,13 @@ All authentication events are recorded to an immutable audit log, visible at `/a
 | `token_family_compromised` | Replayed refresh token detected |
 | `logout` | Single-session logout |
 | `logout_all` | All-sessions logout |
+| `device_authorize_issued` | Device session started (`/oauth/device_authorization` or `/oauth/device/claim`) |
+| `device_authorize_approved` | User approved a device session (or auto-approved via bound claim code) |
+| `device_authorize_denied` | User denied a device session |
+| `device_token_issued` | Tokens issued to a device after approval |
+| `claim_code_created` | Admin generated a new claim code |
+| `claim_code_bound` | Claim code bound to a user on first approval |
+| `claim_code_revoked` | Admin revoked a claim code |
 
 Each event captures: username, user ID, client ID (for OAuth), IP address, device hint, and timestamp.
 
