@@ -207,9 +207,14 @@ func runIdentityServer() error {
 			return fmt.Errorf("r2 uploader: %w", err)
 		}
 		mgr := backup.NewManager(backup.Config{
-			DBPath:     cfg.DBPath,
-			BucketName: cfg.R2BucketName,
-			Env:        string(cfg.Env),
+			DBPath:      cfg.DBPath,
+			BucketName:  cfg.R2BucketName,
+			Env:         string(cfg.Env),
+			ServiceName: "identity",
+			// Identity keeps its pre-existing behavior: no per-write trigger
+			// throttling. Triggers are rare (seeded during user/admin
+			// mutations) and the existing coalescing channel is enough.
+			MinInterval: 0,
 		}, uploader, auditStore)
 		backupMgr = mgr
 	} else {

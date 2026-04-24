@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,12 @@ type Config struct {
 	DBPath     string
 	BucketName string
 	Env        string // "development" or "production" — used as R2 key prefix
+	// ServiceName is used as the per-service key segment and filename prefix.
+	// Defaults to "identity" for backward compatibility when unset.
+	ServiceName string
+	// MinInterval is the minimum time between consecutive triggered backups.
+	// Scheduled daily backups are unaffected. Zero disables throttling.
+	MinInterval time.Duration
 }
 
 // Manager handles scheduled and on-demand database backups.
@@ -37,10 +44,17 @@ type Manager struct {
 	uploader Uploader
 	audit    domain.AuditRepository
 	trigger  chan struct{}
+
+	mu       sync.Mutex
+	lastRun  time.Time
+	pendingT *time.Timer
 }
 
-// NewManager creates a Manager.
+// NewManager creates a Manager. ServiceName defaults to "identity" if unset.
 func NewManager(cfg Config, uploader Uploader, audit domain.AuditRepository) *Manager {
+	if cfg.ServiceName == "" {
+		cfg.ServiceName = "identity"
+	}
 	return &Manager{
 		cfg:      cfg,
 		uploader: uploader,
@@ -56,7 +70,10 @@ func (m *Manager) Start(ctx context.Context) {
 }
 
 // TriggerAsync queues a backup asynchronously. If a backup is already pending
-// the send is a no-op (coalescing channel of size 1).
+// the send is a no-op (coalescing channel of size 1). When MinInterval is
+// configured, triggers arriving inside the cooldown window are deferred to
+// fire once at the window's end, so rapid bursts coalesce into a single
+// upload.
 func (m *Manager) TriggerAsync() {
 	select {
 	case m.trigger <- struct{}{}:
@@ -71,7 +88,6 @@ func (m *Manager) RunNow() error {
 }
 
 func (m *Manager) loop(ctx context.Context) {
-	// Daily ticker fires at the next 03:00 UTC
 	daily := m.nextDailyTick()
 
 	for {
@@ -79,21 +95,55 @@ func (m *Manager) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-m.trigger:
-			if err := m.run(); err != nil {
-				log.Printf("backup failed: %v", err)
-			}
+			m.handleTrigger()
 		case <-daily:
 			daily = m.nextDailyTick()
 			if err := m.run(); err != nil {
 				log.Printf("scheduled backup failed: %v", err)
 			}
+			m.markRan()
 		}
 	}
 }
 
+// handleTrigger runs a backup unless we are still inside the cooldown window
+// from the last one. In that case the trigger is deferred via a single timer
+// so bursts collapse to one upload at the end of the window.
+func (m *Manager) handleTrigger() {
+	m.mu.Lock()
+	if m.cfg.MinInterval > 0 && !m.lastRun.IsZero() {
+		sinceLast := time.Since(m.lastRun)
+		if sinceLast < m.cfg.MinInterval {
+			if m.pendingT == nil {
+				remaining := m.cfg.MinInterval - sinceLast
+				m.pendingT = time.AfterFunc(remaining, func() {
+					m.mu.Lock()
+					m.pendingT = nil
+					m.mu.Unlock()
+					m.TriggerAsync()
+				})
+			}
+			m.mu.Unlock()
+			return
+		}
+	}
+	m.mu.Unlock()
+
+	if err := m.run(); err != nil {
+		log.Printf("backup failed: %v", err)
+	}
+	m.markRan()
+}
+
+func (m *Manager) markRan() {
+	m.mu.Lock()
+	m.lastRun = time.Now()
+	m.mu.Unlock()
+}
+
 func (m *Manager) run() error {
 	start := time.Now()
-	key := backupKey(m.cfg.Env, start.UTC())
+	key := backupKey(m.cfg.Env, m.cfg.ServiceName, start.UTC())
 
 	log.Printf("backup: starting upload to %s/%s", m.cfg.BucketName, key)
 
@@ -102,7 +152,7 @@ func (m *Manager) run() error {
 		return m.uploader.Upload(context.Background(), key, "")
 	}
 
-	tmpFile, err := os.CreateTemp("", "identity-backup-*.sqlite3")
+	tmpFile, err := os.CreateTemp("", fmt.Sprintf("%s-backup-*.sqlite3", m.cfg.ServiceName))
 	if err != nil {
 		m.recordBackup(false, fmt.Sprintf("create temp file: %v", err))
 		return fmt.Errorf("create temp file: %w", err)
@@ -145,13 +195,26 @@ func (m *Manager) recordBackup(success bool, detail string) {
 }
 
 // backupKey returns the R2 object key for a backup at time t.
-func backupKey(env string, t time.Time) string {
+//
+// Format: {env}/backups/{service}/{YYYY/MM/DD}/{service}-{RFC3339}.sqlite3
+//
+// The service segment lets a single R2 bucket host backups for multiple
+// services (identity, config, ...) without collision. Legacy identity
+// backups at {env}/backups/{YYYY/MM/DD}/identity-*.sqlite3 remain
+// discoverable via ListBackupsWithPrefix because they sit under the same
+// {env}/backups/ prefix.
+func backupKey(env, service string, t time.Time) string {
 	if env == "" {
 		env = "development"
 	}
-	return filepath.ToSlash(fmt.Sprintf("%s/backups/%s/identity-%s.sqlite3",
+	if service == "" {
+		service = "identity"
+	}
+	return filepath.ToSlash(fmt.Sprintf("%s/backups/%s/%s/%s-%s.sqlite3",
 		env,
+		service,
 		t.Format("2006/01/02"),
+		service,
 		t.Format(time.RFC3339),
 	))
 }
