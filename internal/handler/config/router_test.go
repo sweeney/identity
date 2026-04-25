@@ -386,6 +386,47 @@ func TestPut_OversizedBody_Returns413(t *testing.T) {
 	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
 }
 
+// --- ACL response headers ---
+
+func TestGet_ReturnsACLHeaders(t *testing.T) {
+	h := newHarness(t)
+	now := time.Now().UTC()
+	require.NoError(t, h.repo.Create(&domain.ConfigNamespace{
+		Name: "prefs", ReadRole: "user", WriteRole: "admin",
+		Document: []byte(`{"x":1}`), UpdatedAt: now, UpdatedBy: "u", CreatedAt: now,
+	}))
+	resp, _ := h.do("GET", "/api/v1/config/prefs", h.adminTok, nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "user", resp.Header.Get("X-Read-Role"))
+	assert.Equal(t, "admin", resp.Header.Get("X-Write-Role"))
+}
+
+func TestGet_ACLHeaders_MatchStoredACL(t *testing.T) {
+	h := newHarness(t)
+	now := time.Now().UTC()
+	require.NoError(t, h.repo.Create(&domain.ConfigNamespace{
+		Name: "sec", ReadRole: "admin", WriteRole: "admin",
+		Document: []byte(`{}`), UpdatedAt: now, UpdatedBy: "u", CreatedAt: now,
+	}))
+	resp, _ := h.do("GET", "/api/v1/config/sec", h.adminTok, nil)
+	assert.Equal(t, "admin", resp.Header.Get("X-Read-Role"))
+	assert.Equal(t, "admin", resp.Header.Get("X-Write-Role"))
+}
+
+func TestPatchACL_ReturnsACLHeaders(t *testing.T) {
+	h := newHarness(t)
+	now := time.Now().UTC()
+	require.NoError(t, h.repo.Create(&domain.ConfigNamespace{
+		Name: "n", ReadRole: "admin", WriteRole: "admin",
+		Document: []byte(`{}`), UpdatedAt: now, UpdatedBy: "u", CreatedAt: now,
+	}))
+	resp, _ := h.do("PATCH", "/api/v1/config/namespaces/n", h.adminTok,
+		map[string]string{"read_role": "user", "write_role": "admin"})
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "user", resp.Header.Get("X-Read-Role"))
+	assert.Equal(t, "admin", resp.Header.Get("X-Write-Role"))
+}
+
 // --- PATCH ACL ---
 
 func TestPatchACL_AdminOnly(t *testing.T) {

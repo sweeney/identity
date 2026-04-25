@@ -24,7 +24,15 @@ window.ConfigAPI = (function () {
 
   return {
     list:     async ()             => check(await Auth.authedFetch(api(''))),
-    get:      async (ns)           => check(await Auth.authedFetch(api('/' + encodeURIComponent(ns)))),
+    get:      async (ns)           => {
+      const resp = await Auth.authedFetch(api('/' + encodeURIComponent(ns)));
+      const document = await check(resp);
+      return {
+        document,
+        readRole:  resp.headers.get('X-Read-Role'),
+        writeRole: resp.headers.get('X-Write-Role'),
+      };
+    },
     put:      async (ns, doc) => check(await Auth.authedFetch(api('/' + encodeURIComponent(ns)), {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },

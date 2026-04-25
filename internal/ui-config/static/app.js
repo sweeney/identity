@@ -177,9 +177,9 @@
     const status = el('div', { class: 'loading', text: 'Loading…' });
     root.appendChild(status);
 
-    let doc;
+    let doc, readRole, writeRole;
     try {
-      doc = await ConfigAPI.get(name);
+      ({ document: doc, readRole, writeRole } = await ConfigAPI.get(name));
     } catch (e) {
       root.removeChild(status);
       if (e.status === 404) {
@@ -190,13 +190,6 @@
       return root;
     }
     root.removeChild(status);
-
-    // List endpoint also returns ACL; fetch the full list once to find this row.
-    let aclRow = null;
-    try {
-      const list = await ConfigAPI.list();
-      aclRow = (list || []).find(r => r.name === name) || null;
-    } catch (_) { /* non-fatal */ }
 
     // ─ Document edit ─
     root.appendChild(el('h2', { text: 'Document' }));
@@ -227,7 +220,7 @@
     revertBtn.addEventListener('click', async () => {
       try {
         const fresh = await ConfigAPI.get(name);
-        editor.setValue(JSON.stringify(fresh, null, 2) + '\n');
+        editor.setValue(JSON.stringify(fresh.document, null, 2) + '\n');
         toast('Reverted to stored version');
       } catch (err) {
         toast('Revert failed: ' + err.message, 'error');
@@ -238,8 +231,8 @@
 
     // ─ ACL ─
     root.appendChild(el('h2', { text: 'Access control' }));
-    const aclReadSel  = roleSelect('read_role',  aclRow ? aclRow.read_role  : 'admin');
-    const aclWriteSel = roleSelect('write_role', aclRow ? aclRow.write_role : 'admin');
+    const aclReadSel  = roleSelect('read_role',  readRole  || 'admin');
+    const aclWriteSel = roleSelect('write_role', writeRole || 'admin');
     const aclErr = el('div', { class: 'form-error' });
     const aclBtn = el('button', { type: 'button', text: 'Update ACL' });
     aclBtn.addEventListener('click', async () => {
