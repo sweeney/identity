@@ -515,6 +515,37 @@ func TestSPA_NotMountedWhenDepsEmpty(t *testing.T) {
 	}
 }
 
+// TestSPA_DirectoryListingRefused asserts that http.FileServer's default
+// "render an HTML index for a directory request" behaviour is suppressed.
+// A naive mount would expose every embedded asset's name at GET /static/,
+// which is a small fingerprint signal we'd rather not give scanners.
+func TestSPA_DirectoryListingRefused(t *testing.T) {
+	h := newHarnessWithSPA(t)
+	for _, path := range []string{"/static/", "/static/somedir/"} {
+		t.Run(path, func(t *testing.T) {
+			resp, body := h.do("GET", path, "", nil)
+			assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+				"%s must 404 (no directory listing)", path)
+			assert.NotContains(t, string(body), "<a href=",
+				"response body must not contain an HTML directory index")
+		})
+	}
+}
+
+// TestSPA_IndexCarriesAssetVersion verifies the cache-busting wiring:
+// every /static/* URL in the rendered index.html should carry a ?v=…
+// query so a deploy reliably invalidates browser caches even though
+// the static file server itself sets no Cache-Control on assets.
+func TestSPA_IndexCarriesAssetVersion(t *testing.T) {
+	h := newHarnessWithSPA(t)
+	resp, body := h.do("GET", "/", "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	for _, asset := range []string{"app.js", "auth.js", "api.js", "editor.js", "style.css"} {
+		assert.Regexp(t, `/static/`+asset+`\?v=\w+`, string(body),
+			"%s must be referenced with a ?v=… cache-buster", asset)
+	}
+}
+
 // --- OpenAPI ---
 
 func TestOpenAPI_YAML_Unauth(t *testing.T) {

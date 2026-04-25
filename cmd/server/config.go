@@ -150,6 +150,14 @@ func runConfigServer() error {
 		log.Println("config: admin UI disabled (set OAUTH_CLIENT_ID and IDENTITY_PUBLIC_URL to enable)")
 	}
 
+	// Loud warning when dev-mode is active and no explicit CORS allow
+	// list is set: originAllowed will let *any* http://localhost:* origin
+	// drive the API. That's intentional for local dev but dangerous if
+	// IDENTITY_ENV is accidentally left unset on a public host.
+	if cfg.Env == config.EnvDevelopment && len(cfg.CORSOrigins) == 0 {
+		log.Println("WARNING: development mode + empty CORS_ORIGINS → ANY http://localhost:* origin is allowed; set IDENTITY_ENV=production or list explicit origins for non-dev hosts")
+	}
+
 	// Context + background tasks
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

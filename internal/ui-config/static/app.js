@@ -341,15 +341,27 @@
     // Display username if we have a token (cheap call to identity).
     if (Auth.isAuthenticated()) {
       try {
-        // We could decode the JWT for the username, but a fetch keeps things simple
-        // and exercises the auth path on every refresh.
-        const cfg = await fetch('/spa-config.json').then(r => r.json());
+        // Reuse the cached bootstrap config rather than refetching
+        // /spa-config.json. We could also decode the JWT for the
+        // username, but a network call exercises the auth path on
+        // every page load and surfaces a stale token immediately.
+        const cfg = Auth.getConfig();
         const meResp = await Auth.authedFetch(cfg.identity_url + '/api/v1/auth/me');
         if (meResp.ok) {
           const me = await meResp.json();
           USER_INFO.textContent = me.username + ' (' + me.role + ')';
         }
-      } catch (_) { /* non-fatal */ }
+      } catch (e) {
+        // 'session expired' from authedFetch means refresh failed; we
+        // must clear tokens so route() will land on the login view
+        // instead of leaving the UI half-authed (logout-button visible
+        // but no real session).
+        if (e && (e.message === 'session expired' || e.message === 'not authenticated')) {
+          Auth.clearTokens();
+        }
+        // Other errors (network blip, identity 5xx) are non-fatal:
+        // the username just won't render.
+      }
     }
 
     await route();

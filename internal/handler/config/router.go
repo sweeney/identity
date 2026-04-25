@@ -13,11 +13,14 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"html/template"
 	"io"
 	"io/fs"
 	"net/http"
+	"strings"
 
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
@@ -112,14 +115,35 @@ func NewRouter(d Deps) *Router {
 // mountSPA wires the admin UI at /, the static asset tree at /static/*,
 // and the bootstrap config at /spa-config.json. All three are unauth —
 // authentication is performed entirely client-side via PKCE.
+//
+// index.html is rendered as a Go template once at construction so
+// /static/*.js URLs carry ?v={{AssetVer}} cache-busters. Without that,
+// browsers cache the JS bundle indefinitely and a deploy goes
+// unnoticed until the user clears their cache. Static assets
+// themselves are served from the embedded FS with directory listings
+// disabled — http.FileServer's default of rendering an HTML index
+// for a directory request would otherwise enumerate every embedded
+// file at GET /static/.
 func mountSPA(mux *http.ServeMux, identityURL, clientID string) {
 	indexBytes, err := uiconfig.StaticFS.ReadFile("static/index.html")
 	if err != nil {
-		// Embed failures are programmer errors and have already failed
-		// at compile time; treat a runtime error here as fatal-ish by
-		// rendering a stub so the rest of the API still works.
 		indexBytes = []byte("config admin UI assets missing")
 	}
+	indexTmpl, tmplErr := template.New("index").Parse(string(indexBytes))
+
+	// Pre-render once: AssetVer is fixed for the process lifetime so
+	// there's no need to execute the template on every request.
+	var indexRendered []byte
+	if tmplErr == nil {
+		var buf bytes.Buffer
+		if err := indexTmpl.Execute(&buf, struct{ AssetVer string }{uiconfig.AssetVersion}); err == nil {
+			indexRendered = buf.Bytes()
+		}
+	}
+	if indexRendered == nil {
+		indexRendered = indexBytes // fall back to literal bytes; cache-busting will be a no-op
+	}
+
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		// Reject anything other than the root path so unknown routes
 		// don't accidentally render the SPA shell with a 200.
@@ -129,11 +153,11 @@ func mountSPA(mux *http.ServeMux, identityURL, clientID string) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-		_, _ = w.Write(indexBytes)
+		_, _ = w.Write(indexRendered)
 	})
 
 	staticSub, _ := fs.Sub(uiconfig.StaticFS, "static")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", noListing(http.FileServer(http.FS(staticSub)))))
 
 	mux.HandleFunc("GET /spa-config.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -142,6 +166,20 @@ func mountSPA(mux *http.ServeMux, identityURL, clientID string) {
 			"identity_url": identityURL,
 			"client_id":    clientID,
 		})
+	})
+}
+
+// noListing wraps an http.FileServer so directory paths return 404
+// instead of an auto-generated HTML index. The check is path-shape
+// only — Go's mux + StripPrefix already canonicalise away ".." escapes
+// before the request reaches us.
+func noListing(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "" || strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		h.ServeHTTP(w, r)
 	})
 }
 

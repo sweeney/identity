@@ -38,6 +38,23 @@ window.Auth = (function () {
   function getRefreshToken() { return localStorage.getItem('refresh_token'); }
   function getExpiresAt()    { return parseInt(localStorage.getItem('token_expires_at') || '0', 10); }
   function saveTokens(t) {
+    // Validate the response shape before persisting. A malformed identity
+    // response (or a misconfigured proxy stripping fields) would otherwise
+    // leave us with `localStorage.setItem('refresh_token', undefined)` —
+    // which writes the literal string "undefined" — and wedge the SPA
+    // permanently with no path back to a clean re-login.
+    if (!t || typeof t !== 'object') {
+      throw new Error('token response is not an object');
+    }
+    if (typeof t.access_token !== 'string' || !t.access_token) {
+      throw new Error('token response missing access_token');
+    }
+    if (typeof t.refresh_token !== 'string' || !t.refresh_token) {
+      throw new Error('token response missing refresh_token');
+    }
+    if (typeof t.expires_in !== 'number' || !(t.expires_in > 0)) {
+      throw new Error('token response missing or invalid expires_in');
+    }
     localStorage.setItem('access_token',     t.access_token);
     localStorage.setItem('refresh_token',    t.refresh_token);
     localStorage.setItem('token_expires_at', Date.now() + t.expires_in * 1000);
@@ -116,21 +133,34 @@ window.Auth = (function () {
 
   // ── Refresh ────────────────────────────────────────────────────────
   // Coalesces concurrent calls so 5 simultaneous 401s only kick off one refresh.
+  // Returns true on success, false on any failure (network, server error,
+  // malformed response). Network failures are intentionally treated as
+  // refresh-failures so the SPA can route to the login screen instead of
+  // throwing an unhandled error from a transient blip.
   function refresh() {
     if (refreshInFlight) return refreshInFlight;
     refreshInFlight = (async () => {
       const rt = getRefreshToken();
       if (!rt) return false;
-      const resp = await fetch(CONFIG.identity_url + '/oauth/token', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type:    'refresh_token',
-          refresh_token: rt,
-        }),
-      });
+      let resp;
+      try {
+        resp = await fetch(CONFIG.identity_url + '/oauth/token', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type:    'refresh_token',
+            refresh_token: rt,
+          }),
+        });
+      } catch (_) {
+        return false; // network failure — caller will treat as session expired
+      }
       if (!resp.ok) return false;
-      saveTokens(await resp.json());
+      let body;
+      try { body = await resp.json(); }
+      catch (_) { return false; }
+      try { saveTokens(body); }
+      catch (_) { return false; }
       return true;
     })().finally(() => { refreshInFlight = null; });
     return refreshInFlight;
@@ -156,16 +186,24 @@ window.Auth = (function () {
 
   // ── Logout ─────────────────────────────────────────────────────────
   // Best-effort revocation on identity, then clear local state.
+  // Identity's /api/v1/auth/logout is auth-gated — it identifies the
+  // session via the access token and revokes the supplied refresh
+  // token (or the whole family if none is supplied). Without the
+  // Bearer header we'd 401 every time and never actually revoke.
   async function logout() {
-    const rt = getRefreshToken();
-    if (rt) {
+    const tok = getAccessToken();
+    const rt  = getRefreshToken();
+    if (tok && rt) {
       try {
         await fetch(CONFIG.identity_url + '/api/v1/auth/logout', {
           method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ refresh_token: rt }),
+          headers: {
+            'Content-Type':  'application/json',
+            'Authorization': 'Bearer ' + tok,
+          },
+          body: JSON.stringify({ refresh_token: rt }),
         });
-      } catch (_) { /* ignore — local clear is the source of truth */ }
+      } catch (_) { /* network failure — local clear is the source of truth */ }
     }
     clearTokens();
   }
@@ -183,8 +221,16 @@ window.Auth = (function () {
     return CONFIG;
   }
 
+  // getConfig returns the cached bootstrap config so callers (e.g. the
+  // username-display path) don't need to refetch /spa-config.json.
+  function getConfig() {
+    if (!CONFIG) throw new Error('Auth not bootstrapped');
+    return CONFIG;
+  }
+
   return {
     bootstrap,
+    getConfig,
     startLogin,
     maybeHandleCallback,
     refresh,
