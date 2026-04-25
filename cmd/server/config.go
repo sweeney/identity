@@ -332,6 +332,7 @@ func configSecurityHeaders(next http.Handler, corsOrigins []string, identityURL 
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Expose-Headers", "X-Read-Role, X-Write-Role")
 				w.Header().Set("Access-Control-Max-Age", "86400")
 			}
 			if r.Method == http.MethodOptions {

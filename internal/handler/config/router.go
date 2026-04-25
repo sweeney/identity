@@ -260,6 +260,8 @@ func getHandler(svc *service.ConfigService) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Read-Role", got.ReadRole)
 		w.Header().Set("X-Write-Role", got.WriteRole)
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("Vary", "Authorization")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(got.Document)
 	}
