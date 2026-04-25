@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/sweeney/identity/internal/backup"
@@ -31,28 +32,44 @@ func newR2Uploader() (*backup.R2Uploader, *config.Config, error) {
 	return uploader, cfg, nil
 }
 
-func listBackups() error {
+// listBackupsForService lists R2 backup objects belonging to the given
+// service (filename prefix match). It searches the shared {env}/backups/
+// prefix so legacy identity backups (before the service-segment key layout)
+// remain discoverable.
+func listBackupsForService(serviceName string) error {
 	uploader, cfg, err := newR2Uploader()
 	if err != nil {
 		return err
 	}
 
 	prefix := string(cfg.Env) + "/backups/"
-	fmt.Printf("Listing backups for environment: %s\n\n", cfg.Env)
+	fmt.Printf("Listing %s backups for environment: %s\n\n", serviceName, cfg.Env)
 
 	entries, err := uploader.ListBackupsWithPrefix(context.Background(), prefix)
 	if err != nil {
 		return fmt.Errorf("list backups: %w", err)
 	}
 
-	if len(entries) == 0 {
+	// Filter to entries belonging to this service (by filename prefix).
+	// This covers both the new {env}/backups/{service}/... layout and the
+	// legacy {env}/backups/... layout where the service was encoded only in
+	// the filename.
+	filenamePrefix := serviceName + "-"
+	filtered := entries[:0]
+	for _, e := range entries {
+		if strings.HasPrefix(path.Base(e.Key), filenamePrefix) {
+			filtered = append(filtered, e)
+		}
+	}
+
+	if len(filtered) == 0 {
 		fmt.Println("No backups found.")
 		return nil
 	}
 
 	fmt.Printf("%-4s  %-20s  %8s  %s\n", "#", "Date", "Size", "Key")
 	fmt.Println(strings.Repeat("─", 100))
-	for i, e := range entries {
+	for i, e := range filtered {
 		fmt.Printf("%-4d  %-20s  %6dKB  %s\n",
 			i+1,
 			e.LastModified.Format("2006-01-02 15:04:05"),
@@ -60,37 +77,63 @@ func listBackups() error {
 			e.Key,
 		)
 	}
-	fmt.Printf("\n%d backup(s) found.\n", len(entries))
-	fmt.Println("\nTo restore: ./identity-server --restore-backup <key>")
+	fmt.Printf("\n%d backup(s) found.\n", len(filtered))
+	fmt.Printf("\nTo restore: ./identity-server %s --restore-backup <key>\n", serviceName)
 	return nil
 }
 
-func restoreBackup(key string) error {
+// listBackups lists identity backups. Preserved for the legacy flag-style
+// invocation (identity-server --list-backups).
+func listBackups() error {
+	return listBackupsForService("identity")
+}
+
+// restoreBackupForService downloads an R2 backup to the local DB file for
+// the given service. If key is empty, the user is prompted to select from
+// a filtered list.
+func restoreBackupForService(serviceName, dbPath, key string) error {
 	uploader, cfg, err := newR2Uploader()
 	if err != nil {
 		return err
 	}
 
+	// When the caller supplies a key directly on the command line, require
+	// that it belongs to this service. The interactive path filters the
+	// listing by the same prefix, but a raw --restore-backup <key>
+	// invocation would otherwise happily overwrite e.g. config.db with
+	// identity's tables — a devastating paste-and-restore mistake.
+	if key != "" && !strings.HasPrefix(path.Base(key), serviceName+"-") {
+		return fmt.Errorf("key %q does not belong to service %q (filename must start with %q-)",
+			key, serviceName, serviceName)
+	}
+
 	if key == "" {
-		// Interactive: list and let user pick
 		prefix := string(cfg.Env) + "/backups/"
-		fmt.Printf("Restoring from environment: %s\n\n", cfg.Env)
+		fmt.Printf("Restoring %s backup for environment: %s\n\n", serviceName, cfg.Env)
 		entries, err := uploader.ListBackupsWithPrefix(context.Background(), prefix)
 		if err != nil {
 			return fmt.Errorf("list backups: %w", err)
 		}
-		if len(entries) == 0 {
-			return fmt.Errorf("no backups found")
+
+		filenamePrefix := serviceName + "-"
+		filtered := entries[:0]
+		for _, e := range entries {
+			if strings.HasPrefix(path.Base(e.Key), filenamePrefix) {
+				filtered = append(filtered, e)
+			}
+		}
+		if len(filtered) == 0 {
+			return fmt.Errorf("no backups found for service %q", serviceName)
 		}
 
 		fmt.Printf("%-4s  %-20s  %8s  %s\n", "#", "Date", "Size", "Key")
 		fmt.Println(strings.Repeat("─", 100))
-		limit := len(entries)
+		limit := len(filtered)
 		if limit > 20 {
 			limit = 20
 		}
 		for i := 0; i < limit; i++ {
-			e := entries[i]
+			e := filtered[i]
 			fmt.Printf("%-4d  %-20s  %6dKB  %s\n",
 				i+1,
 				e.LastModified.Format("2006-01-02 15:04:05"),
@@ -108,12 +151,11 @@ func restoreBackup(key string) error {
 		if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > limit {
 			return fmt.Errorf("invalid selection")
 		}
-		key = entries[idx-1].Key
+		key = filtered[idx-1].Key
 	}
 
-	dbPath := cfg.DBPath
 	if dbPath == "" {
-		dbPath = "identity.db"
+		dbPath = serviceName + ".db"
 	}
 
 	// Safety check
@@ -136,4 +178,14 @@ func restoreBackup(key string) error {
 	fmt.Printf("Restored %s from %s\n", dbPath, key)
 	fmt.Println("Start the server to use the restored database.")
 	return nil
+}
+
+// restoreBackup restores an identity backup. Preserved for the legacy
+// flag-style invocation (identity-server --restore-backup).
+func restoreBackup(key string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	return restoreBackupForService("identity", cfg.DBPath, key)
 }

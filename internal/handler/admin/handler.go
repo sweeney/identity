@@ -276,7 +276,7 @@ func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := h.tokenIssuer.Parse(accessToken)
+	claims, err := h.tokenIssuer.Parse(r.Context(), accessToken)
 	if err != nil {
 		h.render(w, r, "login.html", map[string]any{
 			"HideNav": true,

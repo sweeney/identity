@@ -1,0 +1,299 @@
+openapi: "3.0.3"
+
+info:
+  title: Config API
+  version: "1.0.0"
+  description: |
+    Self-hosted structured-config service for homelab data. Namespaces
+    are JSON documents with per-namespace read/write role ACLs. Tokens
+    are verified against the identity service's JWKS endpoint.
+
+    ## Role model
+    Each namespace declares `read_role` and `write_role` (each `admin`
+    or `user`). Admins always satisfy any role. Users only satisfy
+    `user`. Creating, deleting, and ACL-updating a namespace are all
+    admin-only regardless of `write_role`.
+
+    ## No existence leak
+    Callers who lack `read_role` receive 404 (not 403) on any operation
+    against a namespace, so they cannot probe namespace existence.
+
+    ## Backups
+    Every successful mutation triggers an async R2 backup. Rapid bursts
+    coalesce into one backup per cooldown window (default 30s).
+
+servers:
+  - url: https://{domain}
+    variables:
+      domain:
+        default: config.example.com
+        description: Your config service hostname
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: config
+    description: Namespace documents (read/write)
+  - name: admin
+    description: Namespace lifecycle (admin-only)
+  - name: system
+    description: Health and discovery
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Identity-issued user access token (service tokens are rejected).
+
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Machine-readable code
+          example: not_found
+        message:
+          type: string
+          description: Human-readable description
+          example: namespace not found
+
+    NamespaceSummary:
+      type: object
+      required: [name, read_role, write_role, updated_at, created_at]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9_-]{1,64}$'
+          example: mqtt_topics
+        read_role:
+          type: string
+          enum: [admin, user]
+        write_role:
+          type: string
+          enum: [admin, user]
+        updated_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    NamespaceDocument:
+      type: object
+      description: |
+        Arbitrary JSON object stored verbatim by the server. Max 64KB
+        after compaction.
+      additionalProperties: true
+      example:
+        temperature: "home/sensors/temp"
+        humidity: "home/sensors/humidity"
+
+    CreateNamespaceRequest:
+      type: object
+      required: [name, read_role, write_role]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9_-]{1,64}$'
+        read_role:
+          type: string
+          enum: [admin, user]
+        write_role:
+          type: string
+          enum: [admin, user]
+        document:
+          $ref: '#/components/schemas/NamespaceDocument'
+
+    ACLUpdateRequest:
+      type: object
+      required: [read_role, write_role]
+      properties:
+        read_role:
+          type: string
+          enum: [admin, user]
+        write_role:
+          type: string
+          enum: [admin, user]
+
+    PutResult:
+      type: object
+      required: [name, changed]
+      properties:
+        name:
+          type: string
+        changed:
+          type: boolean
+          description: |
+            False when the submitted document is byte-identical (after
+            JSON compaction) to the stored document. No write occurs
+            and no backup is triggered in that case.
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid Bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Valid token but insufficient role (caller can read but not write)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: |
+        Namespace missing **or** caller lacks read role. Both cases use
+        404 so namespace existence is not leaked.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    BadRequest:
+      description: Validation failure (invalid name, role, document, or malformed body)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Namespace already exists
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PayloadTooLarge:
+      description: Document or request body exceeds size limit
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      summary: Health probe
+      security: []
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  version: { type: string, example: dev }
+
+  /api/v1/config:
+    get:
+      tags: [config]
+      summary: List namespaces visible to the caller
+      description: |
+        Returns all namespaces whose `read_role` is satisfied by the
+        caller. Admins see everything; users see only `read_role=user`
+        namespaces.
+      responses:
+        "200":
+          description: Namespace summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/NamespaceSummary' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/config/{ns}:
+    parameters:
+      - name: ns
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9_-]{1,64}$' }
+    get:
+      tags: [config]
+      summary: Fetch a namespace document
+      responses:
+        "200":
+          description: Stored JSON document verbatim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NamespaceDocument' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [config]
+      summary: Replace a namespace document
+      description: |
+        Whole-document replace. Byte-identical content (after JSON
+        compaction) is detected server-side and returned as
+        `changed: false` without a write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NamespaceDocument' }
+      responses:
+        "200":
+          description: Replaced (or confirmed no-op)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PutResult' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+    delete:
+      tags: [admin]
+      summary: Delete a namespace (admin-only)
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/config/namespaces:
+    post:
+      tags: [admin]
+      summary: Create a namespace (admin-only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNamespaceRequest' }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NamespaceSummary' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/config/namespaces/{ns}:
+    parameters:
+      - name: ns
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9_-]{1,64}$' }
+    patch:
+      tags: [admin]
+      summary: Update namespace ACL (admin-only)
+      description: Changes `read_role` and `write_role`; leaves the document untouched.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ACLUpdateRequest' }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NamespaceSummary' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }

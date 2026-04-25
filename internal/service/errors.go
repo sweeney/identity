@@ -30,6 +30,15 @@ var (
 	ErrUnauthorizedClient     = errors.New("unauthorized client")
 	ErrInvalidClientSecret    = errors.New("invalid client secret")
 
+	// Config service errors
+	ErrConfigNamespaceNotFound = errors.New("config namespace not found")
+	ErrConfigNamespaceExists   = errors.New("config namespace already exists")
+	ErrConfigForbidden         = errors.New("config operation forbidden by namespace acl")
+	ErrConfigInvalidName       = errors.New("invalid config namespace name")
+	ErrConfigInvalidRole       = errors.New("invalid config role")
+	ErrConfigInvalidDocument   = errors.New("config document must be a JSON object")
+	ErrConfigDocumentTooLarge  = errors.New("config document exceeds size limit")
+
 	// Device flow errors (RFC 8628)
 	ErrInvalidDeviceCode        = errors.New("invalid device code")
 	ErrDeviceAuthorizationPending = errors.New("authorization pending")

@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func TestMintServiceToken_AllClaims(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 
-	parsed, err := issuer.ParseServiceToken(token)
+	parsed, err := issuer.ParseServiceToken(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "my-service", parsed.ClientID)
 	assert.Equal(t, "https://api.example.com", parsed.Audience)
@@ -55,7 +56,7 @@ func TestMintServiceToken_EmptyScope(t *testing.T) {
 	token, err := issuer.MintServiceToken(claims, 15*time.Minute)
 	require.NoError(t, err)
 
-	parsed, err := issuer.ParseServiceToken(token)
+	parsed, err := issuer.ParseServiceToken(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "", parsed.Scope)
 }
@@ -73,8 +74,8 @@ func TestMintServiceToken_UniqueJTI(t *testing.T) {
 	token2, err := issuer.MintServiceToken(claims, 15*time.Minute)
 	require.NoError(t, err)
 
-	parsed1, _ := issuer.ParseServiceToken(token1)
-	parsed2, _ := issuer.ParseServiceToken(token2)
+	parsed1, _ := issuer.ParseServiceToken(context.Background(), token1)
+	parsed2, _ := issuer.ParseServiceToken(context.Background(), token2)
 	assert.NotEqual(t, parsed1.JTI, parsed2.JTI)
 }
 
@@ -90,7 +91,7 @@ func TestMintServiceToken_Expired(t *testing.T) {
 	token, err := issuer.MintServiceToken(claims, -1*time.Second)
 	require.NoError(t, err)
 
-	_, err = issuer.ParseServiceToken(token)
+	_, err = issuer.ParseServiceToken(context.Background(), token)
 	assert.Error(t, err)
 }
 
@@ -106,16 +107,16 @@ func TestParseServiceToken_UserTokenFails(t *testing.T) {
 	require.NoError(t, err)
 
 	// Parsing as service token should fail (no client_id claim)
-	_, err = issuer.ParseServiceToken(userToken)
+	_, err = issuer.ParseServiceToken(context.Background(), userToken)
 	assert.Error(t, err)
 }
 
 func TestParseServiceToken_InvalidToken(t *testing.T) {
 	issuer := newTestIssuer(t)
-	_, err := issuer.ParseServiceToken("not-a-valid-token")
+	_, err := issuer.ParseServiceToken(context.Background(), "not-a-valid-token")
 	assert.Error(t, err)
 
-	_, err = issuer.ParseServiceToken("")
+	_, err = issuer.ParseServiceToken(context.Background(), "")
 	assert.Error(t, err)
 }
 
@@ -130,7 +131,7 @@ func TestParse_RejectsServiceToken(t *testing.T) {
 	}, 15*time.Minute)
 	require.NoError(t, err)
 
-	_, err = issuer.Parse(serviceToken)
+	_, err = issuer.Parse(context.Background(), serviceToken)
 	assert.Error(t, err, "Parse must reject service tokens (typ: at+jwt)")
 }
 
@@ -151,7 +152,7 @@ func TestMintServiceToken_KeyRotation(t *testing.T) {
 	// Parse with key2 as primary, key1 as previous — should work
 	issuer2, err := auth.NewTokenIssuer(key2, key1, "test-issuer", 15*time.Minute)
 	require.NoError(t, err)
-	parsed, err := issuer2.ParseServiceToken(token)
+	parsed, err := issuer2.ParseServiceToken(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "svc", parsed.ClientID)
 }

@@ -1,0 +1,49 @@
+# /etc/identity/config.env
+#
+# Environment file for the homelab config service. Mirrors identity's env
+# conventions. This file must be owned by root with mode 600:
+#   sudo chown root:root /etc/identity/config.env
+#   sudo chmod 600 /etc/identity/config.env
+
+# Port the config service listens on (default 8282)
+# PORT=8282
+
+# Database path (default: config.db in the working directory)
+# DB_PATH=/var/lib/identity/config.db
+
+# Environment: "production" in prod, "development" for local dev.
+# IDENTITY_ENV=production
+
+# Identity service URL — the config service fetches JWKS from
+# {IDENTITY_ISSUER_URL}/.well-known/jwks.json and validates incoming
+# tokens against it. Required in production.
+IDENTITY_ISSUER_URL=https://id.example.com
+
+# Expected JWT `iss` claim. Usually the same as IDENTITY_ISSUER_URL.
+# Override if identity is behind a reverse proxy that rewrites the URL.
+IDENTITY_ISSUER=https://id.example.com
+
+# How long to cache the fetched JWKS before refetching. Go duration.
+# Defaults to 5m. Rotation events still force an immediate refetch.
+# JWKS_CACHE_TTL=5m
+
+# Cooldown between consecutive triggered backups. Rapid write bursts
+# coalesce into a single backup at the end of this window. Go duration.
+# Set to 0 to upload after every mutation. Defaults to 30s.
+# BACKUP_MIN_INTERVAL=30s
+
+# Proxy trust: "cloudflare" to honour CF-Connecting-IP for rate limiting.
+# TRUST_PROXY=cloudflare
+
+# CORS origins for browser clients. Comma-separated.
+# CORS_ORIGINS=https://app.example.com
+
+# Rate limiting (leave unset in production).
+# RATE_LIMIT_DISABLED=1
+
+# Cloudflare R2 backup — optional. Leave unset to disable backups.
+# Uploads to {IDENTITY_ENV}/backups/config/{YYYY/MM/DD}/config-{ts}.sqlite3
+# R2_ACCOUNT_ID=
+# R2_ACCESS_KEY_ID=
+# R2_SECRET_ACCESS_KEY=
+# R2_BUCKET_NAME=

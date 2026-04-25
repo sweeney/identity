@@ -12,16 +12,37 @@ import (
 )
 
 //go:embed migrations/*.sql
-var migrationFiles embed.FS
+var identityMigrations embed.FS
+
+//go:embed config_migrations/*.sql
+var configMigrations embed.FS
 
 // Database wraps a *sql.DB with migration management.
 type Database struct {
 	db *sql.DB
 }
 
-// Open opens (or creates) a SQLite database at path, enables WAL mode and
-// foreign keys, and runs all pending migrations.
+// Open opens (or creates) the identity SQLite database at path, enables WAL
+// mode and foreign keys, and runs all pending identity migrations.
+//
+// This is a backward-compatible wrapper around OpenWithMigrations for the
+// identity service. Sibling services (e.g. config) should call
+// OpenWithMigrations with their own embedded migration set.
 func Open(path string) (*Database, error) {
+	return OpenWithMigrations(path, identityMigrations, "migrations")
+}
+
+// OpenConfig opens (or creates) the config SQLite database at path and runs
+// the embedded config migrations. The config service uses a separate DB
+// file (typically config.db) so identity and config schemas stay isolated.
+func OpenConfig(path string) (*Database, error) {
+	return OpenWithMigrations(path, configMigrations, "config_migrations")
+}
+
+// OpenWithMigrations opens the given path and applies the migrations from
+// migFS at migDir. Sets restrictive file permissions and the standard
+// per-connection PRAGMAs.
+func OpenWithMigrations(path string, migFS embed.FS, migDir string) (*Database, error) {
 	// Set restrictive umask before creating the database file so it is
 	// never world-readable, even momentarily.
 	if path != ":memory:" {
@@ -45,14 +66,14 @@ func Open(path string) (*Database, error) {
 		return nil, err
 	}
 
-	if err := database.migrate(); err != nil {
+	if err := database.migrate(migFS, migDir); err != nil {
 		sqlDB.Close()
 		return nil, err
 	}
 
 	// Restrict file permissions to owner-only (0600).
 	if path != ":memory:" {
-		os.Chmod(path, 0600)       //nolint:errcheck
+		os.Chmod(path, 0600)        //nolint:errcheck
 		os.Chmod(path+"-wal", 0600) //nolint:errcheck
 		os.Chmod(path+"-shm", 0600) //nolint:errcheck
 	}
@@ -85,13 +106,13 @@ func (d *Database) configure() error {
 	return nil
 }
 
-// migrate runs all SQL files in migrations/ in lexicographic order.
+// migrate runs all SQL files in dir (of migFS) in lexicographic order.
 // Uses CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS, so it is
 // safe to call on an already-migrated database.
-func (d *Database) migrate() error {
-	entries, err := migrationFiles.ReadDir("migrations")
+func (d *Database) migrate(migFS embed.FS, dir string) error {
+	entries, err := migFS.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("read migrations dir: %w", err)
+		return fmt.Errorf("read migrations dir %q: %w", dir, err)
 	}
 
 	for _, entry := range entries {
@@ -99,7 +120,7 @@ func (d *Database) migrate() error {
 			continue
 		}
 
-		sql, err := migrationFiles.ReadFile("migrations/" + entry.Name())
+		sqlBytes, err := migFS.ReadFile(dir + "/" + entry.Name())
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
 		}
@@ -108,12 +129,12 @@ func (d *Database) migrate() error {
 		// with "duplicate column name" (from ALTER TABLE ADD COLUMN on a column
 		// that already exists), run each statement individually so the rest
 		// can still execute.
-		if _, err := d.db.Exec(string(sql)); err != nil {
+		if _, err := d.db.Exec(string(sqlBytes)); err != nil {
 			if !strings.Contains(err.Error(), "duplicate column name") {
 				return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
 			}
 			// Fall back to per-statement execution, ignoring duplicate column errors.
-			for _, stmt := range strings.Split(string(sql), ";") {
+			for _, stmt := range strings.Split(string(sqlBytes), ";") {
 				stmt = strings.TrimSpace(stmt)
 				if stmt == "" {
 					continue
