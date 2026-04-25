@@ -246,6 +246,111 @@ Both sides must be in lockstep: leaving config flagged on while
 identity doesn't emit `aud` will reject every request. The feature is
 off by default to keep the v1 JWT shape compatible.
 
+## Admin UI (optional)
+
+The config service can serve a small browser SPA at `/` for managing
+namespaces (list, view, edit JSON document, change ACL, delete). The
+SPA is **off by default** — set `OAUTH_CLIENT_ID` and
+`IDENTITY_PUBLIC_URL` in the env file to enable it.
+
+Architecture:
+
+- The SPA is a single `index.html` + a few static `.js` / `.css` files,
+  embedded into the binary at `internal/ui-config/static/`.
+- It authenticates against identity via OAuth Authorization Code with
+  PKCE (the same flow `examples/spa-demo` uses). Tokens land in
+  `localStorage`; the SPA calls `/api/v1/config/*` with a `Bearer`
+  header.
+- There is no server-side session, no cookie crypto, no CSRF
+  middleware — all auth state is in the browser.
+- A path-aware CSP keeps `/api/*` locked to `default-src 'none'`
+  while permitting `script-src 'self'` + the identity origin in
+  `connect-src`/`form-action` for the SPA.
+
+### 1. Register the OAuth client on identity
+
+In identity's admin UI (`https://id.example.com/admin/oauth`), click
+**New OAuth client** and fill in:
+
+| Field | Value |
+|---|---|
+| Client ID | `config-spa` (or any unique slug) |
+| Name | `Config Admin SPA` |
+| Redirect URIs | `https://config.example.com/` (one per line) |
+| Grant types | `authorization_code`, `refresh_token` |
+| Token endpoint auth method | `none` (public client; PKCE is the secret) |
+| Scopes | leave blank |
+| Audience | leave blank |
+
+Save. Note the client ID — you'll feed it to config below.
+
+PKCE is **mandatory** for `none` auth — identity's authorize endpoint
+already enforces this.
+
+### 2. Configure config service
+
+Add to `/etc/identity/config.env`:
+
+```
+OAUTH_CLIENT_ID=config-spa
+IDENTITY_PUBLIC_URL=https://id.example.com
+```
+
+`IDENTITY_PUBLIC_URL` defaults to `IDENTITY_ISSUER_URL`, so this line
+is optional when both are the same hostname (typical for homelab).
+Restart `config.service`. The startup log will print:
+
+```
+config: admin UI mounted at /; oauth client_id=config-spa, identity public url=https://id.example.com
+```
+
+### 3. Cloudflared route
+
+If you tunnel both services from one Cloudflare Tunnel, your
+`config.yml` looks like:
+
+```yaml
+tunnel: <tunnel-uuid>
+credentials-file: /etc/cloudflared/<uuid>.json
+
+ingress:
+  - hostname: id.example.com
+    service: http://localhost:8181
+  - hostname: config.example.com
+    service: http://localhost:8282
+  - service: http_status:404
+```
+
+Then DNS-route `config.example.com` to the tunnel:
+
+```
+cloudflared tunnel route dns <tunnel-uuid> config.example.com
+```
+
+Visit `https://config.example.com/` in a browser. You'll be redirected
+to identity for login (existing passkey/password works). After signing
+in, identity redirects back with `?code=…`; the SPA exchanges it for
+tokens and lands on the namespace list.
+
+### 4. Threat-model notes
+
+- **localStorage tokens are XSS-readable.** This is acceptable here
+  because (a) the SPA loads no third-party scripts, (b) CSP forbids
+  inline scripts and `eval`, and (c) the threat model is a
+  single-admin homelab, not a SaaS with many tenants. If your
+  deployment differs (third-party scripts, multiple users), consider
+  a backend-for-frontend (BFF) pattern instead.
+- **CSP is restrictive but pragmatic.** `script-src 'self'` only;
+  `connect-src` includes identity for OAuth; `frame-ancestors 'none'`
+  prevents click-jacking.
+- **Tab lifetime.** Access tokens expire in 15 min; the SPA
+  auto-refreshes via the refresh token. PKCE state lives in
+  `sessionStorage` so a half-finished login doesn't leak across
+  browser sessions.
+- **No revocation push.** As with the API, disabling a user on
+  identity does not immediately log them out of config — see
+  "Revocation lag" above.
+
 ## Configuration reference
 
 Environment variables for the config service (systemd env file typically
@@ -264,3 +369,6 @@ at `/etc/identity/config.env`):
 | `CORS_ORIGINS` | (unset) | Comma-separated allowed origins |
 | `RATE_LIMIT_DISABLED` | `0` | `1` disables rate limiting (dev/test only) |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME` | (unset) | Required together for backups |
+| `OAUTH_CLIENT_ID` | (unset) | Public OAuth client_id registered on identity. Mounts the admin SPA at `/` when set. |
+| `IDENTITY_PUBLIC_URL` | `IDENTITY_ISSUER_URL` | URL the *browser* uses to reach identity (overrides the issuer URL when behind a reverse proxy with a different public hostname). |
+| `REQUIRED_AUDIENCE` | (unset) | Asserts incoming JWTs carry a matching `aud`. Mitigation against cross-service token replay; off until identity stamps `aud` on issuance. |

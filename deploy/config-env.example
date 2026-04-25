@@ -47,3 +47,15 @@ IDENTITY_ISSUER=https://id.example.com
 # R2_ACCESS_KEY_ID=
 # R2_SECRET_ACCESS_KEY=
 # R2_BUCKET_NAME=
+
+# Admin UI (optional). When OAUTH_CLIENT_ID is set, an admin SPA is
+# mounted at / for browser-based namespace CRUD. The SPA authenticates
+# via OAuth Authorization Code + PKCE against identity. Register the
+# client first in identity's /admin/oauth UI with redirect URI
+# matching this service's public URL (e.g. https://config.example.com/).
+# OAUTH_CLIENT_ID=config-spa
+
+# IDENTITY_PUBLIC_URL — the URL the browser uses to reach identity.
+# Defaults to IDENTITY_ISSUER_URL; only needed when identity sits behind
+# a reverse proxy with a different public hostname.
+# IDENTITY_PUBLIC_URL=https://id.example.com

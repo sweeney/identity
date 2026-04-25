@@ -45,6 +45,18 @@ type ConfigSvcConfig struct {
 	// empty until identity stamps a matching audience on issuance.
 	RequiredAudience string
 
+	// IdentityPublicURL is the URL the *browser* should hit for OAuth
+	// authorize / token endpoints — usually the same as
+	// IdentityIssuerURL but may differ if identity sits behind a reverse
+	// proxy with a public hostname distinct from the in-cluster URL.
+	// Empty disables the admin UI; only the API is served.
+	IdentityPublicURL string
+
+	// OAuthClientID is the public OAuth client_id registered on identity
+	// for the config admin SPA. Public client (no secret) using PKCE.
+	// Empty disables the admin UI.
+	OAuthClientID string
+
 	TrustProxy        string
 	CORSOrigins       []string
 	RateLimitDisabled bool
@@ -122,6 +134,17 @@ func LoadConfigSvc() (*ConfigSvcConfig, error) {
 	}
 
 	cfg.RequiredAudience = os.Getenv("REQUIRED_AUDIENCE")
+
+	cfg.IdentityPublicURL = os.Getenv("IDENTITY_PUBLIC_URL")
+	if cfg.IdentityPublicURL == "" {
+		cfg.IdentityPublicURL = cfg.IdentityIssuerURL
+	}
+	if cfg.IdentityPublicURL != "" {
+		if err := validateIdentityIssuerURL(cfg.IdentityPublicURL); err != nil {
+			errs = append(errs, fmt.Errorf("IDENTITY_PUBLIC_URL: %w", err))
+		}
+	}
+	cfg.OAuthClientID = os.Getenv("OAUTH_CLIENT_ID")
 
 	if v := os.Getenv("JWKS_CACHE_TTL"); v != "" {
 		d, err := time.ParseDuration(v)

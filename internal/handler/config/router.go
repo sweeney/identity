@@ -16,12 +16,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/spec"
+	uiconfig "github.com/sweeney/identity/internal/ui-config"
 )
 
 // maxBodyBytes caps the request body size the handlers will read. The
@@ -46,6 +48,13 @@ type Deps struct {
 	Service  *service.ConfigService
 	Verifier auth.TokenParser
 	Version  string // populated into /healthz for parity with identity
+
+	// SPA bootstrap. When IdentityPublicURL is non-empty the admin UI
+	// is mounted at "/" and the bootstrap config is served at
+	// /spa-config.json. Leave both empty to disable the UI entirely
+	// (the API stays up regardless).
+	IdentityPublicURL string
+	OAuthClientID     string
 }
 
 // NewRouter builds the config service router. The service layer holds the
@@ -92,7 +101,48 @@ func NewRouter(d Deps) *Router {
 	mux.Handle("POST /api/v1/config/namespaces", authed(createHandler(d.Service)))
 	mux.Handle("PATCH /api/v1/config/namespaces/{ns}", authed(updateACLHandler(d.Service)))
 
+	// SPA bundle (optional — only mounted when an OAuth client is configured).
+	if d.IdentityPublicURL != "" && d.OAuthClientID != "" {
+		mountSPA(mux, d.IdentityPublicURL, d.OAuthClientID)
+	}
+
 	return &Router{mux: mux}
+}
+
+// mountSPA wires the admin UI at /, the static asset tree at /static/*,
+// and the bootstrap config at /spa-config.json. All three are unauth —
+// authentication is performed entirely client-side via PKCE.
+func mountSPA(mux *http.ServeMux, identityURL, clientID string) {
+	indexBytes, err := uiconfig.StaticFS.ReadFile("static/index.html")
+	if err != nil {
+		// Embed failures are programmer errors and have already failed
+		// at compile time; treat a runtime error here as fatal-ish by
+		// rendering a stub so the rest of the API still works.
+		indexBytes = []byte("config admin UI assets missing")
+	}
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		// Reject anything other than the root path so unknown routes
+		// don't accidentally render the SPA shell with a 200.
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		_, _ = w.Write(indexBytes)
+	})
+
+	staticSub, _ := fs.Sub(uiconfig.StaticFS, "static")
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+
+	mux.HandleFunc("GET /spa-config.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"identity_url": identityURL,
+			"client_id":    clientID,
+		})
+	})
 }
 
 // requireUserToken rejects requests that authed with a service token AND
