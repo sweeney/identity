@@ -215,6 +215,13 @@ paths:
       responses:
         "200":
           description: Stored JSON document verbatim
+          headers:
+            X-Read-Role:
+              description: Role required to read this namespace (`admin` or `user`)
+              schema: { type: string, enum: [admin, user] }
+            X-Write-Role:
+              description: Role required to write this namespace (`admin` or `user`)
+              schema: { type: string, enum: [admin, user] }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/NamespaceDocument' }
@@ -290,6 +297,13 @@ paths:
       responses:
         "200":
           description: Updated
+          headers:
+            X-Read-Role:
+              description: New read role after the update (`admin` or `user`)
+              schema: { type: string, enum: [admin, user] }
+            X-Write-Role:
+              description: New write role after the update (`admin` or `user`)
+              schema: { type: string, enum: [admin, user] }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/NamespaceSummary' }

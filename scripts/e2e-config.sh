@@ -155,6 +155,15 @@ check_contains "admin reads 'houses'" "Rivendell" "$BODY"
 BODY=$(curl -s -H "Authorization: Bearer $ADMIN_TOK" "$CFG_BASE/api/v1/config/mqtt")
 check_contains "admin reads 'mqtt'" "homelab" "$BODY"
 
+# ACL headers on admin GET.
+HEADERS=$(curl -sI -H "Authorization: Bearer $ADMIN_TOK" "$CFG_BASE/api/v1/config/houses")
+check_contains "GET 'houses' includes X-Read-Role: admin"  "X-Read-Role: admin"  "$HEADERS"
+check_contains "GET 'houses' includes X-Write-Role: admin" "X-Write-Role: admin" "$HEADERS"
+
+HEADERS=$(curl -sI -H "Authorization: Bearer $ADMIN_TOK" "$CFG_BASE/api/v1/config/mqtt")
+check_contains "GET 'mqtt' includes X-Read-Role: user"   "X-Read-Role: user"  "$HEADERS"
+check_contains "GET 'mqtt' includes X-Write-Role: admin" "X-Write-Role: admin" "$HEADERS"
+
 # User reads mqtt (read_role=user) but is 404 on houses (read_role=admin).
 STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
   -H "Authorization: Bearer $USER_TOK" "$CFG_BASE/api/v1/config/mqtt")

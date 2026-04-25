@@ -386,6 +386,91 @@ func TestPut_OversizedBody_Returns413(t *testing.T) {
 	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
 }
 
+// --- ACL response headers ---
+
+func TestGet_ReturnsACLHeaders(t *testing.T) {
+	h := newHarness(t)
+	now := time.Now().UTC()
+	require.NoError(t, h.repo.Create(&domain.ConfigNamespace{
+		Name: "prefs", ReadRole: "user", WriteRole: "admin",
+		Document: []byte(`{"x":1}`), UpdatedAt: now, UpdatedBy: "u", CreatedAt: now,
+	}))
+	resp, _ := h.do("GET", "/api/v1/config/prefs", h.adminTok, nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "user", resp.Header.Get("X-Read-Role"))
+	assert.Equal(t, "admin", resp.Header.Get("X-Write-Role"))
+}
+
+func TestGet_ACLHeaders_MatchStoredACL(t *testing.T) {
+	h := newHarness(t)
+	now := time.Now().UTC()
+	require.NoError(t, h.repo.Create(&domain.ConfigNamespace{
+		Name: "sec", ReadRole: "admin", WriteRole: "admin",
+		Document: []byte(`{}`), UpdatedAt: now, UpdatedBy: "u", CreatedAt: now,
+	}))
+	resp, _ := h.do("GET", "/api/v1/config/sec", h.adminTok, nil)
+	assert.Equal(t, "admin", resp.Header.Get("X-Read-Role"))
+	assert.Equal(t, "admin", resp.Header.Get("X-Write-Role"))
+}
+
+func TestPatchACL_ReturnsACLHeaders(t *testing.T) {
+	h := newHarness(t)
+	now := time.Now().UTC()
+	require.NoError(t, h.repo.Create(&domain.ConfigNamespace{
+		Name: "n", ReadRole: "admin", WriteRole: "admin",
+		Document: []byte(`{}`), UpdatedAt: now, UpdatedBy: "u", CreatedAt: now,
+	}))
+	resp, _ := h.do("PATCH", "/api/v1/config/namespaces/n", h.adminTok,
+		map[string]string{"read_role": "user", "write_role": "admin"})
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "user", resp.Header.Get("X-Read-Role"))
+	assert.Equal(t, "admin", resp.Header.Get("X-Write-Role"))
+}
+
+func TestPatchACL_GetHeadersMatchPatchHeaders(t *testing.T) {
+	// Regression: PATCH headers must reflect what's actually stored, not just
+	// echo the request. A subsequent GET must agree with the PATCH response.
+	h := newHarness(t)
+	now := time.Now().UTC()
+	require.NoError(t, h.repo.Create(&domain.ConfigNamespace{
+		Name: "n", ReadRole: "admin", WriteRole: "admin",
+		Document: []byte(`{}`), UpdatedAt: now, UpdatedBy: "u", CreatedAt: now,
+	}))
+	patchResp, _ := h.do("PATCH", "/api/v1/config/namespaces/n", h.adminTok,
+		map[string]string{"read_role": "user", "write_role": "admin"})
+	require.Equal(t, http.StatusOK, patchResp.StatusCode)
+
+	getResp, _ := h.do("GET", "/api/v1/config/n", h.adminTok, nil)
+	require.Equal(t, http.StatusOK, getResp.StatusCode)
+
+	assert.Equal(t, patchResp.Header.Get("X-Read-Role"), getResp.Header.Get("X-Read-Role"))
+	assert.Equal(t, patchResp.Header.Get("X-Write-Role"), getResp.Header.Get("X-Write-Role"))
+}
+
+func TestGet_NoACLHeadersOn404_ReadDenied(t *testing.T) {
+	// A user that lacks read_role sees 404. The ACL headers must be absent so
+	// header presence cannot be used as an existence oracle.
+	h := newHarness(t)
+	now := time.Now().UTC()
+	require.NoError(t, h.repo.Create(&domain.ConfigNamespace{
+		Name: "secret", ReadRole: "admin", WriteRole: "admin",
+		Document: []byte(`{}`), UpdatedAt: now, UpdatedBy: "u", CreatedAt: now,
+	}))
+	resp, _ := h.do("GET", "/api/v1/config/secret", h.userTok, nil)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Empty(t, resp.Header.Get("X-Read-Role"))
+	assert.Empty(t, resp.Header.Get("X-Write-Role"))
+}
+
+func TestGet_NoACLHeadersOn404_Missing(t *testing.T) {
+	// A truly missing namespace must also return no ACL headers.
+	h := newHarness(t)
+	resp, _ := h.do("GET", "/api/v1/config/nonexistent", h.adminTok, nil)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Empty(t, resp.Header.Get("X-Read-Role"))
+	assert.Empty(t, resp.Header.Get("X-Write-Role"))
+}
+
 // --- PATCH ACL ---
 
 func TestPatchACL_AdminOnly(t *testing.T) {

@@ -255,8 +255,13 @@ func getHandler(svc *service.ConfigService) http.HandlerFunc {
 		}
 		// Return the raw stored document so callers can parse it with a
 		// plain JSON decoder. The document is validated as a JSON object
-		// on the write path.
+		// on the write path. ACL headers let clients avoid a second list
+		// call just to display role information.
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Read-Role", got.ReadRole)
+		w.Header().Set("X-Write-Role", got.WriteRole)
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("Vary", "Authorization")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(got.Document)
 	}
@@ -355,6 +360,8 @@ func updateACLHandler(svc *service.ConfigService) http.HandlerFunc {
 			translateError(w, err)
 			return
 		}
+		w.Header().Set("X-Read-Role", b.ReadRole)
+		w.Header().Set("X-Write-Role", b.WriteRole)
 		writeJSON(w, http.StatusOK, map[string]string{
 			"name":       ns,
 			"read_role":  b.ReadRole,
