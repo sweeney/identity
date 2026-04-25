@@ -137,10 +137,26 @@ func runConfigServer() error {
 	svc := service.NewConfigService(repo, backupMgr)
 
 	router := confighandler.NewRouter(confighandler.Deps{
-		Service:  svc,
-		Verifier: verifier,
-		Version:  version,
+		Service:           svc,
+		Verifier:          verifier,
+		Version:           version,
+		IdentityPublicURL: cfg.IdentityPublicURL,
+		OAuthClientID:     cfg.OAuthClientID,
 	})
+	if cfg.OAuthClientID != "" && cfg.IdentityPublicURL != "" {
+		log.Printf("config: admin UI mounted at /; oauth client_id=%s, identity public url=%s",
+			cfg.OAuthClientID, cfg.IdentityPublicURL)
+	} else {
+		log.Println("config: admin UI disabled (set OAUTH_CLIENT_ID and IDENTITY_PUBLIC_URL to enable)")
+	}
+
+	// Loud warning when dev-mode is active and no explicit CORS allow
+	// list is set: originAllowed will let *any* http://localhost:* origin
+	// drive the API. That's intentional for local dev but dangerous if
+	// IDENTITY_ENV is accidentally left unset on a public host.
+	if cfg.Env == config.EnvDevelopment && len(cfg.CORSOrigins) == 0 {
+		log.Println("WARNING: development mode + empty CORS_ORIGINS → ANY http://localhost:* origin is allowed; set IDENTITY_ENV=production or list explicit origins for non-dev hosts")
+	}
 
 	// Context + background tasks
 	ctx, cancel := context.WithCancel(context.Background())
@@ -168,7 +184,7 @@ func runConfigServer() error {
 		log.Println("rate limiting disabled (RATE_LIMIT_DISABLED)")
 	}
 
-	handler = configSecurityHeaders(handler, cfg.CORSOrigins, cfg.Env == config.EnvDevelopment)
+	handler = configSecurityHeaders(handler, cfg.CORSOrigins, cfg.IdentityPublicURL, cfg.Env == config.EnvDevelopment)
 
 	// OpenAPI + discovery endpoints are served directly on the raw mux
 	// inside the router; nothing to register here yet. (Added in M4.)
@@ -260,20 +276,54 @@ func originAllowed(origin string, allowed map[string]bool, devMode bool) bool {
 	return devMode && len(allowed) == 0
 }
 
-// configSecurityHeaders wraps the router with a slimmer CSP than identity's.
-// Config serves only JSON APIs and /healthz — no HTML, no forms, no OAuth
-// redirects — so the CSP can be strict.
-func configSecurityHeaders(next http.Handler, corsOrigins []string, devMode bool) http.Handler {
+// configSecurityHeaders wraps the router with two CSPs and CORS for the
+// JSON API. Config has two surfaces:
+//
+//   - The /, /static/*, and /spa-config.json paths serve the admin SPA.
+//     They need a permissive-enough CSP to load same-origin scripts and
+//     stylesheets, and to reach identity's /oauth/* endpoints from JS.
+//   - The /api/*, /healthz, /openapi.* paths return JSON only and get
+//     the strictest CSP we can.
+//
+// Both responses set the static security headers (no-sniff, frame-deny,
+// HSTS, referrer-policy=no-referrer) regardless.
+func configSecurityHeaders(next http.Handler, corsOrigins []string, identityURL string, devMode bool) http.Handler {
 	allowed := make(map[string]bool, len(corsOrigins))
 	for _, o := range corsOrigins {
 		allowed[o] = true
 	}
+
+	// Pre-build the SPA CSP. connect-src and form-action need to allow
+	// the identity service so the OAuth flow can redirect there and the
+	// SPA can fetch /oauth/token. img-src allows data: for the inline
+	// favicon.
+	spaCSP := "default-src 'self'; " +
+		"script-src 'self'; " +
+		"style-src 'self'; " +
+		"img-src 'self' data:; " +
+		"connect-src 'self'"
+	if identityURL != "" {
+		spaCSP += " " + identityURL
+	}
+	spaCSP += "; form-action 'self'"
+	if identityURL != "" {
+		spaCSP += " " + identityURL
+	}
+	spaCSP += "; base-uri 'self'; frame-ancestors 'none'"
+
+	const apiCSP = "default-src 'none'; frame-ancestors 'none'"
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+
+		if isSPAPath(r.URL.Path) {
+			w.Header().Set("Content-Security-Policy", spaCSP)
+		} else {
+			w.Header().Set("Content-Security-Policy", apiCSP)
+		}
 
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Vary", "Origin")
@@ -291,5 +341,11 @@ func configSecurityHeaders(next http.Handler, corsOrigins []string, devMode bool
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isSPAPath reports whether the request path serves the admin UI. Used
+// by configSecurityHeaders to choose between the SPA and API CSPs.
+func isSPAPath(p string) bool {
+	return p == "/" || p == "/spa-config.json" || strings.HasPrefix(p, "/static/")
 }
 

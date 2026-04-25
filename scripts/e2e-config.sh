@@ -259,9 +259,63 @@ STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
   -H "Authorization: Bearer $ADMIN_TOK" "$CFG_BASE/api/v1/config/mqtt")
 check "GET after DELETE = 404" "404" "$STATUS"
 
-# ── 11. Cleanup ──────────────────────────────────────────────────────
+# ── 11. SPA logout actually revokes the refresh token ─────────────────
+# Regression for the auth.js logout fix. The SPA used to call
+# /api/v1/auth/logout without an Authorization header — silently 401'd.
+# This test does a fresh login (so we don't break the global ADMIN_TOK
+# used by Cleanup), revokes via the same call shape the SPA uses, and
+# asserts the refresh token is dead server-side.
 echo
-echo "=== 11. Cleanup ==="
+echo "=== 11. SPA logout revokes refresh token ==="
+LOGOUT_LOGIN=$(curl -s -X POST "$ID_BASE/api/v1/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASS\"}")
+LOGOUT_ACCESS=$(json_field "$LOGOUT_LOGIN" access_token)
+LOGOUT_REFRESH=$(json_field "$LOGOUT_LOGIN" refresh_token)
+if [ -n "$LOGOUT_ACCESS" ] && [ -n "$LOGOUT_REFRESH" ]; then
+  check "fresh login returned access + refresh tokens" "yes" "yes"
+else
+  check "fresh login returned access + refresh tokens" "yes" "no"
+  echo "login response: $LOGOUT_LOGIN"
+  exit 1
+fi
+
+# Confirm refresh works before logout, and capture the rotated pair.
+# (Identity rotates on every refresh, so we can't pre-check then re-use
+# the original token — that would trip token-family-compromise. Instead
+# we pre-check via the rotation itself, then use the rotated pair to
+# exercise logout.)
+ROTATED=$(curl -s -X POST "$ID_BASE/api/v1/auth/refresh" \
+  -H 'Content-Type: application/json' \
+  -d "{\"refresh_token\":\"$LOGOUT_REFRESH\"}")
+LOGOUT_ACCESS=$(json_field "$ROTATED" access_token)
+LOGOUT_REFRESH=$(json_field "$ROTATED" refresh_token)
+if [ -n "$LOGOUT_ACCESS" ] && [ -n "$LOGOUT_REFRESH" ]; then
+  check "refresh works before logout" "yes" "yes"
+else
+  check "refresh works before logout" "yes" "no"
+  echo "refresh response: $ROTATED"
+  exit 1
+fi
+
+# Now logout the SPA way — Authorization: Bearer + refresh_token in body.
+LOGOUT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$ID_BASE/api/v1/auth/logout" \
+  -H "Authorization: Bearer $LOGOUT_ACCESS" \
+  -H 'Content-Type: application/json' \
+  -d "{\"refresh_token\":\"$LOGOUT_REFRESH\"}")
+check "SPA logout call accepted" "204" "$LOGOUT_STATUS"
+
+# Refresh must now fail — the token is dead server-side. Identity returns
+# 401 invalid_refresh_token (or 401 token_family_compromised on replay
+# of an already-rotated token).
+POST_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$ID_BASE/api/v1/auth/refresh" \
+  -H 'Content-Type: application/json' \
+  -d "{\"refresh_token\":\"$LOGOUT_REFRESH\"}")
+check "refresh fails after logout (token revoked)" "401" "$POST_STATUS"
+
+# ── 12. Cleanup ──────────────────────────────────────────────────────
+echo
+echo "=== 12. Cleanup ==="
 if [ -n "$USER_ID" ]; then
   STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
     -X DELETE "$ID_BASE/api/v1/users/$USER_ID" \

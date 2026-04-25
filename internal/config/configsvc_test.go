@@ -20,7 +20,8 @@ func clearConfigSvcEnv(t *testing.T) {
 	for _, k := range []string{
 		"IDENTITY_ENV", "PORT", "DB_PATH",
 		"IDENTITY_ISSUER_URL", "IDENTITY_ISSUER",
-		"JWKS_CACHE_TTL", "BACKUP_MIN_INTERVAL",
+		"IDENTITY_PUBLIC_URL", "OAUTH_CLIENT_ID",
+		"JWKS_CACHE_TTL", "BACKUP_MIN_INTERVAL", "REQUIRED_AUDIENCE",
 		"TRUST_PROXY", "CORS_ORIGINS", "RATE_LIMIT_DISABLED",
 		"R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME",
 	} {
@@ -207,6 +208,35 @@ func TestLoadConfigSvc_R2PartiallyConfigured_NotConfigured(t *testing.T) {
 				"R2Configured must require ALL four vars, missing %s", omitted)
 		})
 	}
+}
+
+func TestLoadConfigSvc_IdentityPublicURLFallsBackToIssuerURL(t *testing.T) {
+	clearConfigSvcEnv(t)
+	t.Setenv("IDENTITY_ISSUER_URL", "http://id.local:9000")
+
+	cfg, err := config.LoadConfigSvc()
+	require.NoError(t, err)
+	assert.Equal(t, "http://id.local:9000", cfg.IdentityPublicURL,
+		"IDENTITY_PUBLIC_URL defaults to IDENTITY_ISSUER_URL so most homelab deployments don't need both")
+}
+
+func TestLoadConfigSvc_OAuthClientID(t *testing.T) {
+	clearConfigSvcEnv(t)
+	t.Setenv("OAUTH_CLIENT_ID", "config-spa")
+
+	cfg, err := config.LoadConfigSvc()
+	require.NoError(t, err)
+	assert.Equal(t, "config-spa", cfg.OAuthClientID)
+}
+
+func TestLoadConfigSvc_IdentityPublicURL_ShapeValidated(t *testing.T) {
+	clearConfigSvcEnv(t)
+	t.Setenv("IDENTITY_ISSUER_URL", "http://id.local")
+	t.Setenv("IDENTITY_PUBLIC_URL", "http://id.local?bad=1")
+
+	_, err := config.LoadConfigSvc()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "IDENTITY_PUBLIC_URL")
 }
 
 func TestLoadConfigSvc_IdentityIssuerFallsBackToURL(t *testing.T) {

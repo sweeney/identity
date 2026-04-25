@@ -435,6 +435,117 @@ func TestCreate_MalformedJSON_Returns400(t *testing.T) {
 	assert.Contains(t, string(body), "invalid_request")
 }
 
+// --- SPA bundle ---
+
+// newHarnessWithSPA spins up a router with the admin-UI bundle mounted,
+// using the test issuer's URL as the SPA's identity_url.
+func newHarnessWithSPA(t *testing.T) *harness {
+	t.Helper()
+	key, err := auth.GenerateKey()
+	require.NoError(t, err)
+	issuer, err := auth.NewTokenIssuer(key, nil, "https://test", 5*time.Minute)
+	require.NoError(t, err)
+
+	repo := newFakeRepo()
+	svc := service.NewConfigService(repo, fakeBackup{})
+	router := confighandler.NewRouter(confighandler.Deps{
+		Service:           svc,
+		Verifier:          issuer,
+		Version:           "test",
+		IdentityPublicURL: "https://id.example.com",
+		OAuthClientID:     "config-spa",
+	})
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+
+	mint := func(role domain.Role, sub string) string {
+		tok, err := issuer.Mint(domain.TokenClaims{UserID: sub, Username: sub, Role: role, IsActive: true})
+		require.NoError(t, err)
+		return tok
+	}
+	return &harness{
+		t: t, issuer: issuer, repo: repo, srv: srv,
+		adminTok: mint(domain.RoleAdmin, "admin-1"),
+		userTok:  mint(domain.RoleUser, "user-1"),
+	}
+}
+
+func TestSPA_IndexServedAtRoot(t *testing.T) {
+	h := newHarnessWithSPA(t)
+	resp, body := h.do("GET", "/", "", nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "text/html")
+	assert.Contains(t, string(body), "<title>Config Admin</title>")
+	assert.Contains(t, string(body), "/static/app.js")
+}
+
+func TestSPA_StaticAssetsServed(t *testing.T) {
+	h := newHarnessWithSPA(t)
+	for _, path := range []string{"/static/app.js", "/static/style.css", "/static/auth.js", "/static/api.js", "/static/editor.js"} {
+		t.Run(path, func(t *testing.T) {
+			resp, body := h.do("GET", path, "", nil)
+			assert.Equal(t, http.StatusOK, resp.StatusCode, "expected %s to be served", path)
+			assert.NotEmpty(t, body)
+		})
+	}
+}
+
+func TestSPA_BootstrapConfigJSON(t *testing.T) {
+	h := newHarnessWithSPA(t)
+	resp, body := h.do("GET", "/spa-config.json", "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "json")
+	var cfg map[string]string
+	require.NoError(t, json.Unmarshal(body, &cfg))
+	assert.Equal(t, "https://id.example.com", cfg["identity_url"],
+		"SPA must learn the identity URL via /spa-config.json so the OAuth flow can target it")
+	assert.Equal(t, "config-spa", cfg["client_id"])
+}
+
+func TestSPA_NotMountedWhenDepsEmpty(t *testing.T) {
+	// When IdentityPublicURL or OAuthClientID is unset, the SPA bundle
+	// is intentionally not mounted — config stays a pure API server.
+	h := newHarness(t) // existing factory: no SPA deps
+	for _, path := range []string{"/", "/static/app.js", "/spa-config.json"} {
+		t.Run(path, func(t *testing.T) {
+			resp, _ := h.do("GET", path, "", nil)
+			assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+				"%s must 404 when SPA is disabled", path)
+		})
+	}
+}
+
+// TestSPA_DirectoryListingRefused asserts that http.FileServer's default
+// "render an HTML index for a directory request" behaviour is suppressed.
+// A naive mount would expose every embedded asset's name at GET /static/,
+// which is a small fingerprint signal we'd rather not give scanners.
+func TestSPA_DirectoryListingRefused(t *testing.T) {
+	h := newHarnessWithSPA(t)
+	for _, path := range []string{"/static/", "/static/somedir/"} {
+		t.Run(path, func(t *testing.T) {
+			resp, body := h.do("GET", path, "", nil)
+			assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+				"%s must 404 (no directory listing)", path)
+			assert.NotContains(t, string(body), "<a href=",
+				"response body must not contain an HTML directory index")
+		})
+	}
+}
+
+// TestSPA_IndexCarriesAssetVersion verifies the cache-busting wiring:
+// every /static/* URL in the rendered index.html should carry a ?v=…
+// query so a deploy reliably invalidates browser caches even though
+// the static file server itself sets no Cache-Control on assets.
+func TestSPA_IndexCarriesAssetVersion(t *testing.T) {
+	h := newHarnessWithSPA(t)
+	resp, body := h.do("GET", "/", "", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	for _, asset := range []string{"app.js", "auth.js", "api.js", "editor.js", "style.css"} {
+		assert.Regexp(t, `/static/`+asset+`\?v=\w+`, string(body),
+			"%s must be referenced with a ?v=… cache-buster", asset)
+	}
+}
+
 // --- OpenAPI ---
 
 func TestOpenAPI_YAML_Unauth(t *testing.T) {
