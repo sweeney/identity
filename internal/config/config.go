@@ -181,6 +181,9 @@ func Load() (*Config, error) {
 			waOrigins[o] = true
 		}
 		for _, o := range cfg.CORSOrigins {
+			if strings.Contains(o, "*") {
+				continue // wildcards are never valid WebAuthn origins; skip
+			}
 			if !waOrigins[o] {
 				log.Printf("WARNING: CORS origin %q is not in WEBAUTHN_RP_ORIGINS — add it if passkey ceremonies should work from that origin", o)
 			}
