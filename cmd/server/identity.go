@@ -483,6 +483,8 @@ func jwksHandler(issuer *auth.TokenIssuer) http.Handler {
 // If "http://localhost" (no port) appears in the allowlist, it matches any
 // http://localhost:PORT origin, enabling a single CORS_ORIGINS entry to cover
 // all local dev ports.
+// Wildcard entries like "https://*.example.com" match any
+// "https://<subdomain>.example.com" origin with the same scheme.
 func isAllowedOrigin(origin string, allowed map[string]bool, devMode bool) bool {
 	if allowed[origin] {
 		return true
@@ -491,7 +493,24 @@ func isAllowedOrigin(origin string, allowed map[string]bool, devMode bool) bool 
 	// "http://localhost.attacker.example" would match. Parse the origin
 	// and compare host explicitly.
 	u, err := url.Parse(origin)
-	if err != nil || u.Scheme != "http" {
+	if err != nil {
+		return false
+	}
+
+	// Wildcard subdomain matching: "https://*.example.com" in the allowlist
+	// matches any "https://<subdomain>.example.com". Scheme must match.
+	// u.Hostname() strips any port before the suffix check.
+	for entry := range allowed {
+		wu, err := url.Parse(entry)
+		if err != nil || wu.Scheme != u.Scheme || !strings.HasPrefix(wu.Host, "*.") {
+			continue
+		}
+		if strings.HasSuffix(u.Hostname(), wu.Host[1:]) {
+			return true
+		}
+	}
+
+	if u.Scheme != "http" {
 		return false
 	}
 	isLocalhostHost := u.Host == "localhost" || strings.HasPrefix(u.Host, "localhost:")
