@@ -117,7 +117,7 @@ check "create admin-only 'houses' = 201" "201" "$STATUS"
 
 R=$(curl -s -X POST "$CFG_BASE/api/v1/config/namespaces" \
   -H "Authorization: Bearer $ADMIN_TOK" -H 'Content-Type: application/json' \
-  -d '{"name":"mqtt","read_role":"user","write_role":"admin","document":{"base":"homelab"}}' \
+  -d '{"name":"mqtt","read_role":"user","write_role":"admin","document":{"base":"config"}}' \
   -w '\n%{http_code}')
 STATUS=$(echo "$R" | tail -n1)
 check "create user-readable 'mqtt' = 201" "201" "$STATUS"
@@ -153,7 +153,7 @@ BODY=$(curl -s -H "Authorization: Bearer $ADMIN_TOK" "$CFG_BASE/api/v1/config/ho
 check_contains "admin reads 'houses'" "Rivendell" "$BODY"
 
 BODY=$(curl -s -H "Authorization: Bearer $ADMIN_TOK" "$CFG_BASE/api/v1/config/mqtt")
-check_contains "admin reads 'mqtt'" "homelab" "$BODY"
+check_contains "admin reads 'mqtt'" "config" "$BODY"
 
 # ACL headers on admin GET.
 HEADERS=$(curl -sI -H "Authorization: Bearer $ADMIN_TOK" "$CFG_BASE/api/v1/config/houses")
@@ -193,7 +193,7 @@ check "user PUT on hidden 'houses' = 404 (no existence leak)" "404" "$STATUS"
 # Admin PUT succeeds.
 R=$(curl -s -X PUT "$CFG_BASE/api/v1/config/mqtt" \
   -H "Authorization: Bearer $ADMIN_TOK" -H 'Content-Type: application/json' \
-  -d '{"base":"homelab","broker":"192.168.1.10"}' \
+  -d '{"base":"config","broker":"192.168.1.10"}' \
   -w '\n%{http_code}')
 STATUS=$(echo "$R" | tail -n1)
 check "admin PUT on 'mqtt' = 200" "200" "$STATUS"
@@ -202,7 +202,7 @@ check_contains "admin PUT returned changed=true" '"changed":true' "$R"
 # No-op PUT.
 R=$(curl -s -X PUT "$CFG_BASE/api/v1/config/mqtt" \
   -H "Authorization: Bearer $ADMIN_TOK" -H 'Content-Type: application/json' \
-  -d '{"base":"homelab","broker":"192.168.1.10"}' \
+  -d '{"base":"config","broker":"192.168.1.10"}' \
   -w '\n%{http_code}')
 check_contains "no-op PUT returned changed=false" '"changed":false' "$R"
 

@@ -53,7 +53,7 @@ func runConfig(args []string) error {
 func printConfigUsage() {
 	fmt.Println("Usage: identity-server config [flags]")
 	fmt.Println()
-	fmt.Println("The config service stores structured homelab configuration as")
+	fmt.Println("The config service stores structured configuration as")
 	fmt.Println("named JSON documents with per-namespace read/write role ACLs.")
 	fmt.Println("It validates JWTs against the identity service's JWKS endpoint.")
 	fmt.Println()
@@ -174,7 +174,7 @@ func runConfigServer() error {
 	var handler http.Handler = router
 	if !cfg.RateLimitDisabled {
 		// 5 rps (300/min) with burst 20. Chosen higher than identity's 30/min
-		// because the primary callers are sibling homelab services that read
+		// because the primary callers are sibling services that read
 		// config on boot — a ~8-service parallel power-on burst must not
 		// throttle legitimate reads.
 		limiter := ratelimit.NewLimiter(5.0, 20, cfg.TrustProxy)

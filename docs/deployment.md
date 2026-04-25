@@ -97,7 +97,7 @@ both with Cloudflare Tunnel on separate hostnames:
 ## Running as different unix users
 
 The default install uses one `identity` unix user for both services.
-This is fine for a homelab. If you want real isolation between services
+This is fine for a . If you want real isolation between services
 (so a compromise of one can't read the other's SQLite file), create a
 second user and override the `User=`/`Group=` in a systemd drop-in:
 

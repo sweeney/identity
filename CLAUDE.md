@@ -100,7 +100,7 @@ Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expir
 
 ## Config service (sibling)
 
-A second service stored in this repo provides structured homelab config (house names, MQTT topics, location coords). One process per service, separate SQLite DB (`config.db`), separate R2 backup prefix. It validates incoming JWTs against identity's JWKS endpoint — so tokens are still issued by identity.
+A second service stored in this repo provides structured config (house names, MQTT topics, location coords). One process per service, separate SQLite DB (`config.db`), separate R2 backup prefix. It validates incoming JWTs against identity's JWKS endpoint — so tokens are still issued by identity.
 
 ```bash
 ./bin/identity-server config     # defaults to :8282, config.db

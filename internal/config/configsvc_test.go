@@ -217,7 +217,7 @@ func TestLoadConfigSvc_IdentityPublicURLFallsBackToIssuerURL(t *testing.T) {
 	cfg, err := config.LoadConfigSvc()
 	require.NoError(t, err)
 	assert.Equal(t, "http://id.local:9000", cfg.IdentityPublicURL,
-		"IDENTITY_PUBLIC_URL defaults to IDENTITY_ISSUER_URL so most homelab deployments don't need both")
+		"IDENTITY_PUBLIC_URL defaults to IDENTITY_ISSUER_URL so most deployments don't need both")
 }
 
 func TestLoadConfigSvc_OAuthClientID(t *testing.T) {

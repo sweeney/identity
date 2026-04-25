@@ -9,7 +9,7 @@ const (
 	ConfigRoleUser  = "user"
 )
 
-// ConfigNamespace is a named bucket of homelab configuration data. The entire
+// ConfigNamespace is a named bucket of configuration data. The entire
 // namespace is stored as a single JSON document; per-namespace role ACLs
 // govern read and write access. Callers who lack the read role receive 404
 // rather than 403, so namespace existence is not leaked.

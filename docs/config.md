@@ -1,6 +1,6 @@
 # Config service — integration guide
 
-The config service stores structured homelab configuration as named JSON
+The config service stores structured configuration as named JSON
 documents with per-namespace role ACLs. It runs as a separate process from
 identity (default port 8282) and validates JWTs against identity's JWKS
 endpoint, so you authenticate exactly the same way you authenticate against
@@ -143,7 +143,7 @@ Users see only namespaces whose `read_role` they satisfy; admins see all.
   no HTTP caching headers; poll on your own TTL, and treat 404 as
   authoritative (no retry).
 - **Don't embed secrets.** Config documents are intended for non-secret
-  homelab data (topics, IP addresses, friendly names). Treat any writer
+  structured data (topics, IP addresses, friendly names). Treat any writer
   as able to read back everything they wrote.
 - **Concurrent edits are last-write-wins.** v1 has no ETag / `If-Match`.
   If you need multi-writer coordination, serialize at the caller.

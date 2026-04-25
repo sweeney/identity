@@ -9,7 +9,7 @@
 //   - Validate-on-save guard via getValueOrThrow()
 //
 // Deliberately NOT a full editor — no syntax highlighting, no folding.
-// CodeMirror is a follow-up if homelab admins ask for it.
+// CodeMirror is a follow-up if admins ask for it.
 
 window.JSONEditor = (function () {
   'use strict';

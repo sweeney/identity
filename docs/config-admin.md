@@ -115,7 +115,7 @@ RPO implications:
 
 If your workload has critical write-every-N-seconds traffic, either set
 `BACKUP_MIN_INTERVAL=0` (disable throttling; every write uploads) or
-increase R2 pricing / capacity planning accordingly. For a homelab the
+increase R2 pricing / capacity planning accordingly. For a the
 default is right.
 
 ### Scheduled backups
@@ -185,7 +185,7 @@ via JWKS. It does **not** depend on identity for:
 
 If identity is down, config continues to serve cached JWKS but new
 tokens will eventually fail to verify when the cache expires
-(`JWKS_CACHE_TTL`, default 5 minutes). For a homelab deployment where
+(`JWKS_CACHE_TTL`, default 5 minutes). For a self-hosted deployment where
 both services run on the same host behind the same tunnel, this is
 rarely a concern in practice.
 
@@ -228,7 +228,7 @@ need tighter revocation:
   Forces the verifier to refetch JWKS and invalidates *every* token
   signed by the old key — blunt but effective.
 
-For a homelab, the default 15-min window is usually fine.
+For a self-hosted setup, the default 15-min window is usually fine.
 
 ### Cross-service token replay
 
@@ -297,7 +297,7 @@ IDENTITY_PUBLIC_URL=https://id.example.com
 ```
 
 `IDENTITY_PUBLIC_URL` defaults to `IDENTITY_ISSUER_URL`, so this line
-is optional when both are the same hostname (typical for homelab).
+is optional when both are the same hostname.
 Restart `config.service`. The startup log will print:
 
 ```
@@ -337,7 +337,7 @@ tokens and lands on the namespace list.
 - **localStorage tokens are XSS-readable.** This is acceptable here
   because (a) the SPA loads no third-party scripts, (b) CSP forbids
   inline scripts and `eval`, and (c) the threat model is a
-  single-admin homelab, not a SaaS with many tenants. If your
+  single-admin deployment, not a SaaS with many tenants. If your
   deployment differs (third-party scripts, multiple users), consider
   a backend-for-frontend (BFF) pattern instead.
 - **CSP is restrictive but pragmatic.** `script-src 'self'` only;

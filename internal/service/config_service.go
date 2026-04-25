@@ -21,7 +21,7 @@ const MaxConfigDocumentBytes = 64 * 1024
 // DOS via pathological payloads like `{"a":{"a":{...}}}`. A byte budget
 // alone is not enough: 128KB of braces fits tens of thousands of nesting
 // levels, which can crash the runtime or burn significant CPU on recovery.
-// 64 is generous for any plausible homelab config shape.
+// 64 is generous for any plausible config shape.
 const MaxConfigDocumentDepth = 64
 
 // configNameRE defines the namespace name grammar: lowercase letters,

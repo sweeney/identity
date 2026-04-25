@@ -62,7 +62,6 @@
     const btn = el('button', { text: 'Sign in with Identity', on: { click: () => Auth.startLogin() } });
     return el('div', null, [
       el('h1', { text: 'Config Admin' }),
-      el('p', { text: 'Sign in via your identity service to manage homelab config namespaces.' }),
       el('div', { class: 'button-row' }, [btn]),
     ]);
   }

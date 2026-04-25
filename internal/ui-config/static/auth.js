@@ -8,7 +8,7 @@
 //
 // Threat model: an XSS on this origin can read tokens from localStorage.
 // We mitigate by serving a strict CSP from the server (script-src 'self'
-// only) and by not embedding any third-party scripts. For the homelab
+// only) and by not embedding any third-party scripts. For this
 // admin UI threat model this is acceptable; a SaaS would prefer
 // HttpOnly cookies + a server-side session.
 

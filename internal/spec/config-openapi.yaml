@@ -4,7 +4,7 @@ info:
   title: Config API
   version: "1.0.0"
   description: |
-    Self-hosted structured-config service for homelab data. Namespaces
+    Self-hosted structured-config service. Namespaces
     are JSON documents with per-namespace read/write role ACLs. Tokens
     are verified against the identity service's JWKS endpoint.
 
