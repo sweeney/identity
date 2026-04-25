@@ -67,6 +67,38 @@ func TestIsAllowedOrigin_LocalhostWildcard_DoesNotMatchLocalhostSubdomain(t *tes
 	assert.False(t, isAllowedOrigin("http://localhost.evil.com", allowed, false))
 }
 
+func TestIsAllowedOrigin_SubdomainWildcard_MatchesSubdomain(t *testing.T) {
+	allowed := map[string]bool{"https://*.example.com": true}
+	assert.True(t, isAllowedOrigin("https://app.example.com", allowed, false))
+	assert.True(t, isAllowedOrigin("https://config.example.com", allowed, false))
+}
+
+func TestIsAllowedOrigin_SubdomainWildcard_DoesNotMatchParentDomain(t *testing.T) {
+	allowed := map[string]bool{"https://*.example.com": true}
+	assert.False(t, isAllowedOrigin("https://example.com", allowed, false))
+}
+
+func TestIsAllowedOrigin_SubdomainWildcard_DoesNotMatchWrongScheme(t *testing.T) {
+	allowed := map[string]bool{"https://*.example.com": true}
+	assert.False(t, isAllowedOrigin("http://app.example.com", allowed, false))
+}
+
+func TestIsAllowedOrigin_SubdomainWildcard_DoesNotMatchUnrelatedDomain(t *testing.T) {
+	allowed := map[string]bool{"https://*.example.com": true}
+	assert.False(t, isAllowedOrigin("https://evil.com", allowed, false))
+}
+
+func TestIsAllowedOrigin_SubdomainWildcard_DoesNotMatchSuffixWithoutDot(t *testing.T) {
+	// "evilexample.com" must not match "*.example.com"
+	allowed := map[string]bool{"https://*.example.com": true}
+	assert.False(t, isAllowedOrigin("https://evilexample.com", allowed, false))
+}
+
+func TestIsAllowedOrigin_SubdomainWildcard_MatchesWithPort(t *testing.T) {
+	allowed := map[string]bool{"https://*.example.com": true}
+	assert.True(t, isAllowedOrigin("https://app.example.com:8443", allowed, false))
+}
+
 // ---------------------------------------------------------------------------
 // securityHeaders — CORS behaviour
 // ---------------------------------------------------------------------------
