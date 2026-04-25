@@ -69,6 +69,20 @@ func (mr *MockClaimCodeRepositoryMockRecorder) Create(c any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockClaimCodeRepository)(nil).Create), c)
 }
 
+// Delete mocks base method.
+func (m *MockClaimCodeRepository) Delete(id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Delete", id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Delete indicates an expected call of Delete.
+func (mr *MockClaimCodeRepositoryMockRecorder) Delete(id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockClaimCodeRepository)(nil).Delete), id)
+}
+
 // GetByHash mocks base method.
 func (m *MockClaimCodeRepository) GetByHash(codeHash string) (*domain.ClaimCode, error) {
 	m.ctrl.T.Helper()
@@ -112,20 +126,6 @@ func (m *MockClaimCodeRepository) ListByClient(clientID string) ([]*domain.Claim
 func (mr *MockClaimCodeRepositoryMockRecorder) ListByClient(clientID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByClient", reflect.TypeOf((*MockClaimCodeRepository)(nil).ListByClient), clientID)
-}
-
-// Delete mocks base method.
-func (m *MockClaimCodeRepository) Delete(id string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Delete", id)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Delete indicates an expected call of Delete.
-func (mr *MockClaimCodeRepositoryMockRecorder) Delete(id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockClaimCodeRepository)(nil).Delete), id)
 }
 
 // Revoke mocks base method.
