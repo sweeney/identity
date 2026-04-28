@@ -12,13 +12,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sweeney/identity/common/backup"
+	"github.com/sweeney/identity/common/ratelimit"
 	"github.com/sweeney/identity/internal/auth"
-	"github.com/sweeney/identity/internal/backup"
 	"github.com/sweeney/identity/internal/config"
 	"github.com/sweeney/identity/internal/db"
 	"github.com/sweeney/identity/internal/domain"
 	confighandler "github.com/sweeney/identity/internal/handler/config"
-	"github.com/sweeney/identity/internal/ratelimit"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/store"
 )
@@ -109,7 +109,7 @@ func runConfigServer() error {
 			Env:         string(cfg.Env),
 			ServiceName: "config",
 			MinInterval: cfg.BackupMinInterval,
-		}, uploader, stdoutAudit{})
+		}, uploader, logBackupEvent)
 		backupMgr = mgr
 	} else {
 		log.Println("warning: R2 backup not configured — config backups disabled")
@@ -230,30 +230,21 @@ func runConfigServer() error {
 	return exitErr
 }
 
-// stdoutAudit is a minimal domain.AuditRepository that logs every Record
-// call to stdout (picked up by systemd's journal). The config service has
-// no persistent audit table in v1 so this is the only sink — the backup
-// manager's success/failure events would otherwise be silently dropped.
-// The List/Count methods are stubs because the config service does not
-// expose an audit API yet; wire in a real repository if that changes.
-type stdoutAudit struct{}
-
-func (stdoutAudit) Record(e *domain.AuthEvent) error {
-	if e.Detail != "" {
-		log.Printf("audit: %s user=%s detail=%s", e.EventType, e.Username, e.Detail)
-	} else {
-		log.Printf("audit: %s user=%s", e.EventType, e.Username)
+// logBackupEvent is the EventRecorder we hand to the backup manager. The
+// config service has no persistent audit table in v1, so backup outcomes
+// are written to stdout (picked up by systemd's journal). If a real audit
+// sink is added later, swap this for a closure that records into it.
+func logBackupEvent(success bool, detail string) {
+	outcome := domain.EventBackupSuccess
+	if !success {
+		outcome = domain.EventBackupFailure
 	}
-	return nil
+	if detail != "" {
+		log.Printf("audit: %s user=system detail=%s", outcome, detail)
+	} else {
+		log.Printf("audit: %s user=system", outcome)
+	}
 }
-func (stdoutAudit) List(int) ([]*domain.AuthEvent, error) { return nil, nil }
-func (stdoutAudit) ListForUser(string, int) ([]*domain.AuthEvent, error) {
-	return nil, nil
-}
-func (stdoutAudit) ListFiltered(string, string, int, int) ([]*domain.AuthEvent, error) {
-	return nil, nil
-}
-func (stdoutAudit) CountFiltered(string, string) (int, error) { return 0, nil }
 
 // originAllowed reports whether the given Origin header value is allowlisted.
 // HasPrefix-on-string matching was unsafe because
@@ -349,4 +340,3 @@ func configSecurityHeaders(next http.Handler, corsOrigins []string, identityURL 
 func isSPAPath(p string) bool {
 	return p == "/" || p == "/spa-config.json" || strings.HasPrefix(p, "/static/")
 }
-

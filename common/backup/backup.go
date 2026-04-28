@@ -9,21 +9,26 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
-	"github.com/sweeney/identity/internal/domain"
-
 	_ "modernc.org/sqlite"
 )
 
 // Uploader is the interface for uploading a backup file to object storage.
 // The concrete implementation uses Cloudflare R2 via the S3-compatible API.
 //
-//go:generate mockgen -destination=../mocks/mock_uploader.go -package=mocks github.com/sweeney/identity/internal/backup Uploader
+//go:generate mockgen -destination=mocks/mock_uploader.go -package=mocks github.com/sweeney/identity/common/backup Uploader
 type Uploader interface {
 	// Upload uploads the file at localPath to the given key in the configured bucket.
 	Upload(ctx context.Context, key, localPath string) error
 }
+
+// EventRecorder is invoked after every backup attempt. detail is the R2 key
+// on success or a short error description on failure. A nil EventRecorder
+// disables event recording.
+//
+// This is a callback rather than an interface so the common module stays
+// free of identity's domain types — callers adapt their own audit sinks
+// (a domain.AuditRepository, a logger, etc.) into this signature.
+type EventRecorder func(success bool, detail string)
 
 // Config holds backup configuration.
 type Config struct {
@@ -42,7 +47,7 @@ type Config struct {
 type Manager struct {
 	cfg      Config
 	uploader Uploader
-	audit    domain.AuditRepository
+	record   EventRecorder
 	trigger  chan struct{}
 
 	mu       sync.Mutex
@@ -51,14 +56,15 @@ type Manager struct {
 }
 
 // NewManager creates a Manager. ServiceName defaults to "identity" if unset.
-func NewManager(cfg Config, uploader Uploader, audit domain.AuditRepository) *Manager {
+// record may be nil to disable event recording.
+func NewManager(cfg Config, uploader Uploader, record EventRecorder) *Manager {
 	if cfg.ServiceName == "" {
 		cfg.ServiceName = "identity"
 	}
 	return &Manager{
 		cfg:      cfg,
 		uploader: uploader,
-		audit:    audit,
+		record:   record,
 		trigger:  make(chan struct{}, 1),
 	}
 }
@@ -178,20 +184,10 @@ func (m *Manager) run() error {
 }
 
 func (m *Manager) recordBackup(success bool, detail string) {
-	if m.audit == nil {
+	if m.record == nil {
 		return
 	}
-	eventType := domain.EventBackupSuccess
-	if !success {
-		eventType = domain.EventBackupFailure
-	}
-	_ = m.audit.Record(&domain.AuthEvent{
-		ID:         uuid.New().String(),
-		EventType:  eventType,
-		Username:   "system",
-		Detail:     detail,
-		OccurredAt: time.Now().UTC(),
-	})
+	m.record(success, detail)
 }
 
 // backupKey returns the R2 object key for a backup at time t.

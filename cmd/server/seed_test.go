@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sweeney/identity/internal/backup"
+	"github.com/sweeney/identity/common/backup"
 	"github.com/sweeney/identity/internal/db"
 	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/internal/service"

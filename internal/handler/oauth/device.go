@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sweeney/identity/internal/httputil"
+	"github.com/sweeney/identity/common/httputil"
 	"github.com/sweeney/identity/internal/service"
 )
 

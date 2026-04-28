@@ -8,7 +8,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/sweeney/identity/internal/backup"
+	"github.com/sweeney/identity/common/backup"
 	"github.com/sweeney/identity/internal/config"
 )
 

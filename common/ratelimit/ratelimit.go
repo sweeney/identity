@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sweeney/identity/internal/httputil"
+	"github.com/sweeney/identity/common/httputil"
 	"golang.org/x/time/rate"
 )
 
