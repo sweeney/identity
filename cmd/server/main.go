@@ -21,8 +21,7 @@ func main() {
 // Usage forms:
 //
 //	identity-server                         → identity serve (default)
-//	identity-server identity [flags]        → identity subcommand
-//	identity-server config   [flags]        → config subcommand
+//	identity-server identity [flags]        → identity subcommand (explicit)
 //	identity-server --reset-admin ...       → identity legacy flags (backward compat)
 //	identity-server help | --help | -h      → top-level usage
 func dispatch(args []string) error {
@@ -46,8 +45,6 @@ func dispatch(args []string) error {
 	switch first {
 	case "identity":
 		return runIdentity(args[1:])
-	case "config":
-		return runConfig(args[1:])
 	default:
 		printTopUsage()
 		return fmt.Errorf("unknown subcommand: %s", first)
@@ -59,7 +56,6 @@ func printTopUsage() {
 	fmt.Println()
 	fmt.Println("Subcommands:")
 	fmt.Println("  identity [flags]        Identity service (default if no subcommand given)")
-	fmt.Println("  config   [flags]        Config service")
 	fmt.Println("  help                    Show this help")
 	fmt.Println()
 	fmt.Println("For subcommand-specific help: identity-server <subcommand> --help")
