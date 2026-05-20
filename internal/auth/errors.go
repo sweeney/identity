@@ -1,12 +1,8 @@
 package auth
 
-import "errors"
+import commonauth "github.com/sweeney/identity/common/auth"
 
 var (
-	// ErrTokenExpired is returned when a JWT access token has passed its expiry time.
-	ErrTokenExpired = errors.New("token expired")
-
-	// ErrTokenInvalid is returned when a JWT is malformed, has a bad signature,
-	// or fails any other validation check.
-	ErrTokenInvalid = errors.New("token invalid")
+	ErrTokenExpired = commonauth.ErrTokenExpired
+	ErrTokenInvalid = commonauth.ErrTokenInvalid
 )

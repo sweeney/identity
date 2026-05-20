@@ -16,15 +16,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/sweeney/identity/common/backup"
+	"github.com/sweeney/identity/common/ratelimit"
 	"github.com/sweeney/identity/internal/auth"
-	"github.com/sweeney/identity/internal/backup"
 	"github.com/sweeney/identity/internal/config"
 	"github.com/sweeney/identity/internal/db"
 	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/internal/handler/admin"
 	apihandler "github.com/sweeney/identity/internal/handler/api"
 	oauthhandler "github.com/sweeney/identity/internal/handler/oauth"
-	"github.com/sweeney/identity/internal/ratelimit"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/spec"
 	"github.com/sweeney/identity/internal/store"
@@ -216,7 +218,7 @@ func runIdentityServer() error {
 			// throttling. Triggers are rare (seeded during user/admin
 			// mutations) and the existing coalescing channel is enough.
 			MinInterval: 0,
-		}, uploader, auditStore)
+		}, uploader, backupAuditRecorder(auditStore))
 		backupMgr = mgr
 	} else {
 		log.Println("warning: R2 backup not configured — backups disabled")
@@ -524,4 +526,27 @@ func isAllowedOrigin(origin string, allowed map[string]bool, devMode bool) bool 
 		return true
 	}
 	return false
+}
+
+// backupAuditRecorder adapts a domain.AuditRepository into the
+// backup.EventRecorder callback that common/backup expects. The common
+// module is intentionally unaware of identity's domain types, so this is
+// where the two sides meet.
+func backupAuditRecorder(audit domain.AuditRepository) backup.EventRecorder {
+	if audit == nil {
+		return nil
+	}
+	return func(success bool, detail string) {
+		eventType := domain.EventBackupSuccess
+		if !success {
+			eventType = domain.EventBackupFailure
+		}
+		_ = audit.Record(&domain.AuthEvent{
+			ID:         uuid.New().String(),
+			EventType:  eventType,
+			Username:   "system",
+			Detail:     detail,
+			OccurredAt: time.Now().UTC(),
+		})
+	}
 }

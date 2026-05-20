@@ -1,20 +1,19 @@
 # Identity Service
 
-A self-hosted JWT authentication and identity management service. Single Go binary, SQLite database, exposed via Cloudflare Tunnel (always HTTPS in production). The same binary also hosts a sibling **config service** (see below) selected via subcommand.
+A self-hosted JWT authentication and identity management service. Single Go binary, SQLite database, exposed via Cloudflare Tunnel (always HTTPS in production).
 
 ## What it does
 
 Provides user accounts, JWT-based sessions, OAuth 2.0 authorization code flow with PKCE, and passkey/WebAuthn authentication for web and mobile apps. An admin manages users, OAuth clients, and passkeys via a web UI or API. Apps authenticate users (by password or passkey), receive tokens, and use those tokens to call the Identity API or other protected services.
 
-## Subcommands (one binary, many services)
+## Subcommand
 
 ```bash
 identity-server                      # identity service (default; backward compat)
 identity-server identity [flags]     # same as above, explicit
-identity-server config   [flags]     # config service (see docs/config.md)
 ```
 
-Each subcommand runs as its own OS process with its own SQLite file (`identity.db`, `config.db`), its own R2 backup prefix (`{env}/backups/{service}/…`), and its own systemd unit. Legacy top-level flags (`--reset-admin`, `--rotate-jwt-key`, `--list-backups`, `--restore-backup`) still route to identity for backward compatibility.
+Legacy top-level flags (`--reset-admin`, `--rotate-jwt-key`, `--list-backups`, `--restore-backup`) route to identity for backward compatibility.
 
 ## Getting the full API spec
 
@@ -28,11 +27,8 @@ Human-readable guides are in `docs/`:
 - `docs/api-walkthrough.md` — executable walkthrough showing every endpoint with real output
 - `docs/auth-flows.md` — ASCII art diagrams of all auth flows
 - `docs/passkeys.md` — passkey/WebAuthn setup, API reference, and integration guide
-- `docs/r2-backup.md` — R2 backup setup and restore procedures (covers both services)
-- `docs/config.md` — config service integration guide (consumers)
-- `docs/config-admin.md` — config service admin guide (namespace design, backups)
-- `docs/config-walkthrough.md` — config service walkthrough with real output
-- `docs/deployment.md` — multi-service deployment: binary layout, units, env files
+- `docs/r2-backup.md` — R2 backup setup and restore procedures
+- `docs/deployment.md` — deployment: binary layout, systemd unit, env file
 
 ## Auth flow (direct API)
 
@@ -98,29 +94,6 @@ All API errors return the same shape (`/oauth/token` uses RFC 6749 format instea
 
 Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expired`, `invalid_refresh_token`, `account_disabled`, `forbidden`, `unknown_client`, `invalid_redirect_uri`, `invalid_auth_code`, `pkce_verification_failed`, `webauthn_not_enabled`, `webauthn_invalid_challenge`, `webauthn_verification_failed`, `webauthn_no_credentials`, `webauthn_credential_not_found`, `invalid_client`, `unauthorized_client`, `invalid_scope`, `insufficient_scope`
 
-## Config service (sibling)
-
-A second service stored in this repo provides structured config (house names, MQTT topics, location coords). One process per service, separate SQLite DB (`config.db`), separate R2 backup prefix. It validates incoming JWTs against identity's JWKS endpoint — so tokens are still issued by identity.
-
-```bash
-./bin/identity-server config     # defaults to :8282, config.db
-```
-
-Data model: one JSON document per named **namespace**. Each namespace has a `read_role` and `write_role` (each `admin` or `user`). Admins can create, update ACLs, and delete; users can read/write namespaces that permit their role. 404 (not 403) is returned to callers who lack read access, so existence is not leaked.
-
-Endpoints (summary; full spec at `GET :8282/openapi.json`):
-
-```
-GET    /api/v1/config                      list visible namespaces
-GET    /api/v1/config/{ns}                 full JSON document (read_role)
-PUT    /api/v1/config/{ns}                 replace document (write_role)
-DELETE /api/v1/config/{ns}                 delete (admin)
-POST   /api/v1/config/namespaces           create (admin)
-PATCH  /api/v1/config/namespaces/{ns}      update ACL (admin)
-```
-
-See `docs/config.md` and `docs/config-admin.md`.
-
 ## Running locally
 
 ```bash
@@ -129,9 +102,6 @@ See `docs/config.md` and `docs/config-admin.md`.
 
 # Or with explicit credentials for automation
 ADMIN_USERNAME="admin" ADMIN_PASSWORD="<password>" ./bin/identity-server
-
-# Run the config service alongside (needs identity running first for JWKS)
-./bin/identity-server config
 ```
 
 Optional env vars: `IDENTITY_ENV` (`development`|`production`), `PORT` (default 8181), `DB_PATH` (default `identity.db`), `JWT_SECRET` (overrides DB-managed secret), `CORS_ORIGINS` (comma-separated allowed origins for API CORS and WebAuthn), `TRUST_PROXY` (`cloudflare` to trust `CF-Connecting-IP` header), `RATE_LIMIT_DISABLED` (`1` to disable rate limiting in dev/test), `SITE_NAME` (human-readable name shown in UI, default `Identity`), `WEBAUTHN_RP_ID` (passkey domain, e.g. `example.com`; auto-configured as `localhost` in development), `WEBAUTHN_RP_ORIGINS` (comma-separated allowed WebAuthn origins; derived from RP ID if unset, merged with `CORS_ORIGINS`), `R2_*` for Cloudflare R2 backups.
@@ -181,23 +151,36 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `internal/store/webauthn_credential_store.go` | WebAuthn credential persistence |
 | `internal/store/webauthn_challenge_store.go` | WebAuthn challenge persistence (ephemeral) |
 | `internal/handler/oauth/client_auth.go` | Client secret authentication (Basic + form body) |
-| `internal/spec/openapi.yaml` | Identity OpenAPI 3.0 spec (served at identity's `/openapi.json`) |
-| `internal/spec/config-openapi.yaml` | Config OpenAPI 3.0 spec (served at config's `/openapi.json`) |
-| `cmd/server/main.go` | Subcommand dispatcher (identity / config / legacy flags) |
+| `internal/spec/openapi.yaml` | Identity OpenAPI 3.0 spec (served at `/openapi.json`) |
+| `cmd/server/main.go` | Subcommand dispatcher (identity / legacy flags) |
 | `cmd/server/identity.go` | Identity subcommand entrypoint and HTTP server |
-| `cmd/server/config.go` | Config subcommand entrypoint and HTTP server |
 | `cmd/server/secrets.go` | DB-managed JWT secret with rotation support |
-| `cmd/server/backups.go` | Per-service `--list-backups` and `--restore-backup` |
-| `internal/auth/jwks_verifier.go` | JWKS-over-HTTP verifier used by the config service |
-| `internal/config/configsvc.go` | Config service env loader (`LoadConfigSvc`) |
-| `internal/db/config_migrations/` | Separately-embedded config DB migrations |
-| `internal/domain/config.go` | Config namespace types and repository interface |
-| `internal/store/config_store.go` | SQLite-backed config namespace persistence |
-| `internal/service/config_service.go` | Config business logic (role ACLs, validation, backup trigger) |
-| `internal/handler/config/router.go` | Config HTTP handlers |
-| `deploy/` | systemd units, env templates, install script |
+| `cmd/server/backups.go` | `--list-backups` and `--restore-backup` |
+| `deploy/` | systemd unit, env template, install script |
 | `examples/` | Four demo clients (server-side, SPA, BFF, passkey) |
 | `scripts/e2e.sh` | End-to-end test suite (58 checks) |
 | `scripts/e2e-webauthn.sh` | WebAuthn end-to-end test suite (32 checks) |
 | `scripts/e2e-client-credentials.sh` | Client credentials end-to-end test suite |
-| `scripts/e2e-config.sh` | Config service end-to-end test suite |
+
+## Releasing a new version of common/
+
+The `common/` directory is a separate Go module (`github.com/sweeney/identity/common`)
+consumed by the config service repo. After changing anything in `common/`:
+
+1. Commit and push to the identity repo.
+2. Tag the new version from the repo root (the `common/` prefix is required
+   by Go module proxy conventions):
+   ```bash
+   git tag common/v0.1.1
+   git push origin common/v0.1.1
+   ```
+3. In `github.com/sweeney/config`, update the dependency:
+   ```bash
+   go get github.com/sweeney/identity/common@v0.1.1
+   go mod tidy
+   go test -race -count=1 ./...
+   ```
+
+Never make breaking changes to `common/` without bumping the minor version.
+The config repo pins an exact version — it will not pick up changes until
+explicitly updated.

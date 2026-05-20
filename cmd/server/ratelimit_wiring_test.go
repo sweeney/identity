@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sweeney/identity/internal/ratelimit"
+	"github.com/sweeney/identity/common/ratelimit"
 )
 
 // TestAdminReauthEndpoints_StrictRateLimiting constructs a mux that mirrors the

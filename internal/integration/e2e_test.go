@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sweeney/identity/internal/auth"
-	"github.com/sweeney/identity/internal/backup"
+	"github.com/sweeney/identity/common/backup"
 	"github.com/sweeney/identity/internal/db"
 	apihandler "github.com/sweeney/identity/internal/handler/api"
 	"github.com/sweeney/identity/internal/service"

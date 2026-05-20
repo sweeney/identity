@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/sweeney/identity/internal/auth"
-	"github.com/sweeney/identity/internal/httputil"
+	"github.com/sweeney/identity/common/httputil"
 	"github.com/sweeney/identity/internal/service"
 )
 

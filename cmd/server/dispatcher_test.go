@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,25 +22,6 @@ func TestDispatchHelpVariants(t *testing.T) {
 			assert.NoError(t, dispatch([]string{form}))
 		})
 	}
-}
-
-// TestDispatchConfigStubHelp ensures that `config --help` reaches the
-// config subcommand's help printer (and does not return the
-// not-yet-implemented error).
-func TestDispatchConfigStubHelp(t *testing.T) {
-	for _, form := range []string{"--help", "-h", "help"} {
-		t.Run(form, func(t *testing.T) {
-			assert.NoError(t, dispatch([]string{"config", form}))
-		})
-	}
-}
-
-// TestDispatchUnknownConfigFlag surfaces errors on unknown config flags
-// (rather than silently falling through to start the server).
-func TestDispatchUnknownConfigFlag(t *testing.T) {
-	err := dispatch([]string{"config", "--not-a-real-flag"})
-	assert.Error(t, err)
-	assert.Contains(t, strings.ToLower(err.Error()), "unknown config flag")
 }
 
 // TestDispatchIdentityHelp ensures the identity subcommand's help form

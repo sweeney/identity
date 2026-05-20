@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sweeney/identity/internal/ratelimit"
+	"github.com/sweeney/identity/common/ratelimit"
 )
 
 func okHandler() http.Handler {
