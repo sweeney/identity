@@ -1,11 +1,11 @@
 package auth_test
 
 import (
-	"sync"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commonauth "github.com/sweeney/identity/common/auth"
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
 )
@@ -47,7 +48,7 @@ func TestJWKSVerifier_Parse_ValidUserToken(t *testing.T) {
 	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
 	srv, _ := newJWKSServer(t, ti)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: srv.URL,
 		Issuer:    "https://id.example.com",
 	})
@@ -73,7 +74,7 @@ func TestJWKSVerifier_Parse_WrongIssuer_Rejected(t *testing.T) {
 	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
 	srv, _ := newJWKSServer(t, ti)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: srv.URL,
 		Issuer:    "https://other.example.com", // deliberately mismatched
 	})
@@ -92,7 +93,7 @@ func TestJWKSVerifier_Parse_Expired_ReturnsTokenExpired(t *testing.T) {
 	ti := mustIssuer(t, "https://id.example.com", time.Nanosecond)
 	srv, _ := newJWKSServer(t, ti)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: srv.URL,
 		Issuer:    "https://id.example.com",
 	})
@@ -103,39 +104,39 @@ func TestJWKSVerifier_Parse_Expired_ReturnsTokenExpired(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	_, err = v.Parse(context.Background(), tok)
-	assert.ErrorIs(t, err, auth.ErrTokenExpired)
+	assert.ErrorIs(t, err, commonauth.ErrTokenExpired)
 }
 
 func TestJWKSVerifier_Parse_Malformed_ReturnsTokenInvalid(t *testing.T) {
 	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
 	srv, _ := newJWKSServer(t, ti)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: srv.URL,
 		Issuer:    "https://id.example.com",
 	})
 	require.NoError(t, err)
 
 	_, err = v.Parse(context.Background(), "not-a-jwt")
-	assert.ErrorIs(t, err, auth.ErrTokenInvalid)
+	assert.ErrorIs(t, err, commonauth.ErrTokenInvalid)
 }
 
 func TestJWKSVerifier_Parse_EmptyToken_ReturnsTokenInvalid(t *testing.T) {
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: "http://localhost",
 		Issuer:    "http://localhost",
 	})
 	require.NoError(t, err)
 
 	_, err = v.Parse(context.Background(), "")
-	assert.ErrorIs(t, err, auth.ErrTokenInvalid)
+	assert.ErrorIs(t, err, commonauth.ErrTokenInvalid)
 }
 
 func TestJWKSVerifier_CachesJWKS(t *testing.T) {
 	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
 	srv, fetches := newJWKSServer(t, ti)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: srv.URL,
 		Issuer:    "https://id.example.com",
 		CacheTTL:  5 * time.Minute,
@@ -158,7 +159,7 @@ func TestJWKSVerifier_RefetchesAfterTTL(t *testing.T) {
 	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
 	srv, fetches := newJWKSServer(t, ti)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: srv.URL,
 		Issuer:    "https://id.example.com",
 		CacheTTL:  50 * time.Millisecond,
@@ -201,7 +202,7 @@ func TestJWKSVerifier_PicksUpRotatedKey(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL:          srv.URL,
 		Issuer:             "https://id.example.com",
 		CacheTTL:           time.Hour, // long — force miss-based refetch
@@ -239,7 +240,7 @@ func TestJWKSVerifier_ThrottlesUnknownKid(t *testing.T) {
 	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
 	srv, fetches := newJWKSServer(t, ti)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL:          srv.URL,
 		Issuer:             "https://id.example.com",
 		RefetchMinInterval: 1 * time.Second, // generous so the test window is inside it
@@ -275,7 +276,7 @@ func TestJWKSVerifier_ParseServiceToken_Valid(t *testing.T) {
 	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
 	srv, _ := newJWKSServer(t, ti)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: srv.URL,
 		Issuer:    "https://id.example.com",
 	})
@@ -302,7 +303,7 @@ func TestJWKSVerifier_Parse_RejectsServiceToken(t *testing.T) {
 	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
 	srv, _ := newJWKSServer(t, ti)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: srv.URL,
 		Issuer:    "https://id.example.com",
 	})
@@ -314,7 +315,7 @@ func TestJWKSVerifier_Parse_RejectsServiceToken(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = v.Parse(context.Background(), svcTok)
-	assert.ErrorIs(t, err, auth.ErrTokenInvalid)
+	assert.ErrorIs(t, err, commonauth.ErrTokenInvalid)
 }
 
 // TestJWKSVerifier_StaleCacheFallback exercises the availability guarantee
@@ -338,7 +339,7 @@ func TestJWKSVerifier_StaleCacheFallback(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: srv.URL,
 		Issuer:    "https://id.example.com",
 		CacheTTL:  30 * time.Millisecond,
@@ -385,7 +386,7 @@ func TestJWKSVerifier_RefetchDeduplicated(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: srv.URL,
 		Issuer:    "https://id.example.com",
 		CacheTTL:  time.Hour,
@@ -413,7 +414,7 @@ func TestJWKSVerifier_RefetchDeduplicated(t *testing.T) {
 
 func TestJWKSVerifier_NetworkFailure_ReturnsTokenInvalid(t *testing.T) {
 	// Point the verifier at an unreachable URL so fetch fails.
-	v, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: "http://127.0.0.1:1", // invalid port → immediate connection failure
 		Issuer:    "https://id.example.com",
 	})
@@ -425,14 +426,14 @@ func TestJWKSVerifier_NetworkFailure_ReturnsTokenInvalid(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = v.Parse(context.Background(), tok)
-	assert.ErrorIs(t, err, auth.ErrTokenInvalid,
+	assert.ErrorIs(t, err, commonauth.ErrTokenInvalid,
 		"network failure during JWKS fetch should surface as ErrTokenInvalid")
 }
 
 func TestJWKSVerifier_Construction_ValidatesInputs(t *testing.T) {
-	_, err := auth.NewJWKSVerifier(auth.JWKSVerifierConfig{Issuer: "x"})
+	_, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{Issuer: "x"})
 	assert.Error(t, err, "missing IssuerURL must fail")
 
-	_, err = auth.NewJWKSVerifier(auth.JWKSVerifierConfig{IssuerURL: "http://x"})
+	_, err = commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{IssuerURL: "http://x"})
 	assert.Error(t, err, "missing Issuer must fail")
 }

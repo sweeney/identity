@@ -1,13 +1,17 @@
 package domain
 
-import "time"
+import (
+	"time"
 
-// Role represents a user's role in the system.
-type Role string
+	commonauth "github.com/sweeney/identity/common/auth"
+)
+
+// Role is an alias for the common auth Role type.
+type Role = commonauth.Role
 
 const (
-	RoleAdmin Role = "admin"
-	RoleUser  Role = "user"
+	RoleAdmin = commonauth.RoleAdmin
+	RoleUser  = commonauth.RoleUser
 )
 
 // User is the core user entity.

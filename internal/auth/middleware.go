@@ -7,8 +7,14 @@ import (
 	"net/http"
 	"strings"
 
+	commonauth "github.com/sweeney/identity/common/auth"
 	"github.com/sweeney/identity/internal/domain"
 )
+
+// TokenParser is the interface both TokenIssuer (identity) and JWKSVerifier
+// (consuming services) implement. Alias kept here so callers importing
+// internal/auth do not need a second import for the common module.
+type TokenParser = commonauth.TokenParser
 
 type contextKey string
 

@@ -1,8 +1,9 @@
 package domain
 
 import (
-	"strings"
 	"time"
+
+	commonauth "github.com/sweeney/identity/common/auth"
 )
 
 // RefreshToken represents a persisted refresh token entry.
@@ -28,36 +29,10 @@ type TokenFamily struct {
 }
 
 // TokenClaims holds the parsed contents of a JWT access token.
-type TokenClaims struct {
-	UserID   string
-	Username string
-	Role     Role
-	IsActive bool
-	Audience string // optional; set for tokens issued via OAuth PKCE flow
-}
+type TokenClaims = commonauth.TokenClaims
 
 // ServiceTokenClaims holds the parsed contents of a service (client credentials) JWT.
-type ServiceTokenClaims struct {
-	ClientID  string
-	Audience  string
-	Scope     string // space-delimited
-	JTI       string
-	ExpiresAt int64 // unix timestamp
-	IssuedAt  int64 // unix timestamp
-}
-
-// HasScope returns true if the given scope is in the token's space-delimited scope list.
-func (c *ServiceTokenClaims) HasScope(scope string) bool {
-	if c.Scope == "" {
-		return false
-	}
-	for _, s := range strings.Split(c.Scope, " ") {
-		if s == scope {
-			return true
-		}
-	}
-	return false
-}
+type ServiceTokenClaims = commonauth.ServiceTokenClaims
 
 // TokenRepository defines all persistence operations for refresh tokens.
 //
