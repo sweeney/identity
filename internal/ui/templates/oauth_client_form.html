@@ -46,7 +46,7 @@
         Token Endpoint Auth Method
         <select name="token_endpoint_auth_method">
             <option value="none" {{if .Client}}{{if eq .Client.TokenEndpointAuthMethod "none"}}selected{{end}}{{end}}>None (public / PKCE only)</option>
-            <option value="client_secret_basic" {{if .Client}}{{if eq .Client.TokenEndpointAuthMethod "client_secret_basic"}}selected{{end}}{{end}}>client_secret_basic (HTTP Basic)</option>
+            <option value="client_secret_basic" {{if .Client}}{{if eq .Client.TokenEndpointAuthMethod "client_secret_basic"}}selected{{end}}{{else}}selected{{end}}>client_secret_basic (HTTP Basic)</option>
             <option value="client_secret_post" {{if .Client}}{{if eq .Client.TokenEndpointAuthMethod "client_secret_post"}}selected{{end}}{{end}}>client_secret_post (form body)</option>
         </select>
     </label>

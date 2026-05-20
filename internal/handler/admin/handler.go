@@ -730,6 +730,19 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if sliceContains(grantTypes, "client_credentials") && authMethod == "none" {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction":       "/admin/oauth/new",
+			"Error":            "client_credentials grant requires a client authentication method. Select client_secret_basic or client_secret_post.",
+			"FormID":           id,
+			"FormName":         name,
+			"FormRedirectURIs": rawURIs,
+			"FormScopes":       rawScopes,
+			"FormAudience":     audience,
+		})
+		return
+	}
+
 	if hasUnsafeURIScheme(rawURIs) {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction":       "/admin/oauth/new",
@@ -836,6 +849,15 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 			"FormAction": "/admin/oauth/" + id + "/edit",
 			"Client":     client,
 			"Error":      "Audience is required for client_credentials grant type.",
+		})
+		return
+	}
+
+	if sliceContains(grantTypes, "client_credentials") && authMethod == "none" {
+		h.render(w, r, "oauth_client_form.html", map[string]any{
+			"FormAction": "/admin/oauth/" + id + "/edit",
+			"Client":     client,
+			"Error":      "client_credentials grant requires a client authentication method. Select client_secret_basic or client_secret_post.",
 		})
 		return
 	}

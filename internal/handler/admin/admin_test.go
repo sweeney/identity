@@ -739,11 +739,12 @@ func TestOAuthClientCreate_ClientCredentials_WithAudience_Succeeds(t *testing.T)
 
 	csrf := csrfTokenFor(session.Value)
 	form := url.Values{
-		"_csrf":        {csrf},
-		"id":           {"svc-client"},
-		"name":         {"Service Client"},
-		"grant_types":  {"client_credentials"},
-		"audience":     {"https://api.example.com"},
+		"_csrf":                        {csrf},
+		"id":                           {"svc-client"},
+		"name":                         {"Service Client"},
+		"grant_types":                  {"client_credentials"},
+		"audience":                     {"https://api.example.com"},
+		"token_endpoint_auth_method":   {"client_secret_basic"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -752,6 +753,63 @@ func TestOAuthClientCreate_ClientCredentials_WithAudience_Succeeds(t *testing.T)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusSeeOther, rr.Code)
+}
+
+func TestOAuthClientCreate_ClientCredentials_RequiresAuthMethod(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+	_ = oauthClients // no Create call expected — validation fires first
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":                        {csrf},
+		"id":                           {"svc-client"},
+		"name":                         {"Service Client"},
+		"grant_types":                  {"client_credentials"},
+		"audience":                     {"https://api.example.com"},
+		"token_endpoint_auth_method":   {"none"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "client_credentials grant requires a client authentication method")
+}
+
+func TestOAuthClientEdit_ClientCredentials_RequiresAuthMethod(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+
+	existingClient := &domain.OAuthClient{
+		ID:                      "svc-client",
+		Name:                    "Service Client",
+		GrantTypes:              []string{"client_credentials"},
+		Audience:                "https://api.example.com",
+		TokenEndpointAuthMethod: "client_secret_basic",
+	}
+	oauthClients.EXPECT().GetByID("svc-client").Return(existingClient, nil)
+	// No Update call expected — validation fires first
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":                        {csrf},
+		"name":                         {"Service Client"},
+		"grant_types":                  {"client_credentials"},
+		"audience":                     {"https://api.example.com"},
+		"token_endpoint_auth_method":   {"none"},
+		"admin_password":               {adminPass},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/svc-client/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "client_credentials grant requires a client authentication method")
 }
 
 func TestOAuthClientEdit_ClientCredentials_RequiresAudience(t *testing.T) {
