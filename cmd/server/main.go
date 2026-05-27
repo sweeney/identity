@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"os"
@@ -11,8 +12,34 @@ import (
 var version = "dev"
 
 func main() {
+	loadEnvFile("/etc/identity/env")
 	if err := dispatch(os.Args[1:]); err != nil {
 		log.Fatalf("fatal: %v", err)
+	}
+}
+
+// loadEnvFile reads KEY=VALUE pairs from path and sets any key not already
+// present in the environment. Lines starting with # and blank lines are
+// ignored. Missing file is silently skipped.
+func loadEnvFile(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || k == "" {
+			continue
+		}
+		if os.Getenv(k) == "" {
+			os.Setenv(k, v)
+		}
 	}
 }
 

@@ -217,7 +217,9 @@ func runIdentityServer() error {
 			// Identity keeps its pre-existing behavior: no per-write trigger
 			// throttling. Triggers are rare (seeded during user/admin
 			// mutations) and the existing coalescing channel is enough.
-			MinInterval: 0,
+			MinInterval:  0,
+			Schedule:     cfg.BackupSchedule,
+			ScheduleHour: cfg.BackupHour,
 		}, uploader, backupAuditRecorder(auditStore))
 		backupMgr = mgr
 	} else {

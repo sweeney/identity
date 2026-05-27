@@ -41,6 +41,13 @@ type Config struct {
 	// MinInterval is the minimum time between consecutive triggered backups.
 	// Scheduled daily backups are unaffected. Zero disables throttling.
 	MinInterval time.Duration
+	// Schedule controls when automatic timed backups run.
+	// Valid values: "daily" (default), "weekly" (Sundays), "monthly" (1st of month), "off".
+	// Empty string defaults to "daily".
+	Schedule string
+	// ScheduleHour is the UTC hour (0–23) at which scheduled backups run.
+	// Defaults to 3 (03:00 UTC) when zero.
+	ScheduleHour int
 }
 
 // Manager handles scheduled and on-demand database backups.
@@ -61,6 +68,12 @@ func NewManager(cfg Config, uploader Uploader, record EventRecorder) *Manager {
 	if cfg.ServiceName == "" {
 		cfg.ServiceName = "identity"
 	}
+	if cfg.Schedule == "" {
+		cfg.Schedule = "daily"
+	}
+	if cfg.ScheduleHour == 0 {
+		cfg.ScheduleHour = 3
+	}
 	return &Manager{
 		cfg:      cfg,
 		uploader: uploader,
@@ -72,6 +85,11 @@ func NewManager(cfg Config, uploader Uploader, record EventRecorder) *Manager {
 // Start launches the background goroutine that processes backup triggers.
 // It runs until ctx is cancelled.
 func (m *Manager) Start(ctx context.Context) {
+	if m.cfg.Schedule == "off" {
+		log.Printf("backup: scheduled backups disabled (triggered and on-demand only)")
+	} else {
+		log.Printf("backup: schedule=%s hour=%02d:00 UTC bucket=%s", m.cfg.Schedule, m.cfg.ScheduleHour, m.cfg.BucketName)
+	}
 	go m.loop(ctx)
 }
 
@@ -94,7 +112,7 @@ func (m *Manager) RunNow() error {
 }
 
 func (m *Manager) loop(ctx context.Context) {
-	daily := m.nextDailyTick()
+	scheduled := m.nextScheduledTick()
 
 	for {
 		select {
@@ -102,8 +120,8 @@ func (m *Manager) loop(ctx context.Context) {
 			return
 		case <-m.trigger:
 			m.handleTrigger()
-		case <-daily:
-			daily = m.nextDailyTick()
+		case <-scheduled:
+			scheduled = m.nextScheduledTick()
 			if err := m.run(); err != nil {
 				log.Printf("scheduled backup failed: %v", err)
 			}
@@ -225,12 +243,33 @@ func copyDB(src, dst string) error {
 	return os.WriteFile(dst, data, 0600)
 }
 
-// nextDailyTick returns a channel that fires at the next 03:00 UTC.
-func (m *Manager) nextDailyTick() <-chan time.Time {
+// nextScheduledTick returns a channel that fires at the next scheduled backup
+// time based on cfg.Schedule and cfg.ScheduleHour. Returns nil (blocks forever
+// in select) when Schedule is "off".
+func (m *Manager) nextScheduledTick() <-chan time.Time {
+	if m.cfg.Schedule == "off" {
+		return nil
+	}
 	now := time.Now().UTC()
-	next := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, time.UTC)
-	if !next.After(now) {
-		next = next.Add(24 * time.Hour)
+	h := m.cfg.ScheduleHour
+	var next time.Time
+	switch m.cfg.Schedule {
+	case "weekly":
+		daysUntilSunday := int(time.Sunday-now.Weekday()+7) % 7
+		next = time.Date(now.Year(), now.Month(), now.Day()+daysUntilSunday, h, 0, 0, 0, time.UTC)
+		if !next.After(now) {
+			next = next.Add(7 * 24 * time.Hour)
+		}
+	case "monthly":
+		next = time.Date(now.Year(), now.Month(), 1, h, 0, 0, 0, time.UTC)
+		if !next.After(now) {
+			next = time.Date(now.Year(), now.Month()+1, 1, h, 0, 0, 0, time.UTC)
+		}
+	default: // "daily"
+		next = time.Date(now.Year(), now.Month(), now.Day(), h, 0, 0, 0, time.UTC)
+		if !next.After(now) {
+			next = next.Add(24 * time.Hour)
+		}
 	}
 	return time.After(time.Until(next))
 }

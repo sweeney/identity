@@ -2,8 +2,8 @@
 
 The Identity service can automatically back up its SQLite database to Cloudflare R2 (S3-compatible object storage). Backups happen:
 
+- **On a schedule** (daily at 03:00 UTC by default — configurable via `BACKUP_SCHEDULE` and `BACKUP_HOUR`)
 - **On every new login** (async, non-blocking)
-- **Daily at 03:00 UTC**
 - **On demand** via the admin UI at `/admin/backup`
 
 If R2 is not configured, the service runs without backups and logs a warning on startup.
@@ -40,13 +40,17 @@ Or look in the right sidebar of any Cloudflare dashboard page under **Account ID
 
 ### 4. Configure the service
 
-Set the four environment variables:
+Set the required R2 environment variables plus optional schedule overrides:
 
 ```bash
 R2_ACCOUNT_ID=your-account-id
 R2_ACCESS_KEY_ID=your-access-key-id
 R2_SECRET_ACCESS_KEY=your-secret-access-key
 R2_BUCKET_NAME=identity-sqlite
+
+# Optional — defaults shown
+BACKUP_SCHEDULE=daily   # daily | weekly (Sundays) | monthly (1st) | off
+BACKUP_HOUR=3           # UTC hour 0–23
 ```
 
 If using the systemd deployment, add these to `/etc/identity/env`:

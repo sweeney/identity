@@ -65,6 +65,13 @@ type Config struct {
 	R2AccessKeyID     string
 	R2SecretAccessKey string
 	R2BucketName      string
+
+	// Backup schedule
+	// BackupSchedule controls when automatic R2 backups run.
+	// Valid values: "daily" (default), "weekly" (Sundays), "monthly" (1st of month), "off".
+	BackupSchedule string
+	// BackupHour is the UTC hour (0–23) for scheduled backups. Defaults to 3.
+	BackupHour int
 }
 
 // Load reads configuration from environment variables and returns a validated Config.
@@ -195,6 +202,25 @@ func Load() (*Config, error) {
 	cfg.R2AccessKeyID = os.Getenv("R2_ACCESS_KEY_ID")
 	cfg.R2SecretAccessKey = os.Getenv("R2_SECRET_ACCESS_KEY")
 	cfg.R2BucketName = os.Getenv("R2_BUCKET_NAME")
+
+	// Backup schedule
+	cfg.BackupHour = 3
+	if schedStr := os.Getenv("BACKUP_SCHEDULE"); schedStr != "" {
+		switch schedStr {
+		case "daily", "weekly", "monthly", "off":
+			cfg.BackupSchedule = schedStr
+		default:
+			errs = append(errs, fmt.Errorf("BACKUP_SCHEDULE must be daily, weekly, monthly, or off; got %q", schedStr))
+		}
+	}
+	if hourStr := os.Getenv("BACKUP_HOUR"); hourStr != "" {
+		h, err := strconv.Atoi(hourStr)
+		if err != nil || h < 0 || h > 23 {
+			errs = append(errs, fmt.Errorf("BACKUP_HOUR must be 0–23, got %q", hourStr))
+		} else {
+			cfg.BackupHour = h
+		}
+	}
 
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)

@@ -252,6 +252,57 @@ func TestManager_MinInterval_ZeroDisablesThrottle(t *testing.T) {
 		"with MinInterval=0 each spaced-out trigger should result in an upload")
 }
 
+// --- Schedule config ---
+
+func TestManager_Schedule_OffDisablesScheduledBackups(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	uploader := mocks.NewMockUploader(ctrl)
+	// No uploads expected unless explicitly triggered.
+	uploader.EXPECT().Upload(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(0)
+
+	m := backup.NewManager(backup.Config{
+		DBPath:     ":memory:",
+		BucketName: "test-bucket",
+		Schedule:   "off",
+	}, uploader, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	m.Start(ctx)
+	<-ctx.Done()
+}
+
+func TestManager_Schedule_EmptyScheduleTriggersWork(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	uploader := mocks.NewMockUploader(ctrl)
+
+	done := make(chan struct{})
+	uploader.EXPECT().Upload(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _, _ string) error {
+			close(done)
+			return nil
+		},
+	).Times(1)
+
+	// Empty Schedule should default to "daily" and still accept triggers.
+	m := backup.NewManager(backup.Config{
+		DBPath:     ":memory:",
+		BucketName: "test-bucket",
+		// Schedule intentionally unset
+	}, uploader, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	m.Start(ctx)
+	m.TriggerAsync()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for upload")
+	}
+}
+
 // TestManager_MinInterval_SpacedTriggersAllRun asserts that triggers spaced
 // further apart than MinInterval each produce an upload (no carryover
 // throttling).

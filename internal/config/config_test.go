@@ -184,3 +184,51 @@ func TestConfig_Development_JWTIssuer_DefaultsToLocalhost(t *testing.T) {
 	assert.Equal(t, "http://localhost:8181", cfg.JWTIssuer)
 }
 
+func TestLoad_BackupSchedule_DefaultsToEmpty(t *testing.T) {
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "", cfg.BackupSchedule) // backup.NewManager normalises "" → "daily"
+}
+
+func TestLoad_BackupSchedule_ValidValues(t *testing.T) {
+	for _, v := range []string{"daily", "weekly", "monthly", "off"} {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("BACKUP_SCHEDULE", v)
+			cfg, err := config.Load()
+			require.NoError(t, err)
+			assert.Equal(t, v, cfg.BackupSchedule)
+		})
+	}
+}
+
+func TestLoad_BackupSchedule_InvalidValue(t *testing.T) {
+	t.Setenv("BACKUP_SCHEDULE", "hourly")
+	_, err := config.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "BACKUP_SCHEDULE")
+}
+
+func TestLoad_BackupHour_DefaultsTo3(t *testing.T) {
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 3, cfg.BackupHour)
+}
+
+func TestLoad_BackupHour_ExplicitValue(t *testing.T) {
+	t.Setenv("BACKUP_HOUR", "14")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 14, cfg.BackupHour)
+}
+
+func TestLoad_BackupHour_InvalidValue(t *testing.T) {
+	for _, bad := range []string{"24", "-1", "noon"} {
+		t.Run(bad, func(t *testing.T) {
+			t.Setenv("BACKUP_HOUR", bad)
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "BACKUP_HOUR")
+		})
+	}
+}
+
