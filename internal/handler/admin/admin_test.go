@@ -1111,6 +1111,44 @@ func TestOAuthClientClearPrevSecret_BackupTriggered(t *testing.T) {
 	assert.Equal(t, http.StatusSeeOther, rr.Code)
 }
 
+// TestOAuthClientGenerateSecret_ClearsPrevHash verifies that generating a new secret
+// unconditionally wipes SecretHashPrev so a previously-leaked secret cannot remain
+// valid via the prev-hash fallback in verifyClientSecret.
+func TestOAuthClientGenerateSecret_ClearsPrevHash(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+
+	// Simulate a client where a rotation was started but the prev hash was never
+	// explicitly cleared — old leaked secret is still alive in SecretHashPrev.
+	client := &domain.OAuthClient{
+		ID:             "test-client",
+		Name:           "Test Client",
+		SecretHash:     "current-hash",
+		SecretHashPrev: "leaked-secret-hash",
+	}
+	oauthClients.EXPECT().GetByID("test-client").Return(client, nil)
+
+	var savedClient *domain.OAuthClient
+	oauthClients.EXPECT().Update(gomock.Any()).DoAndReturn(func(c *domain.OAuthClient) error {
+		savedClient = c
+		return nil
+	})
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{"_csrf": {csrf}, "admin_password": {adminPass}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/test-client/generate-secret", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.NotNil(t, savedClient, "Update must have been called")
+	assert.Empty(t, savedClient.SecretHashPrev,
+		"generate-secret must clear SecretHashPrev so a previously-leaked secret cannot remain valid")
+	assert.NotEmpty(t, savedClient.SecretHash, "generate-secret must set a new SecretHash")
+}
+
 func TestOAuthClientCreate_ValidClientID(t *testing.T) {
 	handler, oauthClients, _ := newRouterWithOAuth(t)
 	session := loginSession(t, handler)

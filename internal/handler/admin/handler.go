@@ -965,6 +965,7 @@ func (h *adminHandler) oauthGenerateSecret(w http.ResponseWriter, r *http.Reques
 	}
 
 	client.SecretHash = hash
+	client.SecretHashPrev = ""
 	if err := h.oauthClients.Update(client); err != nil {
 		http.Error(w, "failed to save secret", http.StatusInternalServerError)
 		return
