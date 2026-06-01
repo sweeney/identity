@@ -22,17 +22,17 @@ const (
 //go:generate mockgen -destination=../mocks/mock_device_authorization_repository.go -package=mocks github.com/sweeney/identity/internal/domain DeviceAuthorizationRepository
 type DeviceAuthorization struct {
 	ID             string
-	DeviceCodeHash string  // SHA-256 hex of the opaque device_code (polling secret)
-	UserCode       string  // 8-char user-typeable code (XXXX-XXXX)
+	DeviceCodeHash string // SHA-256 hex of the opaque device_code (polling secret)
+	UserCode       string // 8-char user-typeable code (XXXX-XXXX)
 	ClientID       string
-	ClaimCodeID    string  // "" for standard device flow, set when the session originated from a claim code
-	Scope          string  // space-delimited
-	Status         string  // DeviceStatusPending | DeviceStatusApproved | DeviceStatusDenied
-	UserID         string  // "" until approved
+	ClaimCodeID    string // "" for standard device flow, set when the session originated from a claim code
+	Scope          string // space-delimited
+	Status         string // DeviceStatusPending | DeviceStatusApproved | DeviceStatusDenied
+	UserID         string // "" until approved
 	IssuedAt       time.Time
 	ExpiresAt      time.Time
 	LastPolledAt   *time.Time
-	PollInterval   int     // seconds
+	PollInterval   int // seconds
 	ConsumedAt     *time.Time
 }
 
@@ -45,10 +45,10 @@ type DeviceAuthorization struct {
 //go:generate mockgen -destination=../mocks/mock_claim_code_repository.go -package=mocks github.com/sweeney/identity/internal/domain ClaimCodeRepository
 type ClaimCode struct {
 	ID          string
-	CodeHash    string  // SHA-256 hex of the raw claim_code
+	CodeHash    string // SHA-256 hex of the raw claim_code
 	ClientID    string
-	Label       string  // admin-set, e.g. "Kitchen sensor"
-	BoundUserID string  // "" until first bind
+	Label       string // admin-set, e.g. "Kitchen sensor"
+	BoundUserID string // "" until first bind
 	CreatedAt   time.Time
 	BoundAt     *time.Time
 	RevokedAt   *time.Time

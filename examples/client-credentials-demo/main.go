@@ -252,13 +252,13 @@ func setup(adminUser, adminPass string) (string, error) {
 
 	// 3. Create the OAuth client (ignore conflict — already exists is fine).
 	createForm := url.Values{
-		"_csrf":                       {csrf},
-		"id":                          {clientID},
-		"name":                        {"Background Worker"},
-		"grant_types":                 {"client_credentials"},
-		"token_endpoint_auth_method":  {"client_secret_basic"},
-		"scopes":                      {"read:users"},
-		"audience":                    {identityBase},
+		"_csrf":                      {csrf},
+		"id":                         {clientID},
+		"name":                       {"Background Worker"},
+		"grant_types":                {"client_credentials"},
+		"token_endpoint_auth_method": {"client_secret_basic"},
+		"scopes":                     {"read:users"},
+		"audience":                   {identityBase},
 	}
 	resp, err = client.PostForm(identityBase+"/admin/oauth/new", createForm)
 	if err != nil {

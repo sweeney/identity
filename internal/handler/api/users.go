@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/sweeney/identity/common/httputil"
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
-	"github.com/sweeney/identity/common/httputil"
 	"github.com/sweeney/identity/internal/service"
 )
 

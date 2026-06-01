@@ -57,9 +57,9 @@ func DomainCredentialsToWebAuthn(creds []*domain.WebAuthnCredential) []webauthn.
 // NewWebAuthn creates a configured webauthn.WebAuthn instance.
 func NewWebAuthn(rpID, rpDisplayName string, rpOrigins []string) (*webauthn.WebAuthn, error) {
 	return webauthn.New(&webauthn.Config{
-		RPDisplayName: rpDisplayName,
-		RPID:          rpID,
-		RPOrigins:     rpOrigins,
+		RPDisplayName:         rpDisplayName,
+		RPID:                  rpID,
+		RPOrigins:             rpOrigins,
 		AttestationPreference: protocol.PreferNoAttestation,
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
 			ResidentKey:      protocol.ResidentKeyRequirementPreferred,

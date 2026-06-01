@@ -2,15 +2,15 @@
 //
 // Usage:
 //
-//	1. Register an OAuth client in the admin UI:
-//	   - Client ID:     spa-demo
-//	   - Name:          SPA Demo
-//	   - Redirect URI:  http://localhost:9091/
+//  1. Register an OAuth client in the admin UI:
+//     - Client ID:     spa-demo
+//     - Name:          SPA Demo
+//     - Redirect URI:  http://localhost:9091/
 //
-//	2. Run this server:
-//	   go run ./examples/spa-demo
+//  2. Run this server:
+//     go run ./examples/spa-demo
 //
-//	3. Open http://localhost:9091 in your browser
+//  3. Open http://localhost:9091 in your browser
 package main
 
 import (

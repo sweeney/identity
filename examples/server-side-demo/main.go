@@ -3,15 +3,15 @@
 //
 // Usage:
 //
-//	1. Register an OAuth client in the admin UI:
-//	   - Client ID:     demo
-//	   - Name:          OAuth Demo
-//	   - Redirect URI:  http://localhost:9090/callback
+//  1. Register an OAuth client in the admin UI:
+//     - Client ID:     demo
+//     - Name:          OAuth Demo
+//     - Redirect URI:  http://localhost:9090/callback
 //
-//	2. Run this demo:
-//	   go run ./examples/oauth-demo
+//  2. Run this demo:
+//     go run ./examples/oauth-demo
 //
-//	3. Open http://localhost:9090 in your browser
+//  3. Open http://localhost:9090 in your browser
 package main
 
 import (

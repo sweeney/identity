@@ -124,12 +124,12 @@ func TestAuthorizePost_Success(t *testing.T) {
 
 	h := newTestRouterWithAuth(svc, authSvc)
 	rr := postForm(t, h, "/oauth/authorize", url.Values{
-		"client_id":    {"client-1"},
-		"redirect_uri": {"https://myapp.example.com/callback"},
-		"state":        {"state-xyz"},
+		"client_id":      {"client-1"},
+		"redirect_uri":   {"https://myapp.example.com/callback"},
+		"state":          {"state-xyz"},
 		"code_challenge": {"challenge-abc"},
-		"username":     {"alice"},
-		"password":     {"password"},
+		"username":       {"alice"},
+		"password":       {"password"},
 	})
 
 	// Renders an intermediate redirect page (avoids CSP form-action blocking custom schemes)

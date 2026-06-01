@@ -21,9 +21,9 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/sweeney/identity/common/httputil"
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
-	"github.com/sweeney/identity/common/httputil"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/ui"
 )
@@ -479,9 +479,9 @@ func (h *adminHandler) usersList(w http.ResponseWriter, r *http.Request) {
 
 func (h *adminHandler) usersNewGet(w http.ResponseWriter, r *http.Request) {
 	h.render(w, r, "user_form.html", map[string]any{
-		"FormAction":         "/admin/users/new",
-		"SelectedRole":       "user",
-		"MinPasswordLength":  auth.MinPasswordLength,
+		"FormAction":        "/admin/users/new",
+		"SelectedRole":      "user",
+		"MinPasswordLength": auth.MinPasswordLength,
 	})
 }
 

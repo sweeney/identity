@@ -231,4 +231,3 @@ func TestLoad_BackupHour_InvalidValue(t *testing.T) {
 		})
 	}
 }
-

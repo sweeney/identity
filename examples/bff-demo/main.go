@@ -5,15 +5,15 @@
 //
 // Usage:
 //
-//	1. Register an OAuth client in the admin UI:
-//	   - Client ID:     bff-demo
-//	   - Name:          BFF Demo
-//	   - Redirect URI:  http://localhost:9092/callback
+//  1. Register an OAuth client in the admin UI:
+//     - Client ID:     bff-demo
+//     - Name:          BFF Demo
+//     - Redirect URI:  http://localhost:9092/callback
 //
-//	2. Run this demo:
-//	   go run ./examples/bff-demo
+//  2. Run this demo:
+//     go run ./examples/bff-demo
 //
-//	3. Open http://localhost:9092 in your browser
+//  3. Open http://localhost:9092 in your browser
 package main
 
 import (

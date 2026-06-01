@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/common/httputil"
+	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/internal/service"
 )
 
@@ -23,8 +23,8 @@ func (h *adminHandler) claimCodesList(w http.ResponseWriter, r *http.Request) {
 	}
 	if !client.HasGrantType(domain.GrantTypeDeviceCode) {
 		h.render(w, r, "claim_codes_list.html", map[string]any{
-			"Client":            client,
-			"MissingGrantType":  true,
+			"Client":           client,
+			"MissingGrantType": true,
 		})
 		return
 	}

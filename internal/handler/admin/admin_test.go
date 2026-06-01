@@ -715,10 +715,10 @@ func TestOAuthClientCreate_ClientCredentials_RequiresAudience(t *testing.T) {
 
 	csrf := csrfTokenFor(session.Value)
 	form := url.Values{
-		"_csrf":        {csrf},
-		"id":           {"svc-client"},
-		"name":         {"Service Client"},
-		"grant_types":  {"client_credentials"},
+		"_csrf":       {csrf},
+		"id":          {"svc-client"},
+		"name":        {"Service Client"},
+		"grant_types": {"client_credentials"},
 		// audience intentionally omitted
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
@@ -739,12 +739,12 @@ func TestOAuthClientCreate_ClientCredentials_WithAudience_Succeeds(t *testing.T)
 
 	csrf := csrfTokenFor(session.Value)
 	form := url.Values{
-		"_csrf":                        {csrf},
-		"id":                           {"svc-client"},
-		"name":                         {"Service Client"},
-		"grant_types":                  {"client_credentials"},
-		"audience":                     {"https://api.example.com"},
-		"token_endpoint_auth_method":   {"client_secret_basic"},
+		"_csrf":                      {csrf},
+		"id":                         {"svc-client"},
+		"name":                       {"Service Client"},
+		"grant_types":                {"client_credentials"},
+		"audience":                   {"https://api.example.com"},
+		"token_endpoint_auth_method": {"client_secret_basic"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -762,12 +762,12 @@ func TestOAuthClientCreate_ClientCredentials_RequiresAuthMethod(t *testing.T) {
 
 	csrf := csrfTokenFor(session.Value)
 	form := url.Values{
-		"_csrf":                        {csrf},
-		"id":                           {"svc-client"},
-		"name":                         {"Service Client"},
-		"grant_types":                  {"client_credentials"},
-		"audience":                     {"https://api.example.com"},
-		"token_endpoint_auth_method":   {"none"},
+		"_csrf":                      {csrf},
+		"id":                         {"svc-client"},
+		"name":                       {"Service Client"},
+		"grant_types":                {"client_credentials"},
+		"audience":                   {"https://api.example.com"},
+		"token_endpoint_auth_method": {"none"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -795,12 +795,12 @@ func TestOAuthClientEdit_ClientCredentials_RequiresAuthMethod(t *testing.T) {
 
 	csrf := csrfTokenFor(session.Value)
 	form := url.Values{
-		"_csrf":                        {csrf},
-		"name":                         {"Service Client"},
-		"grant_types":                  {"client_credentials"},
-		"audience":                     {"https://api.example.com"},
-		"token_endpoint_auth_method":   {"none"},
-		"admin_password":               {adminPass},
+		"_csrf":                      {csrf},
+		"name":                       {"Service Client"},
+		"grant_types":                {"client_credentials"},
+		"audience":                   {"https://api.example.com"},
+		"token_endpoint_auth_method": {"none"},
+		"admin_password":             {adminPass},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/svc-client/edit", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

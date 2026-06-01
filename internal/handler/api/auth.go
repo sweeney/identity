@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/common/httputil"
+	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/service"
 )
 
@@ -134,10 +134,10 @@ func (h *authHandler) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 type meResponse struct {
-	ID          string `json:"id"`
-	Username    string `json:"username"`
-	Role        string `json:"role"`
-	IsActive    bool   `json:"is_active"`
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+	IsActive bool   `json:"is_active"`
 }
 
 func (h *authHandler) me(w http.ResponseWriter, r *http.Request) {
@@ -154,4 +154,3 @@ func (h *authHandler) me(w http.ResponseWriter, r *http.Request) {
 		IsActive: claims.IsActive,
 	})
 }
-

@@ -17,7 +17,7 @@ import (
 func TestWebAuthnCredentialStore_CreateAndGetByCredentialID(t *testing.T) {
 	db := openTestDB(t)
 	s := store.NewWebAuthnCredentialStore(db)
-	seedWebAuthnUser(t, db,"user-1")
+	seedWebAuthnUser(t, db, "user-1")
 
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	cred := &domain.WebAuthnCredential{
@@ -58,7 +58,7 @@ func TestWebAuthnCredentialStore_CreateAndGetByCredentialID(t *testing.T) {
 func TestWebAuthnCredentialStore_CreateDuplicate(t *testing.T) {
 	db := openTestDB(t)
 	s := store.NewWebAuthnCredentialStore(db)
-	seedWebAuthnUser(t, db,"user-1")
+	seedWebAuthnUser(t, db, "user-1")
 
 	now := time.Now().UTC()
 	cred := &domain.WebAuthnCredential{
@@ -80,8 +80,8 @@ func TestWebAuthnCredentialStore_CreateDuplicate(t *testing.T) {
 func TestWebAuthnCredentialStore_ListByUserID(t *testing.T) {
 	db := openTestDB(t)
 	s := store.NewWebAuthnCredentialStore(db)
-	seedWebAuthnUser(t, db,"user-1")
-	seedWebAuthnUser(t, db,"user-2")
+	seedWebAuthnUser(t, db, "user-1")
+	seedWebAuthnUser(t, db, "user-2")
 
 	now := time.Now().UTC()
 	for i, uid := range []string{"user-1", "user-1", "user-2"} {
@@ -109,7 +109,7 @@ func TestWebAuthnCredentialStore_ListByUserID(t *testing.T) {
 func TestWebAuthnCredentialStore_UpdateSignCount(t *testing.T) {
 	db := openTestDB(t)
 	s := store.NewWebAuthnCredentialStore(db)
-	seedWebAuthnUser(t, db,"user-1")
+	seedWebAuthnUser(t, db, "user-1")
 	seedCredential(t, s, "cred-1", "user-1")
 
 	require.NoError(t, s.UpdateSignCount("cred-1", 42))
@@ -130,7 +130,7 @@ func TestWebAuthnCredentialStore_UpdateSignCount_NotFound(t *testing.T) {
 func TestWebAuthnCredentialStore_UpdateLastUsed(t *testing.T) {
 	db := openTestDB(t)
 	s := store.NewWebAuthnCredentialStore(db)
-	seedWebAuthnUser(t, db,"user-1")
+	seedWebAuthnUser(t, db, "user-1")
 	seedCredential(t, s, "cred-1", "user-1")
 
 	newTime := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
@@ -144,7 +144,7 @@ func TestWebAuthnCredentialStore_UpdateLastUsed(t *testing.T) {
 func TestWebAuthnCredentialStore_Rename(t *testing.T) {
 	db := openTestDB(t)
 	s := store.NewWebAuthnCredentialStore(db)
-	seedWebAuthnUser(t, db,"user-1")
+	seedWebAuthnUser(t, db, "user-1")
 	seedCredential(t, s, "cred-1", "user-1")
 
 	require.NoError(t, s.Rename("cred-1", "My iPhone"))
@@ -165,7 +165,7 @@ func TestWebAuthnCredentialStore_Rename_NotFound(t *testing.T) {
 func TestWebAuthnCredentialStore_Delete(t *testing.T) {
 	db := openTestDB(t)
 	s := store.NewWebAuthnCredentialStore(db)
-	seedWebAuthnUser(t, db,"user-1")
+	seedWebAuthnUser(t, db, "user-1")
 	seedCredential(t, s, "cred-1", "user-1")
 
 	require.NoError(t, s.Delete("cred-1"))
@@ -185,7 +185,7 @@ func TestWebAuthnCredentialStore_Delete_NotFound(t *testing.T) {
 func TestWebAuthnCredentialStore_DeleteAllForUser(t *testing.T) {
 	db := openTestDB(t)
 	s := store.NewWebAuthnCredentialStore(db)
-	seedWebAuthnUser(t, db,"user-1")
+	seedWebAuthnUser(t, db, "user-1")
 	seedCredential(t, s, "cred-1", "user-1")
 	seedCredential(t, s, "cred-2", "user-1")
 
@@ -212,7 +212,7 @@ func seedWebAuthnUser(t *testing.T, database *db.Database, id string) {
 	require.NoError(t, us.Create(&domain.User{
 		ID: id, Username: id, DisplayName: id,
 		PasswordHash: "$2a$04$placeholder",
-		Role: domain.RoleUser, IsActive: true,
+		Role:         domain.RoleUser, IsActive: true,
 		CreatedAt: time.Now().UTC().Truncate(time.Millisecond),
 		UpdatedAt: time.Now().UTC().Truncate(time.Millisecond),
 	}))

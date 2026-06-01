@@ -10,8 +10,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/common/httputil"
+	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/ui"
 )
@@ -713,4 +713,3 @@ func (h *oauthHandler) passkeyPromptRegisterFinish(w http.ResponseWriter, r *htt
 	h.clearPromptSession(w)
 	w.WriteHeader(http.StatusCreated)
 }
-

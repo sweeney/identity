@@ -30,10 +30,10 @@ import (
 )
 
 const (
-	e2eJWTSecret  = "e2e-test-secret-key-that-is-long-enough"
-	e2eAdminUser  = "admin"
-	e2eAdminPass  = "adminpassword123"
-	e2eJWTIssuer  = "identity.test"
+	e2eJWTSecret = "e2e-test-secret-key-that-is-long-enough"
+	e2eAdminUser = "admin"
+	e2eAdminPass = "adminpassword123"
+	e2eJWTIssuer = "identity.test"
 )
 
 func setupE2EServer(t *testing.T) (http.Handler, *db.Database) {
@@ -79,8 +79,8 @@ func setupE2EServer(t *testing.T) (http.Handler, *db.Database) {
 // noopBackup satisfies domain.BackupService without doing anything.
 type noopBackup struct{}
 
-func (n *noopBackup) TriggerAsync()  {}
-func (n *noopBackup) RunNow() error  { return nil }
+func (n *noopBackup) TriggerAsync() {}
+func (n *noopBackup) RunNow() error { return nil }
 
 // extractRedirectURL parses the redirect URL from the intermediate redirect page HTML.
 // The page contains: <a id="redirect-link" href="...">
