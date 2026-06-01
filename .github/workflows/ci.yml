@@ -45,6 +45,9 @@ jobs:
             exit 1
           fi
 
+      - name: Lint OpenAPI spec
+        run: npx --yes @stoplight/spectral-cli@latest lint internal/spec/openapi.yaml
+
       - name: Unit tests (with race detector)
         run: |
           set -o pipefail

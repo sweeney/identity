@@ -9,6 +9,54 @@ import (
 	"github.com/sweeney/identity/internal/ui"
 )
 
+// route describes one route registered by this router. Routes are served at the
+// host root (not under /api/v1). `documented` marks routes that appear in the
+// OpenAPI spec; the unflagged ones are server-rendered HTML form/page endpoints
+// internal to the login flow and are intentionally absent from the spec. The
+// spec path-coverage test (internal/spec) diffs DocumentedPaths() against the
+// spec, so a new documented route without a spec entry fails CI.
+type route struct {
+	method     string
+	path       string
+	documented bool
+}
+
+// routes is the single source of truth for what /oauth and discovery endpoints
+// exist. NewRouter registers a handler for each.
+func routes() []route {
+	return []route{
+		{"GET", "/oauth/authorize", true},
+		{"POST", "/oauth/authorize", true},
+		{"POST", "/oauth/authorize/passkey", false},              // HTML form post
+		{"GET", "/oauth/passkey-prompt", false},                  // HTML page
+		{"POST", "/oauth/passkey-prompt/register/begin", false},  // HTML flow XHR
+		{"POST", "/oauth/passkey-prompt/register/finish", false}, // HTML flow XHR
+		{"POST", "/oauth/token", true},
+		{"POST", "/oauth/introspect", true},
+		{"POST", "/oauth/device_authorization", true},
+		{"POST", "/oauth/device/claim", true},
+		{"GET", "/oauth/device", true},
+		{"POST", "/oauth/device", true},
+		{"GET", "/.well-known/oauth-authorization-server", true},
+	}
+}
+
+// DocumentedPaths returns the deduplicated paths served by this router that must
+// appear verbatim as keys in the OpenAPI spec's `paths`. Internal HTML-form
+// endpoints are excluded.
+func DocumentedPaths() []string {
+	seen := make(map[string]bool)
+	var paths []string
+	for _, r := range routes() {
+		if !r.documented || seen[r.path] {
+			continue
+		}
+		seen[r.path] = true
+		paths = append(paths, r.path)
+	}
+	return paths
+}
+
 // NewRouter builds the /oauth mux.
 // If svc is nil, all routes return 404 (no clients registered).
 // tokenIssuer may be nil if passkeys are not enabled.
@@ -38,24 +86,44 @@ func NewRouter(svc service.OAuthServicer, trustProxy string, tokenIssuer *auth.T
 		siteName:    siteName,
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /oauth/authorize", h.authorizeGet)
-	mux.HandleFunc("POST /oauth/authorize", h.authorizePost)
-	mux.HandleFunc("POST /oauth/authorize/passkey", h.authorizePasskey)
-	mux.HandleFunc("GET /oauth/passkey-prompt", h.passkeyPrompt)
-	mux.HandleFunc("POST /oauth/passkey-prompt/register/begin", h.passkeyPromptRegisterBegin)
-	mux.HandleFunc("POST /oauth/passkey-prompt/register/finish", h.passkeyPromptRegisterFinish)
-	mux.HandleFunc("POST /oauth/token", h.token)
-	mux.HandleFunc("POST /oauth/introspect", h.introspect)
+	// handlers maps "METHOD /path" to its handler. Device-flow handlers are
+	// absent (and so not registered) when deviceSvc is nil. Every key MUST
+	// appear in routes() — the loop below panics otherwise, so a new endpoint
+	// cannot be added without a route-table entry.
+	handlers := map[string]http.HandlerFunc{
+		"GET /oauth/authorize":                        h.authorizeGet,
+		"POST /oauth/authorize":                       h.authorizePost,
+		"POST /oauth/authorize/passkey":               h.authorizePasskey,
+		"GET /oauth/passkey-prompt":                   h.passkeyPrompt,
+		"POST /oauth/passkey-prompt/register/begin":   h.passkeyPromptRegisterBegin,
+		"POST /oauth/passkey-prompt/register/finish":  h.passkeyPromptRegisterFinish,
+		"POST /oauth/token":                           h.token,
+		"POST /oauth/introspect":                      h.introspect,
+		"GET /.well-known/oauth-authorization-server": h.discovery,
+	}
 
 	// Device authorization grant (RFC 8628) — only advertised if enabled.
 	if deviceSvc != nil {
-		mux.HandleFunc("POST /oauth/device_authorization", h.deviceAuthorize)
-		mux.HandleFunc("POST /oauth/device/claim", h.deviceClaim)
-		mux.HandleFunc("GET /oauth/device", h.deviceVerifyGet)
-		mux.HandleFunc("POST /oauth/device", h.deviceVerifyPost)
+		handlers["POST /oauth/device_authorization"] = h.deviceAuthorize
+		handlers["POST /oauth/device/claim"] = h.deviceClaim
+		handlers["GET /oauth/device"] = h.deviceVerifyGet
+		handlers["POST /oauth/device"] = h.deviceVerifyPost
 	}
 
-	mux.HandleFunc("GET /.well-known/oauth-authorization-server", h.discovery)
+	mux := http.NewServeMux()
+	known := make(map[string]bool, len(routes()))
+	for _, r := range routes() {
+		key := r.method + " " + r.path
+		known[key] = true
+		if fn, ok := handlers[key]; ok {
+			mux.HandleFunc(key, fn)
+		}
+	}
+	for key := range handlers {
+		if !known[key] {
+			panic("oauth: handler registered for route missing from routes(): " + key)
+		}
+	}
+
 	return mux
 }

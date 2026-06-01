@@ -28,7 +28,6 @@ import (
 	apihandler "github.com/sweeney/identity/internal/handler/api"
 	oauthhandler "github.com/sweeney/identity/internal/handler/oauth"
 	"github.com/sweeney/identity/internal/service"
-	"github.com/sweeney/identity/internal/spec"
 	"github.com/sweeney/identity/internal/store"
 	"github.com/sweeney/identity/internal/ui"
 )
@@ -372,19 +371,8 @@ func runIdentityServer() error {
 	})
 	mux.Handle("GET /.well-known/jwks.json", jwksHandler(issuer))
 	mux.Handle("GET /.well-known/oauth-authorization-server", oauthRouter)
-	mux.HandleFunc("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/yaml")
-		w.Write(spec.YAML)
-	})
-	mux.HandleFunc("/openapi.json", func(w http.ResponseWriter, r *http.Request) {
-		data, err := spec.JSON()
-		if err != nil {
-			http.Error(w, "spec unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(data)
-	})
+	mux.HandleFunc("/openapi.yaml", specYAMLHandler)
+	mux.HandleFunc("/openapi.json", specJSONHandler)
 
 	// Build the handler chain: rate limit -> security headers -> mux
 	var handler http.Handler = securityHeaders(mux, cfg.CORSOrigins, cfg.Env == config.EnvDevelopment)

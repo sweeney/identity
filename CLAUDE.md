@@ -153,6 +153,8 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `internal/store/webauthn_challenge_store.go` | WebAuthn challenge persistence (ephemeral) |
 | `internal/handler/oauth/client_auth.go` | Client secret authentication (Basic + form body) |
 | `internal/spec/openapi.yaml` | Identity OpenAPI 3.0 spec (served at `/openapi.json`) |
+| `internal/spec/coverage_test.go` | Diffs router `DocumentedPaths()` against the spec — adding/removing a documented route without updating the spec fails CI |
+| `.spectral.yml` | Spectral OpenAPI ruleset; `make lint-spec` / CI structurally validate the spec |
 | `cmd/server/main.go` | Subcommand dispatcher (identity / legacy flags) |
 | `cmd/server/identity.go` | Identity subcommand entrypoint and HTTP server |
 | `cmd/server/secrets.go` | DB-managed JWT secret with rotation support |

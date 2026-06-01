@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-integration lint generate clean deploy
+.PHONY: build test test-unit test-integration lint lint-spec generate clean deploy
 
 BINARY := identity-server
 MAIN   := ./cmd/server
@@ -25,6 +25,11 @@ generate:
 
 lint:
 	go vet ./...
+
+# Structurally validate the OpenAPI spec (errors fail; warnings are advisory).
+# The path-coverage test (go test ./internal/spec/) guards spec/route drift.
+lint-spec:
+	npx --yes @stoplight/spectral-cli@latest lint internal/spec/openapi.yaml
 
 coverage:
 	go test -race -count=1 -coverprofile=coverage.out ./...
