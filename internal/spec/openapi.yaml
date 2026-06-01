@@ -23,6 +23,16 @@ servers:
         default: id.example.com
         description: Your deployment hostname
 
+# Root-served endpoints (/oauth/*, /.well-known/*) live at the host root, not
+# under /api/v1. Each such path item references this server list so that tooling
+# resolves their URLs correctly instead of prepending the /api/v1 base above.
+x-servers-root: &servers-root
+  - url: https://{domain}
+    variables:
+      domain:
+        default: id.example.com
+        description: Your deployment hostname
+
 security: []
 
 tags:
@@ -527,12 +537,12 @@ paths:
   # ── OAuth endpoints (served at /oauth, not /api/v1) ──────────────
 
   /oauth/authorize:
+    servers: *servers-root
     get:
       operationId: oauthAuthorize
       summary: Render OAuth login form
       description: |
         Validates the client and redirect URI, then renders a login form.
-        This endpoint is at `/oauth/authorize` (not under `/api/v1`).
         Only `code_challenge_method=S256` is accepted.
       tags: [oauth]
       parameters:
@@ -940,6 +950,7 @@ paths:
   # --- OAuth / Client Credentials ---
 
   /oauth/token:
+    servers: *servers-root
     post:
       operationId: oauthToken
       tags: [oauth]
@@ -1013,6 +1024,7 @@ paths:
           description: Invalid client credentials
 
   /oauth/device_authorization:
+    servers: *servers-root
     post:
       operationId: deviceAuthorization
       tags: [oauth]
@@ -1067,6 +1079,7 @@ paths:
           description: Invalid request, unknown client, or unauthorized client
 
   /oauth/device/claim:
+    servers: *servers-root
     post:
       operationId: deviceClaim
       tags: [oauth]
@@ -1117,6 +1130,7 @@ paths:
           description: Unknown or revoked claim code, unknown client, or unauthorized client
 
   /oauth/device:
+    servers: *servers-root
     get:
       operationId: deviceVerifyGet
       tags: [oauth]
@@ -1164,6 +1178,7 @@ paths:
           description: HTML confirmation page
 
   /oauth/introspect:
+    servers: *servers-root
     post:
       tags: [oauth]
       summary: Token introspection (RFC 7662)
@@ -1201,6 +1216,7 @@ paths:
           description: Missing or invalid client credentials
 
   /.well-known/oauth-authorization-server:
+    servers: *servers-root
     get:
       tags: [oauth]
       summary: Authorization server metadata (RFC 8414)
