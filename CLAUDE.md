@@ -27,6 +27,7 @@ Human-readable guides are in `docs/`:
 - `docs/api-walkthrough.md` — executable walkthrough showing every endpoint with real output
 - `docs/auth-flows.md` — ASCII art diagrams of all auth flows
 - `docs/passkeys.md` — passkey/WebAuthn setup, API reference, and integration guide
+- `docs/verifying-tokens.md` — verifying Identity tokens in a Go resource server using the `common/auth.JWKSVerifier`
 - `docs/r2-backup.md` — R2 backup setup and restore procedures
 - `docs/deployment.md` — deployment: binary layout, systemd unit, env file
 

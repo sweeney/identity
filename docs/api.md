@@ -1118,6 +1118,11 @@ The access token payload contains:
 
 Use `GET /api/v1/auth/me` for user info rather than decoding the JWT client-side.
 
+**Building a Go service that verifies these tokens?** Don't decode them
+unverified — verify the ES256 signature against the JWKS. See
+[Verifying Identity tokens in a Go service](verifying-tokens.md), which uses the
+`common/auth.JWKSVerifier` from the `github.com/sweeney/identity/common` module.
+
 ---
 
 ## Role Model

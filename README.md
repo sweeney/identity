@@ -92,8 +92,11 @@ sudo journalctl -u identity | grep Password  # get the generated admin password
 - [docs/api.md](docs/api.md) — Integration guide with code examples
 - [docs/api-walkthrough.md](docs/api-walkthrough.md) — Executable walkthrough of every endpoint
 - [docs/auth-flows.md](docs/auth-flows.md) — ASCII art diagrams of all auth flows
+- [docs/verifying-tokens.md](docs/verifying-tokens.md) — Verifying Identity tokens in a Go service (JWKS)
+- [docs/passkeys.md](docs/passkeys.md) — Passkey/WebAuthn setup, API reference, and integration guide
 - [docs/r2-backup.md](docs/r2-backup.md) — R2 backup setup and restore
-- [examples/](examples/) — Demo OAuth clients (server-side, SPA, BFF)
+- [docs/deployment.md](docs/deployment.md) — Deployment: binary layout, systemd unit, env file
+- [examples/](examples/) — Demo clients (server-side, SPA, BFF, passkey, client-credentials, iOS)
 
 ## Testing
 
