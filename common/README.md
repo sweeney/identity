@@ -17,7 +17,7 @@ is documented in the repo root [`CLAUDE.md`](../CLAUDE.md#releasing-a-new-versio
 
 | Package | What it does |
 |---|---|
-| [`auth`](auth) | Verify Identity-issued ES256 JWTs against the published JWKS. `JWKSVerifier`, the `TokenParser` interface, and `TokenClaims` / `ServiceTokenClaims` / `Role` types. |
+| [`auth`](auth) | Verify Identity-issued ES256 JWTs against the published JWKS. `JWKSVerifier` (with optional `slog` logging and a pull-based `Metrics()` snapshot), the `TokenParser` interface, and `TokenClaims` / `ServiceTokenClaims` / `Role` types. |
 | [`apierr`](apierr) | Shared sentinel errors (`ErrNotFound`, `ErrConflict`, `ErrUserLimitReached`, `ErrTokenAlreadyRevoked`) for consistent error mapping. |
 | [`backup`](backup) | Database backup orchestration. `Manager` drives scheduled uploads via an `Uploader`; `R2Uploader` targets Cloudflare R2 (S3 API), `NoopManager` disables backups. |
 | [`cli`](cli) | CLI helpers for backups — `ListBackups` and `RestoreBackup`. |

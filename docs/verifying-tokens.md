@@ -123,6 +123,37 @@ Identity's own `internal/auth.RequireAuth` follows this exact shape — it just
 takes the `TokenParser` interface, so it accepts the in-process `*TokenIssuer`
 or a `*JWKSVerifier` interchangeably.
 
+## Observability
+
+Pass an optional `*slog.Logger` to receive structured output for JWKS fetch
+failures, key rotations, and stale-cache fallbacks:
+
+```go
+verifier, _ := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
+    IssuerURL: "https://id.swee.net",
+    Issuer:    "https://id.swee.net",
+    Logger:    slog.Default(), // omit for no logging
+})
+```
+
+For metrics, poll `Metrics()` — a lock-free snapshot of counters and cache
+state — from your `/metrics` or `/healthz` handler and map it onto your backend:
+
+```go
+m := verifier.Metrics()
+// m.Fetches, m.FetchErrors, m.KidMisses, m.Rotations, m.StaleServed,
+// m.KeyCount, m.FetchedAt, m.LastFetchError
+```
+
+The verifier deliberately exposes a **pull snapshot** rather than firing
+consumer callbacks: no foreign code runs inside its locked, latency-sensitive
+verification path, so a slow or panicking metrics sink can't stall or crash
+token verification.
+
+> Don't treat `FetchedAt` as a liveness signal. It's zero until the first token
+> is verified (lazy fetch), and an *old* `FetchedAt` is the normal steady state —
+> keys are cached and only refetched on TTL expiry or a `kid` miss.
+
 ## Notes
 
 - **Issuer vs. IssuerURL.** `IssuerURL` is where JWKS is fetched; `Issuer` is the

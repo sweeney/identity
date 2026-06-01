@@ -8,11 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -88,6 +89,10 @@ type JWKSVerifierConfig struct {
 	// RequiredAudience, when non-empty, asserts that incoming tokens carry
 	// a matching `aud` claim.
 	RequiredAudience string
+	// Logger receives structured output for JWKS fetch failures, key
+	// rotations, and stale-cache fallbacks. When nil, the verifier discards
+	// all log output (it does not fall back to the global logger).
+	Logger *slog.Logger
 }
 
 // JWKSVerifier validates ES256 JWTs against a JWKS served by the identity
@@ -100,13 +105,60 @@ type JWKSVerifier struct {
 	httpClient       *http.Client
 	cacheTTL         time.Duration
 	refetchMin       time.Duration
+	logger           *slog.Logger
 
 	sf singleflight.Group
 
-	mu         sync.RWMutex
-	keys       map[string]*ecdsa.PublicKey
-	fetchedAt  time.Time
-	lastMissAt time.Time
+	// Counters are atomic so Metrics() needs no lock for them.
+	fetches     atomic.Uint64
+	fetchErrors atomic.Uint64
+	kidMisses   atomic.Uint64
+	rotations   atomic.Uint64
+	staleServed atomic.Uint64
+
+	mu           sync.RWMutex
+	keys         map[string]*ecdsa.PublicKey
+	fetchedAt    time.Time
+	lastMissAt   time.Time
+	lastFetchErr string
+}
+
+// VerifierMetrics is a point-in-time snapshot of a JWKSVerifier's counters and
+// cache state. Consumers poll it (e.g. from a /metrics or /healthz handler) and
+// map it onto their own metrics backend.
+//
+// Note: FetchedAt is zero until the first token is verified (the JWKS is fetched
+// lazily), and an old FetchedAt is the normal steady state — keys are cached and
+// only refetched on TTL expiry or a kid miss. Treat these as diagnostics, not a
+// liveness signal.
+type VerifierMetrics struct {
+	Fetches        uint64    // successful JWKS fetches
+	FetchErrors    uint64    // failed fetch/decode attempts
+	KidMisses      uint64    // tokens whose kid was not in the cache
+	Rotations      uint64    // fetches that changed the set of key IDs
+	StaleServed    uint64    // refetch failed but a cached key still verified
+	KeyCount       int       // keys currently cached
+	FetchedAt      time.Time // time of the last successful fetch (zero if none)
+	LastFetchError string    // error string of the last failed fetch ("" if last fetch ok)
+}
+
+// Metrics returns a snapshot of the verifier's counters and cache state.
+func (v *JWKSVerifier) Metrics() VerifierMetrics {
+	v.mu.RLock()
+	keyCount := len(v.keys)
+	fetchedAt := v.fetchedAt
+	lastErr := v.lastFetchErr
+	v.mu.RUnlock()
+	return VerifierMetrics{
+		Fetches:        v.fetches.Load(),
+		FetchErrors:    v.fetchErrors.Load(),
+		KidMisses:      v.kidMisses.Load(),
+		Rotations:      v.rotations.Load(),
+		StaleServed:    v.staleServed.Load(),
+		KeyCount:       keyCount,
+		FetchedAt:      fetchedAt,
+		LastFetchError: lastErr,
+	}
 }
 
 // NewJWKSVerifier constructs a JWKSVerifier. No network I/O occurs here —
@@ -130,6 +182,10 @@ func NewJWKSVerifier(cfg JWKSVerifierConfig) (*JWKSVerifier, error) {
 	if refetch == 0 {
 		refetch = defaultJWKSRefetchMin
 	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	return &JWKSVerifier{
 		issuerURL:        strings.TrimSuffix(cfg.IssuerURL, "/"),
 		issuer:           cfg.Issuer,
@@ -137,6 +193,7 @@ func NewJWKSVerifier(cfg JWKSVerifierConfig) (*JWKSVerifier, error) {
 		httpClient:       client,
 		cacheTTL:         ttl,
 		refetchMin:       refetch,
+		logger:           logger,
 		keys:             map[string]*ecdsa.PublicKey{},
 	}, nil
 }
@@ -258,6 +315,9 @@ func (v *JWKSVerifier) keyForKid(ctx context.Context, kid string) (*ecdsa.Public
 	if have && !stale {
 		return key, nil
 	}
+	if !have {
+		v.kidMisses.Add(1)
+	}
 	if !have && throttled {
 		return nil, fmt.Errorf("unknown kid %q (refetch throttled)", kid)
 	}
@@ -279,7 +339,8 @@ func (v *JWKSVerifier) keyForKid(ctx context.Context, kid string) (*ecdsa.Public
 
 	if err != nil {
 		if have {
-			log.Printf("jwks refetch failed, serving cached key for kid %q: %v", kid, err)
+			v.staleServed.Add(1)
+			v.logger.Error("jwks refetch failed, serving cached key", "kid", kid, "err", err)
 			return key, nil
 		}
 		v.mu.Lock()
@@ -298,24 +359,68 @@ func (v *JWKSVerifier) keyForKid(ctx context.Context, kid string) (*ecdsa.Public
 }
 
 func (v *JWKSVerifier) refetch(ctx context.Context) error {
+	keys, err := v.fetchKeys(ctx)
+	if err != nil {
+		v.fetchErrors.Add(1)
+		v.mu.Lock()
+		v.lastFetchErr = err.Error()
+		v.mu.Unlock()
+		v.logger.Error("jwks fetch failed", "url", v.issuerURL+"/.well-known/jwks.json", "err", err)
+		return err
+	}
+
+	// Swap the key set and compute the rotation diff under the lock, but log
+	// and increment counters after releasing it — never hold the write lock
+	// across logging I/O that the Parse hot path contends on.
+	v.mu.Lock()
+	var added, removed []string
+	if len(v.keys) > 0 {
+		for kid := range keys {
+			if _, had := v.keys[kid]; !had {
+				added = append(added, kid)
+			}
+		}
+		for kid := range v.keys {
+			if _, still := keys[kid]; !still {
+				removed = append(removed, kid)
+			}
+		}
+	}
+	v.keys = keys
+	v.fetchedAt = time.Now()
+	v.lastFetchErr = ""
+	total := len(keys)
+	v.mu.Unlock()
+
+	v.fetches.Add(1)
+	if len(added) > 0 || len(removed) > 0 {
+		v.rotations.Add(1)
+		v.logger.Info("jwks keys rotated", "added", added, "removed", removed, "total", total)
+	}
+	return nil
+}
+
+// fetchKeys retrieves and decodes the JWKS, returning the usable EC P-256 keys
+// by kid. It performs no state mutation.
+func (v *JWKSVerifier) fetchKeys(ctx context.Context) (map[string]*ecdsa.PublicKey, error) {
 	url := v.issuerURL + "/.well-known/jwks.json"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return fmt.Errorf("build jwks request: %w", err)
+		return nil, fmt.Errorf("build jwks request: %w", err)
 	}
 	resp, err := v.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("fetch jwks: %w", err)
+		return nil, fmt.Errorf("fetch jwks: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("jwks status %d", resp.StatusCode)
+		return nil, fmt.Errorf("jwks status %d", resp.StatusCode)
 	}
 
 	var set jwkSet
 	if err := json.NewDecoder(resp.Body).Decode(&set); err != nil {
-		return fmt.Errorf("decode jwks: %w", err)
+		return nil, fmt.Errorf("decode jwks: %w", err)
 	}
 
 	keys := make(map[string]*ecdsa.PublicKey, len(set.Keys))
@@ -330,14 +435,9 @@ func (v *JWKSVerifier) refetch(ctx context.Context) error {
 		keys[j.Kid] = pub
 	}
 	if len(keys) == 0 {
-		return errors.New("jwks contained no usable keys")
+		return nil, errors.New("jwks contained no usable keys")
 	}
-
-	v.mu.Lock()
-	v.keys = keys
-	v.fetchedAt = time.Now()
-	v.mu.Unlock()
-	return nil
+	return keys, nil
 }
 
 func jwkToECDSAPublic(j jwk) (*ecdsa.PublicKey, error) {
