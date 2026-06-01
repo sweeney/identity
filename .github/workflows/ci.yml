@@ -52,6 +52,7 @@ jobs:
 
       - name: Integration tests (with race detector)
         run: |
+          set -o pipefail
           go test -v -race -count=1 -tags integration -json ./... 2>&1 | tee -a test-results.json || echo "TEST_FAILED=true" >> $GITHUB_ENV
 
       - name: Generate test summary
