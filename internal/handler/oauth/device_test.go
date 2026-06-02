@@ -6,11 +6,13 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/internal/handler/oauth"
 	"github.com/sweeney/identity/internal/mocks"
@@ -292,6 +294,9 @@ func TestDeviceVerifyGet_WithUserCodeShowsApprovalPrompt(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Body.String(), "Home IoT")
 	assert.Contains(t, rr.Body.String(), "read:sensors")
+	// Passkey approval is offered alongside username/password.
+	assert.Contains(t, rr.Body.String(), `id="passkey-btn"`)
+	assert.Contains(t, rr.Body.String(), "passkey-device.js")
 }
 
 func TestDeviceVerifyGet_ClaimCode(t *testing.T) {
@@ -382,6 +387,173 @@ func TestDeviceVerifyPost_Deny(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Body.String(), "Device denied")
+}
+
+// --- POST /oauth/device/passkey ---
+//
+// Bridges a WebAuthn (passkey) login ceremony into device approval: the browser
+// completes the passkey ceremony in JavaScript, obtains a user access token, and
+// posts it here together with the user_code to approve the device.
+
+// deviceRouterWithIssuer builds a device-flow router that also has a token issuer
+// wired (required for the passkey bridge to parse access tokens).
+func deviceRouterWithIssuer(svc service.OAuthServicer, deviceSvc service.DeviceFlowServicer, issuer *auth.TokenIssuer) http.Handler {
+	return oauth.NewRouter(svc, "", issuer, nil, nil, deviceSvc, "", "Test")
+}
+
+// postDevicePasskey posts to /oauth/device/passkey with an Origin matching Host
+// (so CheckOrigin passes) and Accept: application/json (XHR caller).
+func postDevicePasskey(t *testing.T, h http.Handler, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/oauth/device/passkey", nil)
+	req.Host = "id.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Origin", "https://id.example.com")
+	req.Body = http.NoBody
+	req.Form = form
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func mintUserToken(t *testing.T, issuer *auth.TokenIssuer, userID, username string) string {
+	t.Helper()
+	tok, err := issuer.Mint(domain.TokenClaims{
+		UserID:   userID,
+		Username: username,
+		Role:     "user",
+		IsActive: true,
+		Audience: "https://id.example.com",
+	})
+	require.NoError(t, err)
+	return tok
+}
+
+func TestDeviceVerifyPasskey_ApproveSuccess(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	issuer := newSecurityTestIssuer(t, "https://id.example.com")
+
+	token := mintUserToken(t, issuer, "user-alice", "alice")
+	deviceSvc.EXPECT().Approve("ABCD-1234", "user-alice", "alice", gomock.Any()).Return(nil)
+
+	h := deviceRouterWithIssuer(svc, deviceSvc, issuer)
+	rr := postDevicePasskey(t, h, url.Values{
+		"access_token": {token},
+		"user_code":    {"ABCD-1234"},
+	})
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "approved", body["status"])
+}
+
+func TestDeviceVerifyPasskey_MissingParams(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	issuer := newSecurityTestIssuer(t, "https://id.example.com")
+
+	h := deviceRouterWithIssuer(svc, deviceSvc, issuer)
+	rr := postDevicePasskey(t, h, url.Values{"user_code": {"ABCD-1234"}})
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestDeviceVerifyPasskey_InvalidToken(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	issuer := newSecurityTestIssuer(t, "https://id.example.com")
+
+	h := deviceRouterWithIssuer(svc, deviceSvc, issuer)
+	rr := postDevicePasskey(t, h, url.Values{
+		"access_token": {"not-a-real-token"},
+		"user_code":    {"ABCD-1234"},
+	})
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "invalid_token", body["error"])
+}
+
+// A client_credentials service token (typ: at+jwt) must never be accepted as a
+// user identity for device approval — same guard as authorizePasskey.
+func TestDeviceVerifyPasskey_ServiceTokenRejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	issuer := newSecurityTestIssuer(t, "https://id.example.com")
+
+	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
+		ClientID: "some-service",
+		Audience: "https://id.example.com",
+		Scope:    "read:users",
+	}, 15*time.Minute)
+	require.NoError(t, err)
+
+	h := deviceRouterWithIssuer(svc, deviceSvc, issuer)
+	rr := postDevicePasskey(t, h, url.Values{
+		"access_token": {serviceToken},
+		"user_code":    {"ABCD-1234"},
+	})
+	assert.Equal(t, http.StatusUnauthorized, rr.Code,
+		"service token must be rejected by device passkey approval")
+}
+
+func TestDeviceVerifyPasskey_ExpiredCode(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	issuer := newSecurityTestIssuer(t, "https://id.example.com")
+
+	token := mintUserToken(t, issuer, "user-alice", "alice")
+	deviceSvc.EXPECT().Approve("EXPD-0000", "user-alice", "alice", gomock.Any()).Return(service.ErrDeviceCodeExpired)
+
+	h := deviceRouterWithIssuer(svc, deviceSvc, issuer)
+	rr := postDevicePasskey(t, h, url.Values{
+		"access_token": {token},
+		"user_code":    {"EXPD-0000"},
+	})
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "expired_token", body["error"])
+}
+
+func TestDeviceVerifyPasskey_CrossOriginRejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	issuer := newSecurityTestIssuer(t, "https://id.example.com")
+	token := mintUserToken(t, issuer, "user-alice", "alice")
+
+	h := deviceRouterWithIssuer(svc, deviceSvc, issuer)
+	req := httptest.NewRequest(http.MethodPost, "/oauth/device/passkey", nil)
+	req.Host = "id.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Origin", "https://evil.example.com")
+	req.Body = http.NoBody
+	req.Form = url.Values{"access_token": {token}, "user_code": {"ABCD-1234"}}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+}
+
+func TestDeviceVerifyPasskey_DisabledWhenServiceNil(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	issuer := newSecurityTestIssuer(t, "https://id.example.com")
+
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, nil, "", "")
+	rr := postDevicePasskey(t, h, url.Values{
+		"access_token": {"x"},
+		"user_code":    {"ABCD-1234"},
+	})
+	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
 // --- discovery metadata ---

@@ -22,6 +22,13 @@
     </p>
     {{if .Scope}}<p><small>Requested scope: <code>{{.Scope}}</code></small></p>{{end}}
     <p><small>Only continue if you started this on your own device.</small></p>
+    <button id="passkey-btn" type="button" class="passkey-hidden passkey-btn-full"
+        data-user-code="{{.UserCode}}">Sign in with passkey</button>
+    <div id="passkey-divider" class="passkey-divider passkey-hidden">
+        <span class="passkey-divider-line"></span>
+        <span class="passkey-divider-text">or</span>
+        <span class="passkey-divider-line"></span>
+    </div>
     <form method="POST" action="/oauth/device" id="device-approve-form">
         <input type="hidden" name="user_code" value="{{.UserCode}}">
         <input type="hidden" name="action" value="approve">
@@ -50,4 +57,8 @@
     </form>
     {{end}}
 </div>
+{{if and .Found (not .Error)}}
+<script src="/static/webauthn.js?v={{assetVer}}"></script>
+<script src="/static/passkey-device.js?v={{assetVer}}"></script>
+{{end}}
 {{end}}

@@ -235,6 +235,10 @@ const { access_token, refresh_token } = await finishResp.json();
 
 For OAuth clients (SPAs, server-side apps, BFF), passkey login happens on the Identity server's login page — no client-side WebAuthn code needed. The OAuth authorize page includes a "Sign in with passkey" button automatically when the browser supports WebAuthn.
 
+### Device authorization flow (RFC 8628)
+
+The device verification page (`/oauth/device`, where the user enters the `user_code` shown on an IoT device, TV, or CLI) also offers a "Sign in with passkey" button when the browser supports WebAuthn. The user can approve the device with a biometric instead of typing a password. The ceremony uses the usernameless (discoverable credential) variant — the user is identified by the passkey itself, so no username field is needed. Approval is bridged into the device flow by `POST /oauth/device/passkey`, which accepts the access token from the passkey login plus the `user_code`. The device's polling loop is unaffected.
+
 ### Native apps (iOS / Android)
 
 Native apps using OAuth (`ASWebAuthenticationSession` on iOS, Chrome Custom Tabs on Android) get passkey support for free — the system browser handles the WebAuthn ceremony on the Identity server's login page.

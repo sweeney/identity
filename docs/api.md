@@ -538,6 +538,8 @@ Display `user_code` and `verification_uri` on the device screen (or print them t
 
 The user opens the URL in any browser, logs in, and clicks Approve. The device does not need to know when this happens — it finds out by polling.
 
+The verification page accepts either a username/password **or a passkey** — if the browser supports WebAuthn, a "Sign in with passkey" button appears above the password form. Because the page is typically opened on the user's phone or laptop (not the device itself), passkey approval works well here: the user touches their biometric instead of typing a password. The device side of the flow is unchanged — approval still happens entirely in the browser, and the device just keeps polling.
+
 #### Step 3 — Poll for tokens
 
 ```

@@ -277,6 +277,72 @@ func (h *oauthHandler) deviceVerifyPost(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// deviceVerifyPasskey approves a device using a WebAuthn (passkey) login instead
+// of a password. The passkey ceremony happens in JavaScript on the verification
+// page (POST /api/v1/webauthn/login/begin + /finish), yielding a user access
+// token; this handler parses that token and approves the device for that user.
+// It always responds with JSON — the caller is the passkey-device.js fetch().
+func (h *oauthHandler) deviceVerifyPasskey(w http.ResponseWriter, r *http.Request) {
+	errResp := func(status int, code, message string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": code, "message": message}) //nolint:errcheck
+	}
+
+	if h.deviceSvc == nil {
+		errResp(http.StatusServiceUnavailable, "not_configured", "Device authorization is not enabled.")
+		return
+	}
+
+	if !httputil.CheckOrigin(r) {
+		errResp(http.StatusForbidden, "origin_mismatch", "Origin mismatch.")
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		errResp(http.StatusBadRequest, "bad_request", "Could not parse form.")
+		return
+	}
+
+	accessToken := r.FormValue("access_token")
+	userCode := strings.TrimSpace(r.FormValue("user_code"))
+	if accessToken == "" || userCode == "" {
+		errResp(http.StatusBadRequest, "missing_parameters", "access_token and user_code are required.")
+		return
+	}
+
+	if h.tokenIssuer == nil {
+		errResp(http.StatusServiceUnavailable, "not_configured", "Passkey login is not configured.")
+		return
+	}
+
+	// Parse rejects service tokens (typ: at+jwt), so a client_credentials token
+	// cannot be presented here as a user identity.
+	claims, err := h.tokenIssuer.Parse(r.Context(), accessToken)
+	if err != nil {
+		errResp(http.StatusUnauthorized, "invalid_token", "Invalid or expired token.")
+		return
+	}
+
+	ip := httputil.ExtractClientIP(r, h.trustProxy)
+	if err := h.deviceSvc.Approve(userCode, claims.UserID, claims.Username, ip); err != nil {
+		switch {
+		case errors.Is(err, service.ErrDeviceCodeExpired):
+			errResp(http.StatusBadRequest, "expired_token", "That code has expired.")
+		case errors.Is(err, service.ErrInvalidUserCode):
+			errResp(http.StatusBadRequest, "invalid_user_code", "That code is not recognised.")
+		case errors.Is(err, service.ErrClaimCodeRevoked):
+			errResp(http.StatusBadRequest, "claim_code_revoked", "That claim code has been revoked.")
+		default:
+			errResp(http.StatusInternalServerError, "server_error", "Could not approve the request.")
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "approved"}) //nolint:errcheck
+}
+
 func (h *oauthHandler) renderDeviceFailure(w http.ResponseWriter, userCode, msg string) {
 	h.render(w, "device_verify.html", map[string]any{
 		"HideNav":  true,

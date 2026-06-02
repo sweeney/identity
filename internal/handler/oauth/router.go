@@ -37,6 +37,7 @@ func routes() []route {
 		{"POST", "/oauth/device/claim", true},
 		{"GET", "/oauth/device", true},
 		{"POST", "/oauth/device", true},
+		{"POST", "/oauth/device/passkey", false}, // HTML form XHR (passkey bridge)
 		{"GET", "/.well-known/oauth-authorization-server", true},
 	}
 }
@@ -108,6 +109,7 @@ func NewRouter(svc service.OAuthServicer, trustProxy string, tokenIssuer *auth.T
 		handlers["POST /oauth/device/claim"] = h.deviceClaim
 		handlers["GET /oauth/device"] = h.deviceVerifyGet
 		handlers["POST /oauth/device"] = h.deviceVerifyPost
+		handlers["POST /oauth/device/passkey"] = h.deviceVerifyPasskey
 	}
 
 	mux := http.NewServeMux()
