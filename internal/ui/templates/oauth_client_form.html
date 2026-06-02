@@ -31,7 +31,7 @@
         <legend>Grant Types</legend>
         <label class="checkbox-label">
             <input type="checkbox" name="grant_types" value="authorization_code" {{if .Client}}{{if .Client.HasGrantType "authorization_code"}}checked{{end}}{{else}}checked{{end}}>
-            Authorization Code (PKCE)
+            Authorisation Code (PKCE)
         </label>
         <label class="checkbox-label">
             <input type="checkbox" name="grant_types" value="client_credentials" {{if .Client}}{{if .Client.HasGrantType "client_credentials"}}checked{{end}}{{end}}>
@@ -39,7 +39,7 @@
         </label>
         <label class="checkbox-label">
             <input type="checkbox" name="grant_types" value="urn:ietf:params:oauth:grant-type:device_code" {{if .Client}}{{if .Client.HasGrantType "urn:ietf:params:oauth:grant-type:device_code"}}checked{{end}}{{end}}>
-            Device Authorization (RFC 8628 — headless/IoT devices)
+            Device Authorisation (RFC 8628 — headless/IoT devices)
         </label>
     </fieldset>
     <label>

@@ -487,7 +487,7 @@ func TestDeviceVerifyDone_ShowsApprovedConfirmation(t *testing.T) {
 	body := rr.Body.String()
 	assert.Contains(t, body, "Device approved")
 	assert.Contains(t, body, `href="/oauth/device"`)
-	assert.Contains(t, body, "Authorize another device")
+	assert.Contains(t, body, "Authorise another device")
 }
 
 // --- POST /oauth/device/passkey ---
