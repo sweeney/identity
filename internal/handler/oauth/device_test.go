@@ -484,7 +484,10 @@ func TestDeviceVerifyDone_ShowsApprovedConfirmation(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
-	assert.Contains(t, rr.Body.String(), "Device approved")
+	body := rr.Body.String()
+	assert.Contains(t, body, "Device approved")
+	assert.Contains(t, body, `href="/oauth/device"`)
+	assert.Contains(t, body, "Authorize another device")
 }
 
 // --- POST /oauth/device/passkey ---
