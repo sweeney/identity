@@ -66,10 +66,9 @@
           }
           return resp.json();
         }).then(function () {
-          var box = document.querySelector('.login-box');
-          box.innerHTML =
-            '<h1>Device approved</h1>' +
-            '<p>Your device is now signed in. You can close this page — it will connect automatically.</p>';
+          // Redirect to the canonical confirmation page rather than rebuilding
+          // it here — device_verify_done.html is the single source of truth.
+          window.location.href = '/oauth/device/done';
         });
       })
       .catch(function (err) {
