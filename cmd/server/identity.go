@@ -299,7 +299,10 @@ func runIdentityServer() error {
 
 	// Rate limiters
 	// Strict: 5 req/min (≈0.083/s) with burst of 5 for auth endpoints
-	// General: 30 req/min (0.5/s) with burst of 10 for all other endpoints
+	// General: 120 req/min (2/s) with burst of 30 for all other endpoints.
+	// Static assets and /health are exempt (see rateLimitExempt) so normal
+	// browsing — which fans out into many asset requests per page — does not
+	// exhaust a shared (e.g. home-NAT) per-IP bucket.
 	if cfg.RateLimitDisabled && cfg.IsProduction() {
 		log.Println("WARNING: RATE_LIMIT_DISABLED ignored in production")
 		cfg.RateLimitDisabled = false
@@ -307,7 +310,7 @@ func runIdentityServer() error {
 	var authRateLimiter, generalRateLimiter *ratelimit.Limiter
 	if !cfg.RateLimitDisabled {
 		authRateLimiter = ratelimit.NewLimiter(5.0/60.0, 5, cfg.TrustProxy)
-		generalRateLimiter = ratelimit.NewLimiter(30.0/60.0, 10, cfg.TrustProxy)
+		generalRateLimiter = ratelimit.NewLimiter(120.0/60.0, 30, cfg.TrustProxy)
 		log.Println("rate limiting enabled")
 	} else {
 		log.Println("rate limiting disabled (RATE_LIMIT_DISABLED)")
@@ -374,10 +377,19 @@ func runIdentityServer() error {
 	mux.HandleFunc("/openapi.yaml", specYAMLHandler)
 	mux.HandleFunc("/openapi.json", specJSONHandler)
 
-	// Build the handler chain: rate limit -> security headers -> mux
+	// Build the handler chain: rate limit -> security headers -> mux.
+	// Exempt paths skip the general limiter but still get security headers.
 	var handler http.Handler = securityHeaders(mux, cfg.CORSOrigins, cfg.Env == config.EnvDevelopment)
 	if generalRateLimiter != nil {
-		handler = generalRateLimiter.Middleware(handler)
+		secured := handler
+		limited := generalRateLimiter.Middleware(secured)
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if rateLimitExempt(r.URL.Path) {
+				secured.ServeHTTP(w, r)
+				return
+			}
+			limited.ServeHTTP(w, r)
+		})
 	}
 
 	srv := &http.Server{
@@ -409,6 +421,16 @@ func runIdentityServer() error {
 }
 
 // securityHeaders wraps a handler with standard security response headers.
+// rateLimitExempt reports whether a path bypasses the general rate limiter.
+// Static assets and the health check are cheap, unauthenticated, and not a
+// brute-force surface. They are excluded so that a single page load — which a
+// browser expands into many /static/ requests — does not drain the per-IP
+// bucket and 429 a subsequent real request. Credential and API paths are never
+// exempt; the strict auth limiter still guards login endpoints separately.
+func rateLimitExempt(path string) bool {
+	return path == "/health" || strings.HasPrefix(path, "/static/")
+}
+
 func securityHeaders(next http.Handler, allowedOrigins []string, devMode bool) http.Handler {
 	// Build origin lookup set once at startup.
 	allowed := make(map[string]bool, len(allowedOrigins))

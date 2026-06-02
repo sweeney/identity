@@ -140,7 +140,7 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `internal/service/user_service.go` | User CRUD business logic |
 | `internal/auth/jwt.go` | JWT mint/parse, supports previous-secret fallback |
 | `internal/auth/middleware.go` | `RequireAuth` and `RequireAdmin` middleware |
-| `internal/ratelimit/ratelimit.go` | Per-IP rate limiting middleware |
+| `common/ratelimit/ratelimit.go` | Per-IP rate limiting middleware |
 | `internal/httputil/clientip.go` | Shared client IP extraction with proxy trust |
 | `internal/store/token_store.go` | Token rotation with atomic TOCTOU-safe transaction |
 | `internal/store/audit_store.go` | Audit event recording (also emits to stdout) |

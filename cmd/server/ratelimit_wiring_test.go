@@ -66,6 +66,75 @@ func TestAdminReauthEndpoints_StrictRateLimiting(t *testing.T) {
 	}
 }
 
+// TestRateLimitExempt verifies which paths bypass the general rate limiter.
+// Static assets and the health check must be exempt; credential and API paths
+// must not be.
+func TestRateLimitExempt(t *testing.T) {
+	exempt := []string{
+		"/static/style.css",
+		"/static/passkey-device.js",
+		"/health",
+	}
+	for _, p := range exempt {
+		assert.Truef(t, rateLimitExempt(p), "%q should be exempt from the general limiter", p)
+	}
+
+	notExempt := []string{
+		"/api/v1/auth/login",
+		"/oauth/token",
+		"/admin/",
+		"/",
+		"/static",   // no trailing slash — not the asset tree
+		"/healthz",  // not the health endpoint
+	}
+	for _, p := range notExempt {
+		assert.Falsef(t, rateLimitExempt(p), "%q should be rate-limited", p)
+	}
+}
+
+// TestGeneralRateLimiter_ExemptsStaticAndHealth mirrors the run() wiring: the
+// general limiter wraps everything except the exempt paths, so a single IP can
+// fetch many static assets (as a browser does per page load) without tripping
+// the limit, while a normal endpoint is still limited after its burst.
+func TestGeneralRateLimiter_ExemptsStaticAndHealth(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	// Burst of 1 so the second non-exempt request from the same IP is rejected.
+	rl := ratelimit.NewLimiter(5.0/60.0, 1, "")
+	limited := rl.Middleware(inner)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rateLimitExempt(r.URL.Path) {
+			inner.ServeHTTP(w, r)
+			return
+		}
+		limited.ServeHTTP(w, r)
+	})
+
+	// Exempt paths never get a 429, even after many requests from one IP.
+	for _, path := range []string{"/static/style.css", "/static/forms.js", "/health"} {
+		for i := 0; i < 5; i++ {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			require.Equalf(t, http.StatusOK, rr.Code,
+				"%s request %d must not be rate-limited", path, i)
+		}
+	}
+
+	// Control: a non-exempt path passes once, then is limited.
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	rr1 := httptest.NewRecorder()
+	handler.ServeHTTP(rr1, req1)
+	require.Equal(t, http.StatusOK, rr1.Code, "first request must pass")
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	rr2 := httptest.NewRecorder()
+	handler.ServeHTTP(rr2, req2)
+	assert.Equal(t, http.StatusTooManyRequests, rr2.Code,
+		"second non-exempt request must be rate-limited")
+}
+
 // routeToPath converts a route pattern like "POST /admin/users/{id}/edit"
 // into a concrete request path by replacing {id} with a real value.
 func routeToPath(route string) string {
