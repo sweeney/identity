@@ -421,6 +421,31 @@ func TestPasskeyPrompt_CustomSchemeSkipURL(t *testing.T) {
 	assert.NotContains(t, body, "#ZgotmplZ", "html/template must not sanitize the trusted URL")
 }
 
+// TestPasskeyPromptRegisterFinish_ReadsChallengeFromHeader verifies the finish
+// handler accepts the challenge ID via the X-Challenge-ID header (and name via
+// X-Passkey-Name) — which is how passkey-prompt.js sends them — not only as
+// query params. Mirrors the admin and API finish handlers (headerOrQuery).
+func TestPasskeyPromptRegisterFinish_ReadsChallengeFromHeader(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	webauthnSvc := mocks.NewMockWebAuthnServicer(ctrl)
+	webauthnSvc.EXPECT().
+		FinishRegistration("user-1", "ch-from-header", "MyKey", gomock.Any()).
+		Return(&domain.WebAuthnCredential{ID: "cred-1"}, nil)
+
+	h := oauth.NewRouter(svc, "", nil, nil, webauthnSvc, nil, oauthTestSessionKey, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/oauth/passkey-prompt/register/finish", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Challenge-ID", "ch-from-header")
+	req.Header.Set("X-Passkey-Name", "MyKey")
+	req.AddCookie(mintPromptCookie(t, "user-1"))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusCreated, rr.Code)
+}
+
 // TestPasskeyPrompt_NoSession_Redirects verifies that hitting the prompt page
 // without a valid session cookie redirects rather than rendering.
 func TestPasskeyPrompt_NoSession_Redirects(t *testing.T) {

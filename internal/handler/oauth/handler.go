@@ -653,6 +653,17 @@ func (h *oauthHandler) clearPromptSession(w http.ResponseWriter) {
 	})
 }
 
+// headerOrQuery returns the named request header if set, else the named query
+// parameter. Mirrors the helpers in the admin and api handler packages so the
+// passkey prompt accepts the X-Challenge-ID / X-Passkey-Name headers sent by
+// passkey-prompt.js.
+func headerOrQuery(r *http.Request, header, query string) string {
+	if v := r.Header.Get(header); v != "" {
+		return v
+	}
+	return r.URL.Query().Get(query)
+}
+
 // passkeyPrompt renders the passkey registration prompt page during OAuth flow.
 func (h *oauthHandler) passkeyPrompt(w http.ResponseWriter, r *http.Request) {
 	userID := h.promptUserID(r)
@@ -697,8 +708,10 @@ func (h *oauthHandler) passkeyPromptRegisterFinish(w http.ResponseWriter, r *htt
 		return
 	}
 
-	challengeID := r.URL.Query().Get("challenge_id")
-	name := r.URL.Query().Get("name")
+	// passkey-prompt.js sends these as headers (X-Challenge-ID / X-Passkey-Name),
+	// matching the admin and API finish handlers; accept the query form too.
+	challengeID := headerOrQuery(r, "X-Challenge-ID", "challenge_id")
+	name := headerOrQuery(r, "X-Passkey-Name", "name")
 	if challengeID == "" {
 		http.Error(w, "challenge_id required", http.StatusBadRequest)
 		return
