@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sweeney/identity/common/backup"
+	"github.com/sweeney/identity/common/httputil"
 	"github.com/sweeney/identity/common/ratelimit"
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/config"
@@ -311,17 +312,36 @@ func runIdentityServer() error {
 	if !cfg.RateLimitDisabled {
 		authRateLimiter = ratelimit.NewLimiter(5.0/60.0, 5, cfg.TrustProxy)
 		generalRateLimiter = ratelimit.NewLimiter(120.0/60.0, 30, cfg.TrustProxy)
-		log.Println("rate limiting enabled")
+		if len(cfg.RateLimitAllowlist) > 0 {
+			log.Printf("rate limiting enabled (%d allowlisted IP/CIDR entries)", len(cfg.RateLimitAllowlist))
+		} else {
+			log.Println("rate limiting enabled")
+		}
 	} else {
 		log.Println("rate limiting disabled (RATE_LIMIT_DISABLED)")
 	}
 
-	// wrapAuth applies the strict rate limiter to a handler if rate limiting is enabled.
+	// rateLimitAllowed reports whether a request comes from an allowlisted IP and
+	// should bypass rate limiting entirely. Uses the same IP extraction as the
+	// limiter so an allowlisted address matches the key the limiter would key on.
+	rateLimitAllowed := func(r *http.Request) bool {
+		return config.IPAllowed(cfg.RateLimitAllowlist, httputil.ExtractClientIP(r, cfg.TrustProxy))
+	}
+
+	// wrapAuth applies the strict rate limiter to a handler if rate limiting is
+	// enabled, bypassing it for allowlisted IPs.
 	wrapAuth := func(h http.Handler) http.Handler {
-		if authRateLimiter != nil {
-			return authRateLimiter.Middleware(h)
+		if authRateLimiter == nil {
+			return h
 		}
-		return h
+		limited := authRateLimiter.Middleware(h)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if rateLimitAllowed(r) {
+				h.ServeHTTP(w, r)
+				return
+			}
+			limited.ServeHTTP(w, r)
+		})
 	}
 
 	// HTTP mux
@@ -384,7 +404,7 @@ func runIdentityServer() error {
 		secured := handler
 		limited := generalRateLimiter.Middleware(secured)
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if rateLimitExempt(r.URL.Path) {
+			if rateLimitExempt(r.URL.Path) || rateLimitAllowed(r) {
 				secured.ServeHTTP(w, r)
 				return
 			}

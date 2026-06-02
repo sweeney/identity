@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -54,6 +55,9 @@ type Config struct {
 
 	// Rate limiting
 	RateLimitDisabled bool
+
+	// RateLimitAllowlist: IPs/CIDRs that bypass rate limiting entirely
+	RateLimitAllowlist []*net.IPNet
 
 	// WebAuthn / Passkeys
 	WebAuthnRPID          string   // Relying Party ID (domain, e.g. "example.com")
@@ -155,6 +159,15 @@ func Load() (*Config, error) {
 		cfg.RateLimitDisabled = true
 	}
 
+	// RATE_LIMIT_ALLOWLIST: comma-separated IPs/CIDRs exempt from rate limiting
+	if v := os.Getenv("RATE_LIMIT_ALLOWLIST"); v != "" {
+		nets, err := parseIPAllowlist(v)
+		if err != nil {
+			return nil, fmt.Errorf("RATE_LIMIT_ALLOWLIST: %w", err)
+		}
+		cfg.RateLimitAllowlist = nets
+	}
+
 	// WebAuthn: auto-configure from environment or derive from IDENTITY_ENV
 	cfg.WebAuthnRPID = os.Getenv("WEBAUTHN_RP_ID")
 	cfg.WebAuthnRPDisplayName = os.Getenv("WEBAUTHN_RP_DISPLAY_NAME")
@@ -245,4 +258,54 @@ func (c *Config) R2Configured() bool {
 		c.R2AccessKeyID != "" &&
 		c.R2SecretAccessKey != "" &&
 		c.R2BucketName != ""
+}
+
+// parseIPAllowlist parses a comma-separated list of IPs and CIDRs into networks.
+// Bare IPs become /32 (IPv4) or /128 (IPv6) networks. Empty entries are skipped;
+// any malformed entry is an error so a typo fails fast rather than silently
+// leaving the IP rate-limited.
+func parseIPAllowlist(v string) ([]*net.IPNet, error) {
+	var nets []*net.IPNet
+	for _, entry := range strings.Split(v, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			_, ipnet, err := net.ParseCIDR(entry)
+			if err != nil {
+				return nil, fmt.Errorf("invalid CIDR %q: %w", entry, err)
+			}
+			nets = append(nets, ipnet)
+			continue
+		}
+		ip := net.ParseIP(entry)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid IP %q", entry)
+		}
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
+	return nets, nil
+}
+
+// IPAllowed reports whether ipStr falls within any network in the allowlist.
+// Returns false for an empty allowlist or an unparseable address.
+func IPAllowed(allowlist []*net.IPNet, ipStr string) bool {
+	if len(allowlist) == 0 {
+		return false
+	}
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	for _, n := range allowlist {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

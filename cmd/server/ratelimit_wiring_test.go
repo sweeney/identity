@@ -7,6 +7,7 @@ package main
 // A test here catches any route accidentally removed from wrapAuth in main.go.
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,7 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sweeney/identity/common/httputil"
 	"github.com/sweeney/identity/common/ratelimit"
+	"github.com/sweeney/identity/internal/config"
 )
 
 // TestAdminReauthEndpoints_StrictRateLimiting constructs a mux that mirrors the
@@ -84,8 +87,8 @@ func TestRateLimitExempt(t *testing.T) {
 		"/oauth/token",
 		"/admin/",
 		"/",
-		"/static",   // no trailing slash — not the asset tree
-		"/healthz",  // not the health endpoint
+		"/static",  // no trailing slash — not the asset tree
+		"/healthz", // not the health endpoint
 	}
 	for _, p := range notExempt {
 		assert.Falsef(t, rateLimitExempt(p), "%q should be rate-limited", p)
@@ -133,6 +136,65 @@ func TestGeneralRateLimiter_ExemptsStaticAndHealth(t *testing.T) {
 	handler.ServeHTTP(rr2, req2)
 	assert.Equal(t, http.StatusTooManyRequests, rr2.Code,
 		"second non-exempt request must be rate-limited")
+}
+
+// TestRateLimiter_AllowlistBypass mirrors the run() wiring: an allowlisted IP
+// bypasses the limiter entirely (no 429 even past the burst), while a
+// non-allowlisted IP is still limited. Uses the same config.IPAllowed +
+// httputil.ExtractClientIP path as the real wiring.
+func TestRateLimiter_AllowlistBypass(t *testing.T) {
+	allowlist, err := loadAllowlist(t, "203.0.113.7")
+	require.NoError(t, err)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	rl := ratelimit.NewLimiter(5.0/60.0, 1, "") // burst 1
+	limited := rl.Middleware(inner)
+	allowed := func(r *http.Request) bool {
+		return config.IPAllowed(allowlist, httputil.ExtractClientIP(r, ""))
+	}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if allowed(r) {
+			inner.ServeHTTP(w, r)
+			return
+		}
+		limited.ServeHTTP(w, r)
+	})
+
+	// Allowlisted IP: never limited, even well past the burst.
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+		req.RemoteAddr = "203.0.113.7:5000"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		require.Equalf(t, http.StatusOK, rr.Code, "allowlisted request %d must not be limited", i)
+	}
+
+	// Non-allowlisted IP: passes once, then limited.
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	req1.RemoteAddr = "198.51.100.9:5000"
+	rr1 := httptest.NewRecorder()
+	handler.ServeHTTP(rr1, req1)
+	require.Equal(t, http.StatusOK, rr1.Code)
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	req2.RemoteAddr = "198.51.100.9:5000"
+	rr2 := httptest.NewRecorder()
+	handler.ServeHTTP(rr2, req2)
+	assert.Equal(t, http.StatusTooManyRequests, rr2.Code, "non-allowlisted IP must still be limited")
+}
+
+// loadAllowlist parses an allowlist via config.Load using the env var, matching
+// production parsing exactly.
+func loadAllowlist(t *testing.T, v string) ([]*net.IPNet, error) {
+	t.Helper()
+	t.Setenv("RATE_LIMIT_ALLOWLIST", v)
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	return cfg.RateLimitAllowlist, nil
 }
 
 // routeToPath converts a route pattern like "POST /admin/users/{id}/edit"

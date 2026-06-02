@@ -231,3 +231,29 @@ func TestLoad_BackupHour_InvalidValue(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_RateLimitAllowlist(t *testing.T) {
+	t.Setenv("RATE_LIMIT_ALLOWLIST", "1.2.3.4, 10.0.0.0/8, 2001:db8::/32")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Len(t, cfg.RateLimitAllowlist, 3)
+
+	assert.True(t, config.IPAllowed(cfg.RateLimitAllowlist, "1.2.3.4"), "exact IPv4")
+	assert.True(t, config.IPAllowed(cfg.RateLimitAllowlist, "10.255.1.1"), "inside IPv4 CIDR")
+	assert.True(t, config.IPAllowed(cfg.RateLimitAllowlist, "2001:db8::1"), "inside IPv6 CIDR")
+	assert.False(t, config.IPAllowed(cfg.RateLimitAllowlist, "1.2.3.5"), "different IPv4")
+	assert.False(t, config.IPAllowed(cfg.RateLimitAllowlist, "8.8.8.8"), "outside any range")
+}
+
+func TestLoad_RateLimitAllowlist_Invalid(t *testing.T) {
+	t.Setenv("RATE_LIMIT_ALLOWLIST", "1.2.3.4, not-an-ip")
+
+	_, err := config.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "RATE_LIMIT_ALLOWLIST")
+}
+
+func TestIPAllowed_EmptyList(t *testing.T) {
+	assert.False(t, config.IPAllowed(nil, "1.2.3.4"))
+}
