@@ -271,6 +271,32 @@ func (h *oauthHandler) deviceVerifyPost(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// If the user has no passkeys and the browser supports WebAuthn, offer to
+	// register one before showing the confirmation — mirrors the OAuth login
+	// flow. The prompt's "Not now" link and post-registration redirect both
+	// land on GET /oauth/device/done. Reuses the shared /oauth/passkey-prompt
+	// register endpoints (OAuthFlow: true) via the prompt session cookie.
+	if r.FormValue("webauthn_supported") == "1" && h.shouldPromptPasskey(userID) {
+		h.setPromptSession(w, userID)
+		h.render(w, "passkey_prompt.html", map[string]any{
+			"HideNav":   true,
+			"SkipURL":   "/oauth/device/done",
+			"OAuthFlow": true,
+		})
+		return
+	}
+
+	h.render(w, "device_verify_done.html", map[string]any{
+		"HideNav":  true,
+		"Approved": true,
+	})
+}
+
+// deviceVerifyDone renders the device-approved confirmation. It is the
+// continue/skip target of the post-approval passkey registration prompt, so
+// the page shown after registering (or declining) a passkey matches the page
+// shown when no prompt is offered.
+func (h *oauthHandler) deviceVerifyDone(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "device_verify_done.html", map[string]any{
 		"HideNav":  true,
 		"Approved": true,

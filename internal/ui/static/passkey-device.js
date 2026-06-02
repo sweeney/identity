@@ -6,6 +6,18 @@
   var btn = document.getElementById('passkey-btn');
   if (!btn || !window.PublicKeyCredential) return;
 
+  // Tell the server the browser supports WebAuthn so it can offer to register a
+  // passkey after a password approval (mirrors passkey-login.js on the login
+  // pages). The flag rides on the username/password approve form.
+  var approveForm = document.getElementById('device-approve-form');
+  if (approveForm && !approveForm.querySelector('input[name="webauthn_supported"]')) {
+    var flag = document.createElement('input');
+    flag.type = 'hidden';
+    flag.name = 'webauthn_supported';
+    flag.value = '1';
+    approveForm.appendChild(flag);
+  }
+
   // Reveal the passkey UI now that we know the browser supports it.
   var divider = document.getElementById('passkey-divider');
   if (divider) divider.classList.remove('passkey-hidden');

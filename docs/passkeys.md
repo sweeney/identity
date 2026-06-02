@@ -239,6 +239,8 @@ For OAuth clients (SPAs, server-side apps, BFF), passkey login happens on the Id
 
 The device verification page (`/oauth/device`, where the user enters the `user_code` shown on an IoT device, TV, or CLI) also offers a "Sign in with passkey" button when the browser supports WebAuthn. The user can approve the device with a biometric instead of typing a password. The ceremony uses the usernameless (discoverable credential) variant — the user is identified by the passkey itself, so no username field is needed. Approval is bridged into the device flow by `POST /oauth/device/passkey`, which accepts the access token from the passkey login plus the `user_code`. The device's polling loop is unaffected.
 
+If a user instead approves with username/password and has no passkey yet (and the browser supports WebAuthn), the device page shows a "Sign in faster next time" registration prompt after approval — the same prompt offered after a password login on the admin and OAuth authorize pages. Registering uses the shared `/oauth/passkey-prompt/register/begin` + `/finish` endpoints; declining ("Not now") or finishing registration both land on `GET /oauth/device/done`, the device-approved confirmation. The device has already been approved at this point, so the prompt never blocks the flow.
+
 ### Native apps (iOS / Android)
 
 Native apps using OAuth (`ASWebAuthenticationSession` on iOS, Chrome Custom Tabs on Android) get passkey support for free — the system browser handles the WebAuthn ceremony on the Identity server's login page.

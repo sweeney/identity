@@ -389,6 +389,104 @@ func TestDeviceVerifyPost_Deny(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "Device denied")
 }
 
+// --- Post-approval passkey registration prompt ---
+//
+// After a password approval, if the user has no passkeys and the browser
+// supports WebAuthn, the device page offers to register one (mirrors the OAuth
+// login flow). The continue/skip target is GET /oauth/device/done.
+
+// newDeviceRouterWithPasskey builds a device-flow router with a WebAuthn service
+// and a non-empty session key, so the post-approval passkey prompt is active.
+func newDeviceRouterWithPasskey(svc service.OAuthServicer, deviceSvc service.DeviceFlowServicer, authSvc service.AuthServicer, webauthnSvc service.WebAuthnServicer) http.Handler {
+	return oauth.NewRouter(svc, "", nil, authSvc, webauthnSvc, deviceSvc, "test-session-key", "Test")
+}
+
+func TestDeviceVerifyPost_ApprovePromptsForPasskeyWhenNone(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+	webauthnSvc := mocks.NewMockWebAuthnServicer(ctrl)
+
+	authSvc.EXPECT().AuthorizeUser("alice", "password", gomock.Any()).Return("user-alice", nil)
+	deviceSvc.EXPECT().Approve("ABCD-1234", "user-alice", "alice", gomock.Any()).Return(nil)
+	webauthnSvc.EXPECT().ListCredentials("user-alice").Return([]*domain.WebAuthnCredential{}, nil)
+
+	h := newDeviceRouterWithPasskey(svc, deviceSvc, authSvc, webauthnSvc)
+	rr := postForm(t, h, "/oauth/device", url.Values{
+		"user_code":          {"ABCD-1234"},
+		"username":           {"alice"},
+		"password":           {"password"},
+		"action":             {"approve"},
+		"webauthn_supported": {"1"},
+	})
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Sign in faster next time")
+	assert.Contains(t, rr.Body.String(), "/oauth/device/done")
+	assert.NotContains(t, rr.Body.String(), "Device approved")
+}
+
+func TestDeviceVerifyPost_ApproveNoPromptWhenHasPasskey(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+	webauthnSvc := mocks.NewMockWebAuthnServicer(ctrl)
+
+	authSvc.EXPECT().AuthorizeUser("alice", "password", gomock.Any()).Return("user-alice", nil)
+	deviceSvc.EXPECT().Approve("ABCD-1234", "user-alice", "alice", gomock.Any()).Return(nil)
+	webauthnSvc.EXPECT().ListCredentials("user-alice").Return([]*domain.WebAuthnCredential{{ID: "cred-1"}}, nil)
+
+	h := newDeviceRouterWithPasskey(svc, deviceSvc, authSvc, webauthnSvc)
+	rr := postForm(t, h, "/oauth/device", url.Values{
+		"user_code":          {"ABCD-1234"},
+		"username":           {"alice"},
+		"password":           {"password"},
+		"action":             {"approve"},
+		"webauthn_supported": {"1"},
+	})
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Device approved")
+	assert.NotContains(t, rr.Body.String(), "Sign in faster next time")
+}
+
+func TestDeviceVerifyPost_ApproveNoPromptWithoutWebauthnSupport(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+	webauthnSvc := mocks.NewMockWebAuthnServicer(ctrl)
+
+	authSvc.EXPECT().AuthorizeUser("alice", "password", gomock.Any()).Return("user-alice", nil)
+	deviceSvc.EXPECT().Approve("ABCD-1234", "user-alice", "alice", gomock.Any()).Return(nil)
+	// No webauthn_supported flag → the prompt check short-circuits before any
+	// credential lookup, so ListCredentials must not be called.
+
+	h := newDeviceRouterWithPasskey(svc, deviceSvc, authSvc, webauthnSvc)
+	rr := postForm(t, h, "/oauth/device", url.Values{
+		"user_code": {"ABCD-1234"},
+		"username":  {"alice"},
+		"password":  {"password"},
+		"action":    {"approve"},
+	})
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Device approved")
+}
+
+func TestDeviceVerifyDone_ShowsApprovedConfirmation(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+
+	h := newDeviceRouter(svc, deviceSvc, authSvc)
+	req := httptest.NewRequest(http.MethodGet, "/oauth/device/done", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Device approved")
+}
+
 // --- POST /oauth/device/passkey ---
 //
 // Bridges a WebAuthn (passkey) login ceremony into device approval: the browser

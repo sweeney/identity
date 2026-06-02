@@ -540,6 +540,8 @@ The user opens the URL in any browser, logs in, and clicks Approve. The device d
 
 The verification page accepts either a username/password **or a passkey** — if the browser supports WebAuthn, a "Sign in with passkey" button appears above the password form. Because the page is typically opened on the user's phone or laptop (not the device itself), passkey approval works well here: the user touches their biometric instead of typing a password. The device side of the flow is unchanged — approval still happens entirely in the browser, and the device just keeps polling.
 
+If the user approves with a password and has no passkey yet, the page then offers to register one ("Sign in faster next time") before showing the confirmation — the same prompt used after a password login elsewhere. It's optional and never blocks the device, which is already approved by that point.
+
 #### Step 3 — Poll for tokens
 
 ```

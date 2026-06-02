@@ -37,6 +37,7 @@ func routes() []route {
 		{"POST", "/oauth/device/claim", true},
 		{"GET", "/oauth/device", true},
 		{"POST", "/oauth/device", true},
+		{"GET", "/oauth/device/done", false},     // HTML page (post-approval prompt target)
 		{"POST", "/oauth/device/passkey", false}, // HTML form XHR (passkey bridge)
 		{"GET", "/.well-known/oauth-authorization-server", true},
 	}
@@ -109,6 +110,7 @@ func NewRouter(svc service.OAuthServicer, trustProxy string, tokenIssuer *auth.T
 		handlers["POST /oauth/device/claim"] = h.deviceClaim
 		handlers["GET /oauth/device"] = h.deviceVerifyGet
 		handlers["POST /oauth/device"] = h.deviceVerifyPost
+		handlers["GET /oauth/device/done"] = h.deviceVerifyDone
 		handlers["POST /oauth/device/passkey"] = h.deviceVerifyPasskey
 	}
 
