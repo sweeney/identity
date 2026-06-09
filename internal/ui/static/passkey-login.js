@@ -60,17 +60,25 @@
             window.location.href = data.redirect_uri;
           });
         } else {
-          // Admin flow — post access_token, follow redirect
+          // Admin flow — post access_token, then follow the redirect on success
           var body = new URLSearchParams({ access_token: tokens.access_token });
 
-          fetch('/admin/login/passkey', {
+          return fetch('/admin/login/passkey', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Accept': 'application/json',
+            },
             body: body,
             redirect: 'follow',
             credentials: 'same-origin',
           }).then(function (resp) {
-            // The server sets the session cookie and redirects to /admin/
+            if (!resp.ok) {
+              return resp.json().catch(function () { return {}; }).then(function (err) {
+                throw new Error(err.message || 'Login failed');
+              });
+            }
+            // The server set the session cookie; go to the dashboard.
             window.location.href = '/admin/';
           });
         }

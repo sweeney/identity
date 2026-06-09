@@ -204,6 +204,14 @@ func (h *adminHandler) render(w http.ResponseWriter, r *http.Request, page strin
 	}
 }
 
+// writeJSONError writes a JSON error body for fetch-driven admin endpoints. The
+// shape mirrors the API error envelope so client JS can read `message`.
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"message": message}) //nolint:errcheck
+}
+
 // --- Login / Logout ---
 
 func (h *adminHandler) loginGet(w http.ResponseWriter, r *http.Request) {
@@ -261,27 +269,26 @@ func (h *adminHandler) loginPost(w http.ResponseWriter, r *http.Request) {
 }
 
 // loginPasskey accepts an access_token (from a WebAuthn login) and creates an admin session.
+//
+// It is called by passkey-login.js via fetch(), so failures return a JSON error
+// body with a non-2xx status — the page JS surfaces the message. Rendering an
+// HTML login page here would be invisible to the caller, leaving the user with
+// no feedback (the JS would just navigate to /admin/ and bounce back to login).
 func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
 	if !httputil.CheckOrigin(r) {
-		http.Error(w, "forbidden: origin mismatch", http.StatusForbidden)
+		writeJSONError(w, http.StatusForbidden, "Origin mismatch")
 		return
 	}
 
 	accessToken := r.FormValue("access_token")
 	if accessToken == "" {
-		h.render(w, r, "login.html", map[string]any{
-			"HideNav": true,
-			"Error":   "Passkey authentication failed",
-		})
+		writeJSONError(w, http.StatusBadRequest, "Passkey authentication failed")
 		return
 	}
 
 	claims, err := h.tokenIssuer.Parse(r.Context(), accessToken)
 	if err != nil {
-		h.render(w, r, "login.html", map[string]any{
-			"HideNav": true,
-			"Error":   "Invalid token",
-		})
+		writeJSONError(w, http.StatusUnauthorized, "Invalid token")
 		return
 	}
 
@@ -289,10 +296,7 @@ func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
 	if err != nil || user.Role != domain.RoleAdmin {
 		ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
 		h.recordAuditWithDetail(domain.EventLoginFailure, claims.UserID, claims.Username, ip, "passkey: insufficient role")
-		h.render(w, r, "login.html", map[string]any{
-			"HideNav": true,
-			"Error":   "Admin access required",
-		})
+		writeJSONError(w, http.StatusForbidden, "Admin access required")
 		return
 	}
 

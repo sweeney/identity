@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/internal/handler/admin"
 	"github.com/sweeney/identity/internal/mocks"
@@ -343,6 +345,85 @@ func TestAdminLogout(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusSeeOther, rr.Code)
+}
+
+// TestAdminLogin_InsufficientRole verifies that a non-admin user logging in
+// with a correct password is shown an error on the re-rendered login page and
+// is not granted a session.
+func TestAdminLogin_InsufficientRole(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+	oauthClients := mocks.NewMockOAuthClientRepository(ctrl)
+	auditRepo := mocks.NewMockAuditRepository(ctrl)
+	auditRepo.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
+
+	authSvc.EXPECT().AuthorizeUser("alice", "alicepassword1", gomock.Any()).Return("u1", nil).AnyTimes()
+	userSvc.EXPECT().GetByID("u1").Return(&domain.User{
+		ID: "u1", Username: "alice", Role: domain.RoleUser, IsActive: true,
+	}, nil).AnyTimes()
+
+	handler := admin.NewRouter(admin.Config{SessionSecret: testSessionSecret},
+		authSvc, userSvc, oauthClients, auditRepo, nil, nil, nil, nil)
+
+	form := url.Values{"username": {"alice"}, "password": {"alicepassword1"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Admin access required")
+	for _, c := range rr.Result().Cookies() {
+		assert.NotEqual(t, "admin_session", c.Name)
+	}
+}
+
+// TestAdminLoginPasskey_InsufficientRole verifies that a non-admin user who
+// authenticates via passkey is rejected with a non-2xx status and a
+// machine-readable JSON error, so the login page JS can surface it instead of
+// blindly redirecting to /admin/ (which would bounce back to a blank login).
+func TestAdminLoginPasskey_InsufficientRole(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+	oauthClients := mocks.NewMockOAuthClientRepository(ctrl)
+	auditRepo := mocks.NewMockAuditRepository(ctrl)
+	auditRepo.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
+
+	userSvc.EXPECT().GetByID("u1").Return(&domain.User{
+		ID: "u1", Username: "alice", Role: domain.RoleUser, IsActive: true,
+	}, nil).AnyTimes()
+
+	key, err := auth.GenerateKey()
+	require.NoError(t, err)
+	issuer, err := auth.NewTokenIssuer(key, nil, "identity.home", 15*time.Minute)
+	require.NoError(t, err)
+	token, err := issuer.Mint(domain.TokenClaims{
+		UserID: "u1", Username: "alice", Role: domain.RoleUser, IsActive: true,
+	})
+	require.NoError(t, err)
+
+	handler := admin.NewRouter(admin.Config{SessionSecret: testSessionSecret},
+		authSvc, userSvc, oauthClients, auditRepo, nil, issuer, nil, nil)
+
+	form := url.Values{"access_token": {token}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/login/passkey", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Contains(t, body["message"], "Admin access required")
+
+	// No session should be established for a rejected login.
+	for _, c := range rr.Result().Cookies() {
+		assert.NotEqual(t, "admin_session", c.Name)
+	}
 }
 
 // --- Admin Session Validation ---
