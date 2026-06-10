@@ -99,6 +99,8 @@ func (h *oauthHandler) authorizeGet(w http.ResponseWriter, r *http.Request) {
 			h.renderError(w, "Unknown Client", "The client_id is not registered.")
 		case errors.Is(err, service.ErrInvalidRedirectURI):
 			h.renderError(w, "Invalid Redirect URI", "The redirect_uri is not registered for this client.")
+		case errors.Is(err, service.ErrUnauthorizedClient):
+			h.renderError(w, "Unauthorized Client", "This client is not authorized for the authorization_code flow.")
 		default:
 			h.renderError(w, "Error", "An unexpected error occurred.")
 		}
@@ -324,9 +326,26 @@ func (h *oauthHandler) tokenAuthCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Confidential-client authentication (RFC 6749 §4.1.3 / §3.2.1): if the client
+	// has a registered secret, it MUST authenticate at the token endpoint. Public
+	// clients (no secret) continue with PKCE alone. The grant-type gate itself lives
+	// in ExchangeCode.
+	if client, err := h.svc.GetClient(clientID); err == nil && client.SecretHash != "" {
+		creds, ok := extractClientCredentials(r)
+		if !ok || creds.ClientID != clientID || !verifyClientSecret(client, creds.ClientSecret) {
+			w.Header().Set("WWW-Authenticate", "Basic")
+			oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Client authentication failed.")
+			return
+		}
+	}
+
 	result, err := h.svc.ExchangeCode(clientID, code, redirectURI, codeVerifier)
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrUnknownClient):
+			oauthError(w, "invalid_client", "Unknown client.")
+		case errors.Is(err, service.ErrUnauthorizedClient):
+			oauthError(w, "unauthorized_client", "This client is not authorized for the authorization_code grant.")
 		case errors.Is(err, service.ErrInvalidAuthCode),
 			errors.Is(err, service.ErrAuthCodeAlreadyUsed),
 			errors.Is(err, service.ErrAuthCodeExpired):

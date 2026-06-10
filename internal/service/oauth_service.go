@@ -82,6 +82,12 @@ func (s *OAuthService) ValidateAuthorizeRequest(clientID, redirectURI string) (*
 		return nil, ErrInvalidRedirectURI
 	}
 
+	// A client must be registered for the authorization_code grant to drive the
+	// interactive /oauth/authorize flow (RFC 6749 §3.2.1, grant-type confusion).
+	if !client.HasGrantType(domain.GrantTypeAuthorizationCode) {
+		return nil, ErrUnauthorizedClient
+	}
+
 	return client, nil
 }
 
@@ -166,7 +172,23 @@ func (s *OAuthService) AuthorizeByUserID(clientID, redirectURI, userID, username
 }
 
 // ExchangeCode validates the authorization code and PKCE, then issues tokens.
+//
+// The client is resolved up front so the authorization_code grant type can be
+// enforced (RFC 6749 §3.2.1): a client registered for only client_credentials
+// or the device flow must not be able to exchange a code for a user token
+// (grant-type confusion).
 func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier string) (*LoginResult, error) {
+	client, err := s.clients.GetByID(clientID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil, ErrUnknownClient
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get client: %w", err)
+	}
+	if !client.HasGrantType(domain.GrantTypeAuthorizationCode) {
+		return nil, ErrUnauthorizedClient
+	}
+
 	codeHash := HashToken(rawCode)
 	code, err := s.codes.GetByHash(codeHash)
 	if errors.Is(err, domain.ErrNotFound) {
@@ -200,12 +222,7 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 		return nil, fmt.Errorf("mark code used: %w", err)
 	}
 
-	var audience string
-	if client, err := s.clients.GetByID(clientID); err == nil {
-		audience = client.Audience
-	}
-
-	return s.auth.IssueTokensForUser(code.UserID, audience)
+	return s.auth.IssueTokensForUser(code.UserID, client.Audience)
 }
 
 // RefreshToken delegates to the underlying auth service refresh.
@@ -218,7 +235,7 @@ const serviceTokenTTL = 15 * time.Minute
 // IssueClientCredentials issues an access token for the client_credentials grant.
 // requestedScope may be empty (defaults to all client scopes).
 func (s *OAuthService) IssueClientCredentials(client *domain.OAuthClient, requestedScope, ip string) (*ClientCredentialsResult, error) {
-	if !client.HasGrantType("client_credentials") {
+	if !client.HasGrantType(domain.GrantTypeClientCredentials) {
 		return nil, ErrUnauthorizedClient
 	}
 

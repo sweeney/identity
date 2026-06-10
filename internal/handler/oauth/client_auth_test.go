@@ -485,3 +485,140 @@ func TestIntrospect_ServiceToken_IncludesAudClaim(t *testing.T) {
 	assert.Equal(t, true, body["active"])
 	assert.Equal(t, "https://api.example.com", body["aud"], "introspect response must include aud claim matching the token's audience")
 }
+
+// --- authorization_code: confidential-client authentication (RFC 6749 §4.1.3) ---
+
+func authCodeForm(extra url.Values) url.Values {
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {"conf-client"},
+		"code":          {"code-abc"},
+		"redirect_uri":  {"https://app.example.com/callback"},
+		"code_verifier": {"verifier-xyz"},
+	}
+	for k, v := range extra {
+		form[k] = v
+	}
+	return form
+}
+
+func confidentialAuthCodeClient() *domain.OAuthClient {
+	return &domain.OAuthClient{
+		ID:                      "conf-client",
+		SecretHash:              mustHash("s3cret"),
+		GrantTypes:              []string{"authorization_code"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+	}
+}
+
+// A confidential auth-code client (one with a registered secret) must present a
+// valid client secret to exchange a code. Missing secret → invalid_client.
+func TestTokenAuthCode_Confidential_MissingSecret(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	svc.EXPECT().GetClient("conf-client").Return(confidentialAuthCodeClient(), nil)
+	// ExchangeCode must NOT be reached when client auth fails.
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(authCodeForm(nil).Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "invalid_client", body["error"])
+}
+
+// Wrong secret → invalid_client.
+func TestTokenAuthCode_Confidential_WrongSecret(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	svc.EXPECT().GetClient("conf-client").Return(confidentialAuthCodeClient(), nil)
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	form := authCodeForm(url.Values{"client_secret": {"wrong"}})
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "invalid_client", body["error"])
+}
+
+// Correct secret (via Basic auth) → the exchange proceeds.
+func TestTokenAuthCode_Confidential_ValidSecret(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	svc.EXPECT().GetClient("conf-client").Return(confidentialAuthCodeClient(), nil)
+	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz").
+		Return(&service.LoginResult{AccessToken: "at", TokenType: "Bearer", ExpiresIn: 900, RefreshToken: "rt"}, nil)
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(authCodeForm(nil).Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("conf-client:s3cret")))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "at", body["access_token"])
+}
+
+// A public auth-code client (no secret) still succeeds with PKCE alone.
+func TestTokenAuthCode_Public_NoSecretRequired(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	svc.EXPECT().GetClient("conf-client").Return(&domain.OAuthClient{
+		ID:         "conf-client",
+		GrantTypes: []string{"authorization_code"},
+		// no SecretHash → public client
+	}, nil)
+	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz").
+		Return(&service.LoginResult{AccessToken: "at", TokenType: "Bearer", ExpiresIn: 900, RefreshToken: "rt"}, nil)
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(authCodeForm(nil).Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+}
+
+// A client lacking the authorization_code grant is rejected at the token
+// exchange with unauthorized_client (grant-type confusion).
+func TestTokenAuthCode_WrongGrantType(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	// Public client (no secret) so client-auth is skipped; ExchangeCode enforces
+	// the grant-type gate and returns ErrUnauthorizedClient.
+	svc.EXPECT().GetClient("conf-client").Return(&domain.OAuthClient{
+		ID:         "conf-client",
+		GrantTypes: []string{"client_credentials"},
+	}, nil)
+	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz").
+		Return(nil, service.ErrUnauthorizedClient)
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(authCodeForm(nil).Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "unauthorized_client", body["error"])
+}
