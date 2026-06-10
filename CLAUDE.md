@@ -80,6 +80,8 @@ See `docs/passkeys.md` for full API reference and integration guide.
 
 Every refresh rotates the token: old token is revoked, new pair issued. If a **previously-used** refresh token is ever presented again, the server assumes the token was stolen. It revokes the **entire token family** and returns `token_family_compromised`. The client must clear all tokens and show the login screen.
 
+Disabling or demoting an account takes effect **immediately** on the API, not just at access-token expiry: the `RequireAuth` middleware re-reads the user's live `IsActive`/`Role` from the database on every authenticated request (`RequireAuthWithStatus` in `internal/auth/middleware.go`, wired in `internal/handler/api/router.go`). A disabled user is rejected with `account_disabled`, and a demoted admin loses admin access on the next request. (Sibling resource servers that verify tokens via the published JWKS have no user database and keep the stateless behavior — their access tokens remain valid until expiry.)
+
 ## Role model
 
 - `admin` — full access to all endpoints including user management and admin UI
