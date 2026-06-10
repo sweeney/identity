@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -93,7 +94,18 @@ func (s *AuthService) Login(username, password, deviceHint, clientIP string) (*L
 	}
 
 	if !user.IsActive {
-		return nil, ErrAccountDisabled
+		// Return the generic invalid-credentials error so a disabled account is
+		// indistinguishable from a non-existent user or a wrong password (no user
+		// enumeration). The disabled state is preserved server-side via the audit
+		// event so operators can still see the attempt.
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventLoginFailure,
+			UserID:    user.ID,
+			Username:  username,
+			IPAddress: clientIP,
+			Detail:    "account disabled",
+		})
+		return nil, ErrInvalidCredentials
 	}
 
 	result, err := s.issueTokens(user, loginArgs{deviceHint: deviceHint})
@@ -185,7 +197,9 @@ func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
 			Username:  s.lookupUsername(oldTok.UserID),
 		})
 		if rErr := s.tokens.RevokeFamilyByHash(tokenHash); rErr != nil {
-			_ = rErr
+			// The client still receives token_family_compromised, but a failed
+			// family revocation must not be silent — the family may remain usable.
+			log.Printf("auth: token reuse detected but family revocation failed for user %s: %v", oldTok.UserID, rErr)
 		}
 		return nil, ErrTokenFamilyCompromised
 	}

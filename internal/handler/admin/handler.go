@@ -85,6 +85,10 @@ func (h *adminHandler) parseSession(tokenStr string) (*jwt.RegisteredClaims, err
 		func(t *jwt.Token) (any, error) {
 			return []byte(h.cfg.SessionSecret), nil
 		},
+		// Pin the signing method so a token signed with a different algorithm
+		// against the same symmetric secret (or alg:none) cannot be accepted,
+		// matching how internal/auth/jwt.go pins ES256.
+		jwt.WithValidMethods([]string{"HS256"}),
 		jwt.WithExpirationRequired(),
 	)
 	if err != nil || !token.Valid {

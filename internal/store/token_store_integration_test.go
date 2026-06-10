@@ -389,6 +389,96 @@ func TestTokenStore_DeleteExpiredAndOldRevoked(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestTokenStore_CleanupRetainsRevokedUnexpired verifies that a revoked token whose
+// family has NOT yet expired survives cleanup, so that token-reuse (theft) detection
+// can still resolve the family from the replayed token's hash after a GC pass.
+// Previously, revoked rows were purged once last_used_at passed the retention window
+// regardless of expiry, which silently disabled family revocation for stolen tokens
+// replayed after cleanup.
+func TestTokenStore_CleanupRetainsRevokedUnexpired(t *testing.T) {
+	database := openTestDB(t)
+	us := store.NewUserStore(database)
+	ts := store.NewTokenStore(database)
+
+	u := seedUser(t, us, "nina")
+
+	// Revoked long ago (old last_used_at) but still within its 30-day expiry window.
+	revokedUnexpired := &domain.RefreshToken{
+		ID:         "tok-revoked-unexpired",
+		UserID:     u.ID,
+		TokenHash:  sha256hex("revoked-unexpired-raw"),
+		FamilyID:   "family-live",
+		IssuedAt:   time.Now().UTC().Add(-40 * 24 * time.Hour),
+		LastUsedAt: time.Now().UTC().Add(-40 * 24 * time.Hour), // well past retention
+		ExpiresAt:  time.Now().UTC().Add(24 * time.Hour),       // NOT yet expired
+		IsRevoked:  true,
+	}
+	require.NoError(t, ts.Create(revokedUnexpired))
+
+	// Revoked AND expired — safe to purge.
+	revokedExpired := &domain.RefreshToken{
+		ID:         "tok-revoked-expired",
+		UserID:     u.ID,
+		TokenHash:  sha256hex("revoked-expired-raw"),
+		FamilyID:   "family-dead",
+		IssuedAt:   time.Now().UTC().Add(-40 * 24 * time.Hour),
+		LastUsedAt: time.Now().UTC().Add(-40 * 24 * time.Hour),
+		ExpiresAt:  time.Now().UTC().Add(-1 * time.Hour), // expired
+		IsRevoked:  true,
+	}
+	require.NoError(t, ts.Create(revokedExpired))
+
+	require.NoError(t, ts.DeleteExpiredAndOldRevoked(7))
+
+	// The revoked-but-unexpired token must survive so reuse detection can still
+	// resolve its family.
+	_, err := ts.GetByHash(sha256hex("revoked-unexpired-raw"))
+	assert.NoError(t, err, "revoked but unexpired token must be retained for reuse detection")
+
+	// The revoked-and-expired token may be purged.
+	_, err = ts.GetByHash(sha256hex("revoked-expired-raw"))
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+// TestTokenStore_RevokeFamilySurvivesCleanup verifies the end-to-end property: after
+// a cleanup pass, a replayed (revoked, unexpired) token can still drive family
+// revocation via RevokeFamilyByHash.
+func TestTokenStore_RevokeFamilySurvivesCleanup(t *testing.T) {
+	database := openTestDB(t)
+	us := store.NewUserStore(database)
+	ts := store.NewTokenStore(database)
+
+	u := seedUser(t, us, "omar")
+
+	// A revoked, long-idle, but unexpired token (the stolen one being replayed).
+	stolen := &domain.RefreshToken{
+		ID:         "tok-stolen",
+		UserID:     u.ID,
+		TokenHash:  sha256hex("stolen-raw"),
+		FamilyID:   "family-theft",
+		IssuedAt:   time.Now().UTC().Add(-40 * 24 * time.Hour),
+		LastUsedAt: time.Now().UTC().Add(-40 * 24 * time.Hour),
+		ExpiresAt:  time.Now().UTC().Add(48 * time.Hour),
+		IsRevoked:  true,
+	}
+	require.NoError(t, ts.Create(stolen))
+
+	// A live (active) sibling token in the same family.
+	sibling := newToken(u.ID, "family-theft", "sibling-raw")
+	require.NoError(t, ts.Create(sibling))
+
+	// Cleanup runs — the stolen row must NOT be purged.
+	require.NoError(t, ts.DeleteExpiredAndOldRevoked(7))
+
+	// Reuse detection resolves the family from the replayed token's hash and revokes
+	// the whole family, including the still-active sibling.
+	require.NoError(t, ts.RevokeFamilyByHash(sha256hex("stolen-raw")))
+
+	got, err := ts.GetByHash(sha256hex("sibling-raw"))
+	require.NoError(t, err)
+	assert.True(t, got.IsRevoked, "sibling token in the family must be revoked after reuse detection")
+}
+
 func TestTokenStore_CascadeDeleteOnUserDelete(t *testing.T) {
 	database := openTestDB(t)
 	us := store.NewUserStore(database)

@@ -2,6 +2,7 @@ package service
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -268,11 +269,16 @@ func (s *OAuthService) IssueClientCredentials(client *domain.OAuthClient, reques
 	}, nil
 }
 
-// verifyPKCE checks that sha256(verifier) == challenge (S256 method).
+// verifyPKCE checks that sha256(verifier) == challenge (S256 method) using a
+// constant-time comparison. An empty stored challenge is rejected outright as
+// defense-in-depth: a missing/malformed challenge must never satisfy verification.
 func verifyPKCE(verifier, challenge string) bool {
+	if challenge == "" {
+		return false
+	}
 	h := sha256.Sum256([]byte(verifier))
 	computed := base64.RawURLEncoding.EncodeToString(h[:])
-	return computed == challenge
+	return subtle.ConstantTimeCompare([]byte(computed), []byte(challenge)) == 1
 }
 
 // containsURI returns true if uri is in the slice.

@@ -215,12 +215,24 @@ func (s *TokenStore) RevokeAllForUser(userID string) error {
 	return err
 }
 
+// DeleteExpiredAndOldRevoked purges refresh tokens that are no longer needed.
+//
+// A revoked token is retained until it has expired, even if it has been idle
+// past the retention window. This is required for token-reuse (theft) detection:
+// RevokeFamilyByHash resolves the compromised family from the replayed (revoked)
+// row's hash, so that row must survive until the whole family has expired. Once a
+// revoked token has expired, it is kept for an additional retention window (so a
+// replay shortly after expiry still resolves the family) and then purged.
+//
+// Active (non-revoked) tokens are deleted as soon as they expire — they cannot
+// trigger reuse detection, which only fires on already-revoked rows.
 func (s *TokenStore) DeleteExpiredAndOldRevoked(retentionDays int) error {
 	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
 	_, err := s.db.DB().Exec(
 		`DELETE FROM refresh_tokens
-		 WHERE expires_at < ?
-		    OR (is_revoked = 1 AND last_used_at < ?)`,
+		 WHERE (is_revoked = 0 AND expires_at < ?)
+		    OR (is_revoked = 1 AND expires_at < ? AND last_used_at < ?)`,
+		formatTime(time.Now().UTC()),
 		formatTime(time.Now().UTC()),
 		formatTime(cutoff),
 	)
