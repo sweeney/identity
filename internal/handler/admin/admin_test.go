@@ -173,6 +173,36 @@ func TestAdminDashboard_Unauthenticated(t *testing.T) {
 	assert.Equal(t, "/admin/login", rr.Header().Get("Location"))
 }
 
+// TestAdminSession_RejectsNonHS256SigningMethod verifies the admin session parser
+// pins the signing method to HS256. A session token signed with a different HMAC
+// method (HS512) using the same symmetric secret would otherwise verify against the
+// keyfunc, which returns the raw secret without asserting the algorithm. With
+// jwt.WithValidMethods([]string{"HS256"}) the token must be rejected and the request
+// redirected to the login page.
+func TestAdminSession_RejectsNonHS256SigningMethod(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	handler := newRouter(t, userSvc)
+
+	// Forge a session token signed with HS512 (not the expected HS256) using the
+	// same secret. The claims are otherwise valid (admin subject, future expiry).
+	claims := jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(2 * time.Hour)),
+		Subject:   adminUser,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
+	signed, err := token.SignedString([]byte(testSessionSecret))
+	require.NoError(t, err)
+
+	forged := &http.Cookie{Name: "admin_session", Value: signed}
+	req := authRequest(http.MethodGet, "/admin/", forged)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+	assert.Equal(t, "/admin/login", rr.Header().Get("Location"))
+}
+
 // --- User List ---
 
 func TestAdminUsers_List(t *testing.T) {

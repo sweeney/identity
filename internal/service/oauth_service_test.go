@@ -299,6 +299,37 @@ func TestOAuthService_ExchangeCode_PKCEFailed(t *testing.T) {
 	assert.ErrorIs(t, err, service.ErrPKCEVerificationFailed)
 }
 
+// TestOAuthService_ExchangeCode_EmptyChallengeRejected verifies the defense-in-depth
+// guard: a stored auth code whose code_challenge is empty (or not a valid S256
+// challenge) must never satisfy PKCE verification, regardless of the verifier
+// supplied. The constant-time comparison must not treat an empty stored challenge
+// as a match.
+func TestOAuthService_ExchangeCode_EmptyChallengeRejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, _, codes := newOAuthService(t, ctrl)
+
+	rawCode := "no-challenge-code"
+	codeHash := service.HashToken(rawCode)
+	now := time.Now().UTC()
+	authCode := &domain.AuthCode{
+		ID:            "code-empty",
+		CodeHash:      codeHash,
+		ClientID:      "client-1",
+		UserID:        "user-123",
+		RedirectURI:   "https://myapp.example.com/callback",
+		CodeChallenge: "", // malformed / missing
+		IssuedAt:      now,
+		ExpiresAt:     now.Add(60 * time.Second),
+	}
+
+	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
+
+	// An empty verifier hashes to a non-empty S256 digest, so it must not match an
+	// empty stored challenge.
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "")
+	assert.ErrorIs(t, err, service.ErrPKCEVerificationFailed)
+}
+
 // --- RefreshToken ---
 
 func TestOAuthService_RefreshToken(t *testing.T) {
