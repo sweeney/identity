@@ -357,9 +357,9 @@ func runIdentityServer() error {
 	// All auth endpoints that accept credentials must use the strict rate limiter:
 	//   POST /api/v1/auth/login, POST /oauth/token, POST /oauth/authorize, POST /admin/login
 	oauthRouter := oauthhandler.NewRouter(oauthSvc, cfg.TrustProxy, issuer, authSvc, webauthnSvc, deviceSvc, secrets.Session, cfg.SiteName)
-	mux.Handle("POST /oauth/token", wrapAuth(oauthRouter))
-	mux.Handle("POST /oauth/authorize", wrapAuth(oauthRouter))
-	mux.Handle("POST /oauth/introspect", wrapAuth(oauthRouter))
+	for _, route := range strictOAuthRoutes() {
+		mux.Handle(route, wrapAuth(oauthRouter))
+	}
 	mux.Handle("/oauth/", oauthRouter)
 	adminRouter := admin.NewRouter(admin.Config{
 		SessionSecret: secrets.Session,
@@ -438,6 +438,24 @@ func runIdentityServer() error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// strictOAuthRoutes lists the /oauth POST routes that accept credentials and so
+// must be wrapped in the strict auth rate limiter (registered before the broad
+// "/oauth/" catch-all). Each route checks a password or client secret, making it
+// a brute-force surface. Returned as data so the rate-limit wiring test can
+// assert against the exact set the server registers.
+func strictOAuthRoutes() []string {
+	return []string{
+		"POST /oauth/token",
+		"POST /oauth/authorize",
+		"POST /oauth/introspect",
+		// deviceVerifyPost validates username+password (h.authSvc.AuthorizeUser),
+		// so it is a brute-force surface and needs the strict limiter — unlike
+		// GET /oauth/device (the page) and POST /oauth/device/passkey (token, no
+		// password), which fall through to the general "/oauth/" limiter.
+		"POST /oauth/device",
+	}
 }
 
 // securityHeaders wraps a handler with standard security response headers.
