@@ -291,11 +291,13 @@ func TestE2E_DisabledUserCannotLogin(t *testing.T) {
 	_, err = ts.userSvc.Update(victimID, service.UpdateUserInput{IsActive: &isActive})
 	require.NoError(t, err)
 
-	// Attempt login — should be forbidden
+	// Attempt login — must return the generic invalid_credentials (401) rather
+	// than a distinct account_disabled (403), so a disabled account cannot be
+	// enumerated even with a correct password.
 	resp := ts.post(t, "/api/v1/auth/login", map[string]string{
 		"username": "victim",
 		"password": "strongpassword1",
 	}, "")
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	resp.Body.Close()
 }

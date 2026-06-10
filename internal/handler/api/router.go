@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -69,13 +70,24 @@ func NewRouter(issuer *auth.TokenIssuer, authSvc service.AuthServicer, userSvc s
 	ah := &authHandler{svc: authSvc, trustProxy: trustProxy}
 	uh := &userHandler{svc: userSvc, trustProxy: trustProxy}
 
+	// statusProvider re-reads the user's live IsActive/Role on each authenticated
+	// request so that disabling or demoting an account takes effect immediately
+	// instead of lingering until the (up to 15-minute) access token expires.
+	// It is nil-safe: if userSvc is nil (handler-isolation tests) the middleware
+	// falls back to trusting the token claims.
+	var statusProvider auth.UserStatusProvider
+	if userSvc != nil {
+		statusProvider = userStatusProvider{svc: userSvc}
+	}
+
 	// requireUserAuth wraps a handler with RequireAuth + RequireAudience to ensure:
 	// 1. The request has a valid bearer token.
-	// 2. Service tokens (client_credentials) are rejected unless they were issued for this
+	// 2. The user is still active and their role is current (live DB check).
+	// 3. Service tokens (client_credentials) are rejected unless they were issued for this
 	//    specific identity server (audience must match the issuer string). This prevents
 	//    cross-service token replay where a token for service-A is used against this API.
 	requireUserAuth := func(next http.Handler) http.Handler {
-		return auth.RequireAuth(issuer, auth.RequireAudience(issuer.Issuer())(next))
+		return auth.RequireAuthWithStatus(issuer, statusProvider, auth.RequireAudience(issuer.Issuer())(next))
 	}
 
 	// handlers maps "METHOD /path" to the handler for that route. Routes whose
@@ -129,4 +141,19 @@ func NewRouter(issuer *auth.TokenIssuer, authSvc service.AuthServicer, userSvc s
 	}
 
 	return mux
+}
+
+// userStatusProvider adapts the UserServicer into auth.UserStatusProvider,
+// translating a not-found/error lookup into a non-nil error so the middleware
+// denies access (e.g. for a since-deleted user).
+type userStatusProvider struct {
+	svc service.UserServicer
+}
+
+func (p userStatusProvider) UserStatus(_ context.Context, userID string) (auth.UserStatus, error) {
+	user, err := p.svc.GetByID(userID)
+	if err != nil {
+		return auth.UserStatus{}, err
+	}
+	return auth.UserStatus{IsActive: user.IsActive, Role: user.Role}, nil
 }

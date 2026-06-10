@@ -83,6 +83,14 @@ func sampleUser(id string) *domain.User {
 	}
 }
 
+// expectAdminStatusLookup registers the live-status DB read that RequireAuth now
+// performs on every authenticated request, for the admin actor "admin-1". The
+// returned user is an active admin so the request proceeds.
+func expectAdminStatusLookup(userSvc *mocks.MockUserServicer) {
+	admin := &domain.User{ID: "admin-1", Username: "admin", Role: domain.RoleAdmin, IsActive: true}
+	userSvc.EXPECT().GetByID("admin-1").Return(admin, nil)
+}
+
 // --- GET /api/v1/users ---
 
 func TestListUsers_AdminSuccess(t *testing.T) {
@@ -90,6 +98,7 @@ func TestListUsers_AdminSuccess(t *testing.T) {
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	issuer := newTestIssuer(t)
 
+	expectAdminStatusLookup(userSvc)
 	users := []*domain.User{sampleUser("1"), sampleUser("2")}
 	userSvc.EXPECT().List().Return(users, nil)
 
@@ -124,6 +133,7 @@ func TestCreateUser_AdminSuccess(t *testing.T) {
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	issuer := newTestIssuer(t)
 
+	expectAdminStatusLookup(userSvc)
 	created := sampleUser("new-1")
 	userSvc.EXPECT().Create("newuser", "New User", "strongpassword1", domain.RoleUser, gomock.Any()).Return(created, nil)
 
@@ -143,6 +153,7 @@ func TestCreateUser_DuplicateUsername(t *testing.T) {
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	issuer := newTestIssuer(t)
 
+	expectAdminStatusLookup(userSvc)
 	userSvc.EXPECT().Create(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrConflict)
 
 	h := api.NewRouter(issuer, nil, userSvc, nil, "")
@@ -161,6 +172,7 @@ func TestCreateUser_UserLimitReached(t *testing.T) {
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	issuer := newTestIssuer(t)
 
+	expectAdminStatusLookup(userSvc)
 	userSvc.EXPECT().Create(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, domain.ErrUserLimitReached)
 
 	h := api.NewRouter(issuer, nil, userSvc, nil, "")
@@ -181,6 +193,7 @@ func TestGetUser_AdminCanGetAnyUser(t *testing.T) {
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	issuer := newTestIssuer(t)
 
+	expectAdminStatusLookup(userSvc)
 	userSvc.EXPECT().GetByID("u-999").Return(sampleUser("u-999"), nil)
 
 	h := api.NewRouter(issuer, nil, userSvc, nil, "")
@@ -193,7 +206,9 @@ func TestGetUser_UserCanGetSelf(t *testing.T) {
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	issuer := newTestIssuer(t)
 
-	userSvc.EXPECT().GetByID("user-123").Return(sampleUser("user-123"), nil)
+	// Called twice: once by the middleware live-status check (actor) and once by
+	// the handler (target) — both resolve to the same self ID here.
+	userSvc.EXPECT().GetByID("user-123").Return(sampleUser("user-123"), nil).Times(2)
 
 	h := api.NewRouter(issuer, nil, userSvc, nil, "")
 	rr := authGet(t, h, "/api/v1/users/user-123", userToken(t, issuer, "user-123"))
@@ -213,6 +228,7 @@ func TestGetUser_NotFound(t *testing.T) {
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	issuer := newTestIssuer(t)
 
+	expectAdminStatusLookup(userSvc)
 	userSvc.EXPECT().GetByID("ghost").Return(nil, domain.ErrNotFound)
 
 	h := api.NewRouter(issuer, nil, userSvc, nil, "")
@@ -227,6 +243,7 @@ func TestUpdateUser_AdminSuccess(t *testing.T) {
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	issuer := newTestIssuer(t)
 
+	expectAdminStatusLookup(userSvc)
 	updated := sampleUser("u-1")
 	updated.DisplayName = "Updated Name"
 	userSvc.EXPECT().Update("u-1", gomock.Any(), gomock.Any()).Return(updated, nil)
@@ -246,6 +263,7 @@ func TestDeleteUser_AdminSuccess(t *testing.T) {
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	issuer := newTestIssuer(t)
 
+	expectAdminStatusLookup(userSvc)
 	userSvc.EXPECT().Delete("u-del", gomock.Any()).Return(nil)
 
 	h := api.NewRouter(issuer, nil, userSvc, nil, "")
@@ -262,6 +280,7 @@ func TestDeleteUser_LastAdmin(t *testing.T) {
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	issuer := newTestIssuer(t)
 
+	expectAdminStatusLookup(userSvc)
 	userSvc.EXPECT().Delete("admin-1", gomock.Any()).Return(service.ErrCannotDeleteLastAdmin)
 
 	h := api.NewRouter(issuer, nil, userSvc, nil, "")

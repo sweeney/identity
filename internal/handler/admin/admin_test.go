@@ -173,6 +173,36 @@ func TestAdminDashboard_Unauthenticated(t *testing.T) {
 	assert.Equal(t, "/admin/login", rr.Header().Get("Location"))
 }
 
+// TestAdminSession_RejectsNonHS256SigningMethod verifies the admin session parser
+// pins the signing method to HS256. A session token signed with a different HMAC
+// method (HS512) using the same symmetric secret would otherwise verify against the
+// keyfunc, which returns the raw secret without asserting the algorithm. With
+// jwt.WithValidMethods([]string{"HS256"}) the token must be rejected and the request
+// redirected to the login page.
+func TestAdminSession_RejectsNonHS256SigningMethod(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userSvc := mocks.NewMockUserServicer(ctrl)
+	handler := newRouter(t, userSvc)
+
+	// Forge a session token signed with HS512 (not the expected HS256) using the
+	// same secret. The claims are otherwise valid (admin subject, future expiry).
+	claims := jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(2 * time.Hour)),
+		Subject:   adminUser,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
+	signed, err := token.SignedString([]byte(testSessionSecret))
+	require.NoError(t, err)
+
+	forged := &http.Cookie{Name: "admin_session", Value: signed}
+	req := authRequest(http.MethodGet, "/admin/", forged)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+	assert.Equal(t, "/admin/login", rr.Header().Get("Location"))
+}
+
 // --- User List ---
 
 func TestAdminUsers_List(t *testing.T) {
@@ -1254,10 +1284,9 @@ func TestOAuthClientCreate_ValidClientID(t *testing.T) {
 
 // --- Passkey prompt ---
 
-// TestPasskeyPrompt_SkipURL_NotSanitized verifies that the SkipURL passed to
-// the passkey prompt page is rendered verbatim and not replaced with
-// #ZgotmplZ by html/template's URL sanitizer.
-func TestPasskeyPrompt_SkipURL_NotSanitized(t *testing.T) {
+// TestPasskeyPrompt_SafeRelativeNext verifies that a legitimate server-relative
+// next path is preserved and rendered as the "Not now" href.
+func TestPasskeyPrompt_SafeRelativeNext(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	userSvc := mocks.NewMockUserServicer(ctrl)
 	handler := newRouter(t, userSvc)
@@ -1270,9 +1299,42 @@ func TestPasskeyPrompt_SkipURL_NotSanitized(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
-	body := rr.Body.String()
-	assert.Contains(t, body, next, "SkipURL must render the next URL intact")
-	assert.NotContains(t, body, "#ZgotmplZ", "html/template must not sanitize the SkipURL")
+	assert.Contains(t, rr.Body.String(), `href="/admin/some-page"`, "safe relative next must render intact")
+}
+
+// TestPasskeyPrompt_UnsafeNextFallsBack verifies that attacker-controllable next
+// values (absolute URLs, protocol-relative URLs, custom schemes, javascript:)
+// are rejected and fall back to the safe /admin/ default. No open redirect and
+// no unsanitized scheme reaches the href.
+func TestPasskeyPrompt_UnsafeNextFallsBack(t *testing.T) {
+	cases := []string{
+		"https://evil.example/login",      // absolute open redirect
+		"//evil.example",                  // protocol-relative
+		"javascript:alert(1)",             // latent XSS
+		"com.foo.bar://callback",          // custom scheme
+		"http://evil.example",             // absolute http
+		" /admin/ok",                      // leading whitespace then path
+	}
+	for _, next := range cases {
+		t.Run(next, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			userSvc := mocks.NewMockUserServicer(ctrl)
+			handler := newRouter(t, userSvc)
+			session := loginSession(t, handler)
+
+			req := httptest.NewRequest(http.MethodGet, "/admin/passkeys/prompt?next="+url.QueryEscape(next), nil)
+			req.AddCookie(session)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code)
+			body := rr.Body.String()
+			assert.Contains(t, body, `href="/admin/"`, "unsafe next must fall back to /admin/")
+			assert.NotContains(t, body, "evil.example", "unsafe next must not appear in the response")
+			assert.NotContains(t, body, "javascript:", "javascript: scheme must not reach the href")
+			assert.NotContains(t, body, "com.foo.bar:", "custom scheme must not reach the href")
+		})
+	}
 }
 
 // TestPasskeyPrompt_DefaultSkipURL verifies that when no next parameter is

@@ -370,6 +370,21 @@ func (s *WebAuthnService) FinishLogin(challengeID string, r *http.Request, devic
 	if err != nil {
 		return nil, fmt.Errorf("get stored credential: %w", err)
 	}
+
+	// Authenticator clone detection. go-webauthn sets CloneWarning when the
+	// presented signature counter regressed against the stored one (and they
+	// are not both zero). A counter regression on a counter-bearing authenticator
+	// means the credential's private key may exist on more than one device.
+	// We surface it as an audit signal rather than hard-failing: many synced
+	// passkeys legitimately report SignCount==0 on every assertion, and the
+	// library already exempts that all-zero case from CloneWarning.
+	if ShouldWarnPasskeyClone(credential.Authenticator.CloneWarning, storedCred.SignCount, credential.Authenticator.SignCount) {
+		username := s.lookupUsername(authenticatedUserID)
+		detail := fmt.Sprintf("credential_id=%s stored_sign_count=%d presented_sign_count=%d",
+			storedCred.ID, storedCred.SignCount, credential.Authenticator.SignCount)
+		s.recordEvent(domain.EventPasskeyCloneWarning, authenticatedUserID, username, detail)
+	}
+
 	now := time.Now().UTC()
 	s.credentials.UpdateSignCount(storedCred.ID, credential.Authenticator.SignCount) //nolint:errcheck
 	s.credentials.UpdateLastUsed(storedCred.ID, now)                                 //nolint:errcheck
@@ -450,6 +465,18 @@ func (s *WebAuthnService) lookupUsername(userID string) string {
 		return u.Username
 	}
 	return userID
+}
+
+// ShouldWarnPasskeyClone reports whether an assertion should be treated as a
+// potential authenticator-clone signal.
+//
+// cloneWarning is the flag set by go-webauthn (true when the presented counter
+// regressed against the stored one and they were not both zero). We additionally
+// require a non-zero stored counter so that synced/backup-eligible passkeys —
+// which legitimately report SignCount==0 on every assertion — are never flagged,
+// even if a future library change were to set CloneWarning for the zero case.
+func ShouldWarnPasskeyClone(cloneWarning bool, storedSignCount, presentedSignCount uint32) bool {
+	return cloneWarning && storedSignCount > 0
 }
 
 // recordEvent writes an audit event, ignoring errors (best-effort).

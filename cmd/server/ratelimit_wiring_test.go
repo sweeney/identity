@@ -69,6 +69,53 @@ func TestAdminReauthEndpoints_StrictRateLimiting(t *testing.T) {
 	}
 }
 
+// TestDeviceVerifyEndpoint_StrictRateLimiting mirrors the oauth device-flow
+// wiring in run(): POST /oauth/device authenticates with username+password
+// (deviceVerifyPost) and so must sit behind the strict auth limiter, while
+// POST /oauth/device/passkey carries an already-issued access token (no
+// password) and must NOT be throttled by the strict limiter. The mux uses
+// http.ServeMux precedence exactly like run() — a specific strict-limited
+// pattern wins over the broad "/oauth/" catch-all.
+func TestDeviceVerifyEndpoint_StrictRateLimiting(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Every POST /oauth route registered with wrapAuth gets the strict limiter
+	// here, plus the broad "/oauth/" catch-all carrying only the general limiter.
+	// This lets the test assert which device routes the strict limiter covers.
+	strictRL := ratelimit.NewLimiter(5.0/60.0, 1, "") // burst 1
+	mux := http.NewServeMux()
+	for _, route := range strictOAuthRoutes() {
+		mux.Handle(route, strictRL.Middleware(inner))
+	}
+	mux.Handle("/oauth/", inner) // catch-all: not strict-limited
+
+	// POST /oauth/device (password) must be strictly limited: first passes,
+	// second from the same IP is rejected.
+	req1 := httptest.NewRequest(http.MethodPost, "/oauth/device", nil)
+	rr1 := httptest.NewRecorder()
+	mux.ServeHTTP(rr1, req1)
+	require.Equal(t, http.StatusOK, rr1.Code, "first POST /oauth/device must pass the strict limiter")
+
+	req2 := httptest.NewRequest(http.MethodPost, "/oauth/device", nil)
+	rr2 := httptest.NewRecorder()
+	mux.ServeHTTP(rr2, req2)
+	assert.Equal(t, http.StatusTooManyRequests, rr2.Code,
+		"second POST /oauth/device must be strict-rate-limited (password brute-force protection)")
+
+	// POST /oauth/device/passkey (token, no password) must NOT be caught by the
+	// strict limiter — it falls through to the catch-all, so repeated requests
+	// from the same IP all pass the strict bucket.
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/oauth/device/passkey", nil)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		require.Equalf(t, http.StatusOK, rr.Code,
+			"POST /oauth/device/passkey request %d must not hit the strict limiter", i)
+	}
+}
+
 // TestRateLimitExempt verifies which paths bypass the general rate limiter.
 // Static assets and the health check must be exempt; credential and API paths
 // must not be.

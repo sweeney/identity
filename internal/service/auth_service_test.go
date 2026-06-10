@@ -1,8 +1,11 @@
 package service_test
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -146,9 +149,15 @@ func TestAuthService_Login_DisabledUser(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
+	// A disabled account must be indistinguishable from a non-existent user or a
+	// wrong password on the API login path (no user enumeration). The service
+	// returns the generic invalid-credentials error rather than the distinct
+	// account-disabled error. The disabled state is still recorded server-side
+	// via an audit event.
 	_, err := svc.Login("alice", "correctpassword", "", "")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, service.ErrAccountDisabled)
+	assert.ErrorIs(t, err, service.ErrInvalidCredentials)
+	assert.NotErrorIs(t, err, service.ErrAccountDisabled)
 }
 
 // --- AuthorizeUser ---
@@ -337,6 +346,54 @@ func TestAuthService_Refresh_AlreadyRevoked_TriggersTheftDetection(t *testing.T)
 	_, err := svc.Refresh(rawToken)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrTokenFamilyCompromised)
+}
+
+// TestAuthService_Refresh_FamilyRevokeError_IsLogged verifies that when family
+// revocation fails during theft detection, the error is logged rather than silently
+// discarded. The client still receives token_family_compromised, but the operator
+// must be able to see that the family revocation did not actually take effect.
+func TestAuthService_Refresh_FamilyRevokeError_IsLogged(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	userRepo := mocks.NewMockUserRepository(ctrl)
+	tokenRepo := mocks.NewMockTokenRepository(ctrl)
+	backupSvc := mocks.NewMockBackupService(ctrl)
+
+	rawToken := "revoked-token-value-long-enough-here-ok"
+	tokenHash := service.HashToken(rawToken)
+
+	revokedToken := &domain.RefreshToken{
+		ID:        "tok-revoked",
+		UserID:    "user-123",
+		TokenHash: tokenHash,
+		FamilyID:  "family-1",
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+		IsRevoked: true,
+	}
+
+	tokenRepo.EXPECT().RotateToken(tokenHash, gomock.Any()).Return(revokedToken, domain.ErrTokenAlreadyRevoked)
+	userRepo.EXPECT().GetByID("user-123").Return(activeUser(), nil).AnyTimes()
+	// Family revocation fails.
+	tokenRepo.EXPECT().RevokeFamilyByHash(tokenHash).Return(errors.New("db is down"))
+
+	// Capture the standard logger output.
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	origFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(origOut)
+		log.SetFlags(origFlags)
+	}()
+
+	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
+
+	_, err := svc.Refresh(rawToken)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrTokenFamilyCompromised)
+
+	logged := buf.String()
+	assert.Contains(t, logged, "db is down", "family revocation error must be logged, not swallowed")
 }
 
 func TestAuthService_Refresh_Expired(t *testing.T) {

@@ -94,10 +94,16 @@ func TestLoginHandler_InvalidCredentials(t *testing.T) {
 	assert.Equal(t, "invalid_credentials", resp["error"])
 }
 
-func TestLoginHandler_AccountDisabled(t *testing.T) {
+// TestLoginHandler_DisabledAccountNotEnumerable verifies that a disabled account
+// is indistinguishable from a non-existent user / wrong password on the login
+// path: the service returns the generic invalid-credentials error, so the handler
+// responds 401 invalid_credentials rather than 403 account_disabled. This prevents
+// user enumeration via the differing response content.
+func TestLoginHandler_DisabledAccountNotEnumerable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	authSvc := mocks.NewMockAuthServicer(ctrl)
-	authSvc.EXPECT().Login("alice", "correctpassword", "", gomock.Any()).Return(nil, service.ErrAccountDisabled)
+	// The service maps a disabled account to ErrInvalidCredentials on the login path.
+	authSvc.EXPECT().Login("alice", "correctpassword", "", gomock.Any()).Return(nil, service.ErrInvalidCredentials)
 
 	h := api.NewRouter(newTestIssuer(t), authSvc, nil, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/login", map[string]string{
@@ -105,10 +111,10 @@ func TestLoginHandler_AccountDisabled(t *testing.T) {
 		"password": "correctpassword",
 	})
 
-	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 	var resp map[string]string
 	decodeJSON(t, rr, &resp)
-	assert.Equal(t, "account_disabled", resp["error"])
+	assert.Equal(t, "invalid_credentials", resp["error"])
 }
 
 func TestLoginHandler_MalformedJSON(t *testing.T) {
