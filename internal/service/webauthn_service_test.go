@@ -304,6 +304,40 @@ func TestWebAuthnService_FinishLogin_InvalidSessionData(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// --- Clone detection ---
+
+func TestWebAuthnService_CloneWarning_RegressionOnCounterBearingAuthenticator(t *testing.T) {
+	// A non-zero stored counter with a presented count <= stored is a genuine
+	// clone signal: the library sets CloneWarning=true and leaves SignCount
+	// unchanged. The service must surface this as a clone-warning audit event.
+	assert.True(t, service.ShouldWarnPasskeyClone(true, 42, 7),
+		"regression on a non-zero counter must warn")
+	assert.True(t, service.ShouldWarnPasskeyClone(true, 42, 42),
+		"equal counter on a non-zero counter must warn")
+}
+
+func TestWebAuthnService_CloneWarning_SyncedZeroCountPasskeyDoesNotWarn(t *testing.T) {
+	// Synced/backup-eligible passkeys legitimately report SignCount==0 on every
+	// assertion. The library never sets CloneWarning for the all-zero case, and
+	// even defensively the service must not warn when the stored counter is 0.
+	assert.False(t, service.ShouldWarnPasskeyClone(false, 0, 0),
+		"all-zero synced passkey must not warn")
+	assert.False(t, service.ShouldWarnPasskeyClone(false, 0, 5),
+		"zero stored counter must not warn")
+	assert.False(t, service.ShouldWarnPasskeyClone(true, 0, 0),
+		"a zero stored counter must never be treated as a clone regression")
+}
+
+func TestWebAuthnService_CloneWarning_NoWarningWhenLibraryClear(t *testing.T) {
+	// Normal monotonic progress: library reports no clone warning.
+	assert.False(t, service.ShouldWarnPasskeyClone(false, 7, 42),
+		"monotonic counter increase must not warn")
+}
+
+func TestWebAuthnEvent_CloneWarningConstantDefined(t *testing.T) {
+	assert.Equal(t, "passkey_clone_warning", domain.EventPasskeyCloneWarning)
+}
+
 // --- ListCredentials ---
 
 func TestWebAuthnService_ListCredentials(t *testing.T) {
