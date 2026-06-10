@@ -43,6 +43,23 @@ func ServiceClaimsFromContext(ctx context.Context) *domain.ServiceTokenClaims {
 	return c
 }
 
+// UserStatus is the live account state for a user, read from the database at
+// request time. It lets middleware reject access tokens that are still
+// cryptographically valid and unexpired but were minted before the account was
+// disabled or its role changed.
+type UserStatus struct {
+	IsActive bool
+	Role     domain.Role
+}
+
+// UserStatusProvider returns the current account state for a user ID. The
+// identity server implements this against its user store; sibling services
+// (which only hold the public JWKS and have no user database) pass nil to
+// RequireAuth and keep the stateless behavior.
+type UserStatusProvider interface {
+	UserStatus(ctx context.Context, userID string) (UserStatus, error)
+}
+
 // RequireAuth is an HTTP middleware that validates the Bearer token in the
 // Authorization header and injects the claims into the request context.
 // Returns 401 if the token is missing or invalid, 403 if the user is inactive.
@@ -50,7 +67,27 @@ func ServiceClaimsFromContext(ctx context.Context) *domain.ServiceTokenClaims {
 // The first parameter accepts any TokenParser. Identity passes its
 // in-process *TokenIssuer; sibling services pass a *JWKSVerifier that
 // validates tokens against identity's published JWKS.
+//
+// This form trusts the IsActive/Role claims embedded in the token. The
+// identity server should use RequireAuthWithStatus so that disabling or
+// demoting an account takes effect immediately rather than at token expiry.
 func RequireAuth(parser TokenParser, next http.Handler) http.Handler {
+	return RequireAuthWithStatus(parser, nil, next)
+}
+
+// RequireAuthWithStatus is RequireAuth plus an optional live-status check.
+//
+// When provider is non-nil, after the token verifies the middleware loads the
+// user's current IsActive/Role from the provider (a fresh DB read) and uses
+// those values instead of the token's copies. This closes the window where a
+// disabled or demoted user keeps API access until their unexpired access token
+// would have expired. The freshly-loaded role is written into the context
+// claims so the downstream RequireAdmin sees the live role, not the stale one.
+//
+// When provider is nil the behavior is identical to RequireAuth: claims are
+// taken verbatim from the token. Service (client_credentials) tokens are never
+// subject to the user-status check — they have no associated user.
+func RequireAuthWithStatus(parser TokenParser, provider UserStatusProvider, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -90,6 +127,19 @@ func RequireAuth(parser TokenParser, next http.Handler) http.Handler {
 			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
 			return
+		}
+
+		// When a status provider is configured, re-read the live account state
+		// so disable/demote take effect immediately instead of at token expiry.
+		// A lookup failure (e.g. user deleted) is treated as access denied.
+		if provider != nil {
+			status, statusErr := provider.UserStatus(r.Context(), claims.UserID)
+			if statusErr != nil {
+				writeError(w, http.StatusForbidden, "account_disabled", "account is no longer valid")
+				return
+			}
+			claims.IsActive = status.IsActive
+			claims.Role = status.Role
 		}
 
 		if !claims.IsActive {
