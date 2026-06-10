@@ -67,4 +67,8 @@ const (
 	EventPasskeyLoginSuccess    = "passkey_login_success"
 	EventPasskeyLoginFailure    = "passkey_login_failure"
 	EventPasskeyDeleted         = "passkey_deleted"
+	// EventPasskeyCloneWarning is emitted when an assertion presents a signature
+	// counter that regressed against the stored non-zero counter — a signal that
+	// the authenticator may have been cloned (WebAuthn §7.2 step 17).
+	EventPasskeyCloneWarning = "passkey_clone_warning"
 )
