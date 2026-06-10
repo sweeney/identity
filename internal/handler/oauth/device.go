@@ -277,7 +277,9 @@ func (h *oauthHandler) deviceVerifyPost(w http.ResponseWriter, r *http.Request) 
 	// land on GET /oauth/device/done. Reuses the shared /oauth/passkey-prompt
 	// register endpoints (OAuthFlow: true) via the prompt session cookie.
 	if r.FormValue("webauthn_supported") == "1" && h.shouldPromptPasskey(userID) {
-		h.setPromptSession(w, userID)
+		// This page is rendered directly (not via passkeyPrompt) with a fixed,
+		// server-relative SkipURL, so no next is carried in the prompt cookie.
+		h.setPromptSession(w, userID, "")
 		h.render(w, "passkey_prompt.html", map[string]any{
 			"HideNav":   true,
 			"SkipURL":   "/oauth/device/done",

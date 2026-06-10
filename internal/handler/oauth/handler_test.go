@@ -388,12 +388,24 @@ func TestNewRouter_NilService_Returns404(t *testing.T) {
 
 const oauthTestSessionKey = "test-oauth-session-key-long-enough"
 
-// mintPromptCookie creates a signed oauth_passkey_prompt cookie for the given userID.
+// mintPromptCookie creates a signed oauth_passkey_prompt cookie for the given
+// userID, carrying no validated next URL.
 func mintPromptCookie(t *testing.T, userID string) *http.Cookie {
+	return mintPromptCookieWithNext(t, userID, "")
+}
+
+// mintPromptCookieWithNext creates a signed oauth_passkey_prompt cookie carrying
+// a server-validated next URL in the "next" claim. The cookie is HMAC-signed, so
+// its next value is trusted (it was validated against the registered redirect_uri
+// when the cookie was minted in the authorize flow).
+func mintPromptCookieWithNext(t *testing.T, userID, next string) *http.Cookie {
 	t.Helper()
-	claims := jwt.RegisteredClaims{
-		Subject:   userID,
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+	claims := jwt.MapClaims{
+		"sub": userID,
+		"exp": jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+	}
+	if next != "" {
+		claims["next"] = next
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := tok.SignedString([]byte(oauthTestSessionKey))
@@ -401,24 +413,66 @@ func mintPromptCookie(t *testing.T, userID string) *http.Cookie {
 	return &http.Cookie{Name: "oauth_passkey_prompt", Value: signed}
 }
 
-// TestPasskeyPrompt_CustomSchemeSkipURL verifies that a custom-scheme next URL
-// (e.g. com.foo.bar://callback) is rendered verbatim in the "Not now" href
-// and not replaced with #ZgotmplZ by html/template's URL sanitizer.
-func TestPasskeyPrompt_CustomSchemeSkipURL(t *testing.T) {
+// TestPasskeyPrompt_TrustedCustomSchemeNext verifies that a custom-scheme next
+// URL carried in the signed prompt cookie (i.e. already validated against the
+// registered redirect_uri) is rendered verbatim in the "Not now" href and not
+// replaced with #ZgotmplZ by html/template's URL sanitizer.
+func TestPasskeyPrompt_TrustedCustomSchemeNext(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := mocks.NewMockOAuthServicer(ctrl)
 	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, oauthTestSessionKey, "")
 
 	nextURL := "com.foo.bar://callback?code=abc123"
-	req := httptest.NewRequest(http.MethodGet, "/oauth/passkey-prompt?next="+url.QueryEscape(nextURL), nil)
+	req := httptest.NewRequest(http.MethodGet, "/oauth/passkey-prompt", nil)
+	req.AddCookie(mintPromptCookieWithNext(t, "user-1", nextURL))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, nextURL, "trusted custom-scheme next must render intact")
+	assert.NotContains(t, body, "#ZgotmplZ", "html/template must not sanitize the trusted URL")
+}
+
+// TestPasskeyPrompt_QueryNextIgnored verifies that an attacker-controllable next
+// query parameter is NOT trusted: it is ignored in favour of the signed cookie's
+// validated next value, preventing an open redirect.
+func TestPasskeyPrompt_QueryNextIgnored(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, oauthTestSessionKey, "")
+
+	trusted := "com.foo.bar://callback?code=abc123"
+	evil := "https://evil.example/login"
+	req := httptest.NewRequest(http.MethodGet, "/oauth/passkey-prompt?next="+url.QueryEscape(evil), nil)
+	req.AddCookie(mintPromptCookieWithNext(t, "user-1", trusted))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, trusted, "validated cookie next must render")
+	assert.NotContains(t, body, "evil.example", "attacker query next must not reach the href")
+}
+
+// TestPasskeyPrompt_NoTrustedNext verifies that when the cookie carries no
+// validated next, the prompt renders no "Not now" href (rather than trusting the
+// query parameter or emitting an open redirect).
+func TestPasskeyPrompt_NoTrustedNext(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, oauthTestSessionKey, "")
+
+	evil := "https://evil.example/login"
+	req := httptest.NewRequest(http.MethodGet, "/oauth/passkey-prompt?next="+url.QueryEscape(evil), nil)
 	req.AddCookie(mintPromptCookie(t, "user-1"))
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	body := rr.Body.String()
-	assert.Contains(t, body, nextURL, "SkipURL must render with the custom scheme intact")
-	assert.NotContains(t, body, "#ZgotmplZ", "html/template must not sanitize the trusted URL")
+	assert.NotContains(t, body, "evil.example", "attacker query next must not reach the href")
+	assert.NotContains(t, body, `id="skip-link"`, "no trusted next means no skip link")
 }
 
 // TestPasskeyPromptRegisterFinish_ReadsChallengeFromHeader verifies the finish
