@@ -83,6 +83,20 @@ func TestOAuthService_ValidateAuthorizeRequest_InvalidRedirectURI(t *testing.T) 
 	assert.ErrorIs(t, err, service.ErrInvalidRedirectURI)
 }
 
+// A client not registered for the authorization_code grant must not be allowed
+// to drive the interactive /oauth/authorize flow (grant-type confusion).
+func TestOAuthService_ValidateAuthorizeRequest_WrongGrantType(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, clients, _ := newOAuthService(t, ctrl)
+
+	client := testClient()
+	client.GrantTypes = []string{"client_credentials"} // no authorization_code
+	clients.EXPECT().GetByID("client-1").Return(client, nil)
+
+	_, err := svc.ValidateAuthorizeRequest("client-1", "https://myapp.example.com/callback")
+	assert.ErrorIs(t, err, service.ErrUnauthorizedClient)
+}
+
 // --- Authorize ---
 
 func TestOAuthService_Authorize_Success(t *testing.T) {
@@ -190,17 +204,42 @@ func TestOAuthService_ExchangeCode_NoAudience(t *testing.T) {
 
 func TestOAuthService_ExchangeCode_InvalidCode(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, _, _, codes := newOAuthService(t, ctrl)
+	svc, _, clients, codes := newOAuthService(t, ctrl)
 
+	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(gomock.Any()).Return(nil, domain.ErrNotFound)
 
 	_, err := svc.ExchangeCode("client-1", "bad-code", "https://myapp.example.com/callback", "verifier")
 	assert.ErrorIs(t, err, service.ErrInvalidAuthCode)
 }
 
+// A client not registered for the authorization_code grant must not be able to
+// exchange a code, even if it somehow obtained one (grant-type confusion).
+func TestOAuthService_ExchangeCode_WrongGrantType(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, clients, _ := newOAuthService(t, ctrl)
+
+	client := testClient()
+	client.GrantTypes = []string{"client_credentials"} // no authorization_code
+	clients.EXPECT().GetByID("client-1").Return(client, nil)
+
+	_, err := svc.ExchangeCode("client-1", "some-code", "https://myapp.example.com/callback", "verifier")
+	assert.ErrorIs(t, err, service.ErrUnauthorizedClient)
+}
+
+func TestOAuthService_ExchangeCode_UnknownClient(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, _, clients, _ := newOAuthService(t, ctrl)
+
+	clients.EXPECT().GetByID("client-1").Return(nil, domain.ErrNotFound)
+
+	_, err := svc.ExchangeCode("client-1", "some-code", "https://myapp.example.com/callback", "verifier")
+	assert.ErrorIs(t, err, service.ErrUnknownClient)
+}
+
 func TestOAuthService_ExchangeCode_ClientMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, _, _, codes := newOAuthService(t, ctrl)
+	svc, _, clients, codes := newOAuthService(t, ctrl)
 
 	rawCode := "some-code"
 	codeHash := service.HashToken(rawCode)
@@ -216,6 +255,7 @@ func TestOAuthService_ExchangeCode_ClientMismatch(t *testing.T) {
 		ExpiresAt:     now.Add(60 * time.Second),
 	}
 
+	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 
 	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier")
@@ -224,7 +264,7 @@ func TestOAuthService_ExchangeCode_ClientMismatch(t *testing.T) {
 
 func TestOAuthService_ExchangeCode_AlreadyUsed(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, _, _, codes := newOAuthService(t, ctrl)
+	svc, _, clients, codes := newOAuthService(t, ctrl)
 
 	rawCode := "used-code"
 	codeHash := service.HashToken(rawCode)
@@ -242,6 +282,7 @@ func TestOAuthService_ExchangeCode_AlreadyUsed(t *testing.T) {
 		UsedAt:        &usedAt,
 	}
 
+	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 
 	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier")
@@ -250,7 +291,7 @@ func TestOAuthService_ExchangeCode_AlreadyUsed(t *testing.T) {
 
 func TestOAuthService_ExchangeCode_Expired(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, _, _, codes := newOAuthService(t, ctrl)
+	svc, _, clients, codes := newOAuthService(t, ctrl)
 
 	rawCode := "expired-code"
 	codeHash := service.HashToken(rawCode)
@@ -266,6 +307,7 @@ func TestOAuthService_ExchangeCode_Expired(t *testing.T) {
 		ExpiresAt:     now.Add(-1 * time.Minute),
 	}
 
+	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 
 	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier")
@@ -274,7 +316,7 @@ func TestOAuthService_ExchangeCode_Expired(t *testing.T) {
 
 func TestOAuthService_ExchangeCode_PKCEFailed(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, _, _, codes := newOAuthService(t, ctrl)
+	svc, _, clients, codes := newOAuthService(t, ctrl)
 
 	verifier := "correct-verifier"
 	challenge := pkceChallenge(verifier)
@@ -293,6 +335,7 @@ func TestOAuthService_ExchangeCode_PKCEFailed(t *testing.T) {
 		ExpiresAt:     now.Add(60 * time.Second),
 	}
 
+	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 
 	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "wrong-verifier")
@@ -306,7 +349,7 @@ func TestOAuthService_ExchangeCode_PKCEFailed(t *testing.T) {
 // as a match.
 func TestOAuthService_ExchangeCode_EmptyChallengeRejected(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, _, _, codes := newOAuthService(t, ctrl)
+	svc, _, clients, codes := newOAuthService(t, ctrl)
 
 	rawCode := "no-challenge-code"
 	codeHash := service.HashToken(rawCode)
@@ -322,6 +365,9 @@ func TestOAuthService_ExchangeCode_EmptyChallengeRejected(t *testing.T) {
 		ExpiresAt:     now.Add(60 * time.Second),
 	}
 
+	// ExchangeCode resolves the client up front to enforce the authorization_code
+	// grant before checking the code/PKCE.
+	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 
 	// An empty verifier hashes to a non-empty S256 digest, so it must not match an

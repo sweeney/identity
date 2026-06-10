@@ -112,6 +112,7 @@ func registerOAuthClient(t *testing.T, database *db.Database, id, name string, r
 		ID:           id,
 		Name:         name,
 		RedirectURIs: redirectURIs,
+		GrantTypes:   []string{"authorization_code"},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	})

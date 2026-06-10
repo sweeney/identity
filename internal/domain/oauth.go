@@ -2,6 +2,13 @@ package domain
 
 import "time"
 
+// Grant type identifiers for the OAuth 2.0 flows this server supports.
+// (GrantTypeDeviceCode lives in device_flow.go.)
+const (
+	GrantTypeAuthorizationCode = "authorization_code"
+	GrantTypeClientCredentials = "client_credentials"
+)
+
 // OAuthClient is a registered OAuth application persisted to DB.
 //
 //go:generate mockgen -destination=../mocks/mock_oauth_client_repository.go -package=mocks github.com/sweeney/identity/internal/domain OAuthClientRepository

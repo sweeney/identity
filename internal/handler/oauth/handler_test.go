@@ -89,6 +89,21 @@ func TestAuthorizeGet_UnknownClient(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "Unknown Client")
 }
 
+// A client not registered for the authorization_code grant must be rejected at
+// /oauth/authorize (grant-type confusion).
+func TestAuthorizeGet_UnauthorizedClient(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	svc.EXPECT().ValidateAuthorizeRequest("client-1", gomock.Any()).Return(nil, service.ErrUnauthorizedClient)
+
+	h := newTestRouter(svc)
+	rr := getAuthorize(t, h, validAuthorizeParams())
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Unauthorized Client")
+}
+
 func TestAuthorizeGet_NonS256Method(t *testing.T) {
 	h := newTestRouter(mocks.NewMockOAuthServicer(gomock.NewController(t)))
 	params := validAuthorizeParams()
@@ -267,6 +282,7 @@ func TestTokenEndpoint_AuthCode_Success(t *testing.T) {
 		ExpiresIn:    900,
 		RefreshToken: "refresh-token",
 	}
+	svc.EXPECT().GetClient("client-1").Return(&domain.OAuthClient{ID: "client-1"}, nil)
 	svc.EXPECT().ExchangeCode("client-1", "code-abc", "https://myapp.example.com/callback", "verifier-xyz").
 		Return(result, nil)
 
@@ -290,6 +306,7 @@ func TestTokenEndpoint_AuthCode_InvalidGrant(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := mocks.NewMockOAuthServicer(ctrl)
 
+	svc.EXPECT().GetClient("client-1").Return(&domain.OAuthClient{ID: "client-1"}, nil)
 	svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, service.ErrInvalidAuthCode)
 
@@ -322,6 +339,7 @@ func TestTokenEndpoint_AuthCode_UnifiedErrorMessage(t *testing.T) {
 		t.Run(svcErr.Error(), func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			svc := mocks.NewMockOAuthServicer(ctrl)
+			svc.EXPECT().GetClient("client-1").Return(&domain.OAuthClient{ID: "client-1"}, nil)
 			svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 				Return(nil, svcErr)
 
