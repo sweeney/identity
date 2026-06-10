@@ -285,6 +285,7 @@ func (ti *TokenIssuer) parseWithKey(tokenStr string, key *ecdsa.PrivateKey) (*do
 		Username: c.Username,
 		Role:     c.Role,
 		IsActive: c.IsActive,
+		Audience: strings.Join(c.Audience, " "),
 	}, nil
 }
 

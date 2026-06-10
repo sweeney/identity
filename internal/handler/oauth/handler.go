@@ -482,9 +482,17 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Try parsing as user token
+	// Try parsing as user token. Only the client whose configured audience
+	// matches the token's aud claim may introspect it (RFC 7662 §2.1). User
+	// tokens minted through the OAuth/PKCE flow carry the client's audience;
+	// direct-API-login tokens carry none and therefore introspect as inactive
+	// against every client — the safe default.
 	if h.tokenIssuer != nil {
 		if uc, err := h.tokenIssuer.Parse(r.Context(), token); err == nil {
+			if client.Audience == "" || uc.Audience != client.Audience {
+				jsonOK(w, map[string]any{"active": false})
+				return
+			}
 			jsonOK(w, map[string]any{
 				"active":     true,
 				"sub":        uc.UserID,

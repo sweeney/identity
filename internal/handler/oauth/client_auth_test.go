@@ -485,3 +485,137 @@ func TestIntrospect_ServiceToken_IncludesAudClaim(t *testing.T) {
 	assert.Equal(t, true, body["active"])
 	assert.Equal(t, "https://api.example.com", body["aud"], "introspect response must include aud claim matching the token's audience")
 }
+
+// --- Issue #10: Introspect endpoint must not disclose user tokens to non-owning clients ---
+
+func TestIntrospect_UserToken_WrongClient_ReturnsInactive(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	issuer := newIntrospectTestIssuer(t)
+
+	// A user token minted for client-A's audience.
+	userToken, err := issuer.Mint(domain.TokenClaims{
+		UserID:   "user-123",
+		Username: "alice",
+		Role:     domain.RoleUser,
+		IsActive: true,
+		Audience: "https://app-a.example.com",
+	})
+	require.NoError(t, err)
+
+	// client-B authenticates with a different audience.
+	hashB := mustHash("secret-b")
+	clientB := &domain.OAuthClient{
+		ID:                      "client-b",
+		SecretHash:              hashB,
+		GrantTypes:              []string{"authorization_code"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+		Audience:                "https://app-b.example.com",
+	}
+	// GetClient is called once during client auth, and again to resolve the
+	// requesting client's configured audience.
+	svc.EXPECT().GetClient("client-b").Return(clientB, nil).AnyTimes()
+
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, nil, "", "")
+
+	form := url.Values{"token": {userToken}}
+	req := httptest.NewRequest("POST", "/oauth/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("client-b:secret-b")))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, false, body["active"], "client-B must not see client-A's user token as active")
+	_, hasSub := body["sub"]
+	assert.False(t, hasSub, "client-B must not receive the user's sub")
+	_, hasUsername := body["username"]
+	assert.False(t, hasUsername, "client-B must not receive the user's username")
+}
+
+func TestIntrospect_UserToken_NoAudienceClient_ReturnsInactive(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	issuer := newIntrospectTestIssuer(t)
+
+	// A user token minted for client-A's audience.
+	userToken, err := issuer.Mint(domain.TokenClaims{
+		UserID:   "user-123",
+		Username: "alice",
+		Role:     domain.RoleUser,
+		IsActive: true,
+		Audience: "https://app-a.example.com",
+	})
+	require.NoError(t, err)
+
+	// A client with no configured audience must never match a user token.
+	hashC := mustHash("secret-c")
+	clientC := &domain.OAuthClient{
+		ID:                      "client-c",
+		SecretHash:              hashC,
+		GrantTypes:              []string{"authorization_code"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+		Audience:                "",
+	}
+	svc.EXPECT().GetClient("client-c").Return(clientC, nil).AnyTimes()
+
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, nil, "", "")
+
+	form := url.Values{"token": {userToken}}
+	req := httptest.NewRequest("POST", "/oauth/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("client-c:secret-c")))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, false, body["active"], "a client with no audience must not introspect any user token as active")
+}
+
+func TestIntrospect_UserToken_OwningClient_ReturnsActive(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	issuer := newIntrospectTestIssuer(t)
+
+	userToken, err := issuer.Mint(domain.TokenClaims{
+		UserID:   "user-123",
+		Username: "alice",
+		Role:     domain.RoleUser,
+		IsActive: true,
+		Audience: "https://app-a.example.com",
+	})
+	require.NoError(t, err)
+
+	hashA := mustHash("secret-a")
+	clientA := &domain.OAuthClient{
+		ID:                      "client-a",
+		SecretHash:              hashA,
+		GrantTypes:              []string{"authorization_code"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+		Audience:                "https://app-a.example.com",
+	}
+	svc.EXPECT().GetClient("client-a").Return(clientA, nil).AnyTimes()
+
+	h := oauth.NewRouter(svc, "", issuer, nil, nil, nil, "", "")
+
+	form := url.Values{"token": {userToken}}
+	req := httptest.NewRequest("POST", "/oauth/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("client-a:secret-a")))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, true, body["active"], "the owning client must introspect its own user token as active")
+	assert.Equal(t, "user-123", body["sub"])
+	assert.Equal(t, "alice", body["username"])
+}
