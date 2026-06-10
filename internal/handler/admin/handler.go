@@ -12,6 +12,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -332,13 +333,39 @@ func (h *adminHandler) shouldPromptPasskey(userID string) bool {
 
 func (h *adminHandler) passkeyPrompt(w http.ResponseWriter, r *http.Request) {
 	next := r.URL.Query().Get("next")
-	if next == "" {
+	if !isSafeRelativePath(next) {
+		// next is attacker-controllable (the endpoint is reachable directly);
+		// reject anything that isn't a server-relative path to avoid an open
+		// redirect / latent XSS via the "Not now" link. Render as a plain
+		// string so html/template applies its URL filter as defence in depth.
 		next = "/admin/"
 	}
 	h.render(w, r, "passkey_prompt.html", map[string]any{
 		"HideNav": true,
-		"SkipURL": template.URL(next), //nolint:gosec // URL comes from the post-login redirect, which is /admin/ or set by server logic
+		"SkipURL": next,
 	})
+}
+
+// isSafeRelativePath reports whether p is a safe same-origin destination: a
+// non-empty server-relative path beginning with a single "/". It rejects
+// protocol-relative URLs ("//host"), absolute URLs, and any value carrying a
+// scheme (e.g. "javascript:", "com.foo.bar:"), so it can never trigger an open
+// redirect or smuggle a dangerous URI scheme into an href.
+func isSafeRelativePath(p string) bool {
+	if len(p) < 2 || p[0] != '/' || p[1] == '/' {
+		return false
+	}
+	// Reject control characters / whitespace that could confuse parsers.
+	for _, r := range p {
+		if r <= ' ' || r == '\\' {
+			return false
+		}
+	}
+	u, err := url.Parse(p)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "" && u.Host == "" && strings.HasPrefix(u.Path, "/")
 }
 
 // --- Passkeys ---

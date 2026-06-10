@@ -204,11 +204,13 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 		redirectURL += "&state=" + url.QueryEscape(state)
 	}
 
-	// If user has no passkeys and the browser supports WebAuthn, show the prompt
+	// If user has no passkeys and the browser supports WebAuthn, show the prompt.
+	// redirectURL is server-built from the registered redirect_uri (validated in
+	// the authorize flow) plus the issued code/state, so we carry it inside the
+	// signed prompt cookie rather than as a client-controllable query parameter.
 	if r.FormValue("webauthn_supported") == "1" && h.shouldPromptPasskey(userID) {
-		h.setPromptSession(w, userID)
-		promptURL := "/oauth/passkey-prompt?next=" + url.QueryEscape(redirectURL)
-		http.Redirect(w, r, promptURL, http.StatusFound)
+		h.setPromptSession(w, userID, redirectURL)
+		http.Redirect(w, r, "/oauth/passkey-prompt", http.StatusFound)
 		return
 	}
 
@@ -612,11 +614,26 @@ func (h *oauthHandler) shouldPromptPasskey(userID string) bool {
 	return len(creds) == 0
 }
 
-// setPromptSession sets a short-lived cookie that identifies the user during the passkey prompt.
-func (h *oauthHandler) setPromptSession(w http.ResponseWriter, userID string) {
-	claims := jwt.RegisteredClaims{
-		Subject:   userID,
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+// promptClaims are the claims carried by the short-lived passkey-prompt cookie.
+// next holds the server-built post-login redirect URL (the registered
+// redirect_uri plus code/state). Because the cookie is HMAC-signed by the
+// server, next is trusted and cannot be tampered with by the client — this is
+// what lets the prompt page render it as a "Not now" deep link (including custom
+// app schemes) without an open-redirect / XSS risk.
+type promptClaims struct {
+	Next string `json:"next,omitempty"`
+	jwt.RegisteredClaims
+}
+
+// setPromptSession sets a short-lived cookie that identifies the user during the
+// passkey prompt and carries the server-validated next redirect URL.
+func (h *oauthHandler) setPromptSession(w http.ResponseWriter, userID, next string) {
+	claims := promptClaims{
+		Next: next,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenStr, err := token.SignedString([]byte(h.sessionKey))
@@ -633,21 +650,28 @@ func (h *oauthHandler) setPromptSession(w http.ResponseWriter, userID string) {
 	})
 }
 
-// promptUserID returns the user ID from the prompt session cookie, or "".
-func (h *oauthHandler) promptUserID(r *http.Request) string {
+// promptSession returns the user ID and trusted next URL from the prompt
+// session cookie. userID is "" when the cookie is missing or invalid.
+func (h *oauthHandler) promptSession(r *http.Request) (userID, next string) {
 	cookie, err := r.Cookie(oauthPromptCookie)
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	claims := &jwt.RegisteredClaims{}
+	claims := &promptClaims{}
 	token, err := jwt.ParseWithClaims(cookie.Value, claims,
 		func(t *jwt.Token) (any, error) { return []byte(h.sessionKey), nil },
 		jwt.WithExpirationRequired(),
 	)
 	if err != nil || !token.Valid {
-		return ""
+		return "", ""
 	}
-	return claims.Subject
+	return claims.Subject, claims.Next
+}
+
+// promptUserID returns the user ID from the prompt session cookie, or "".
+func (h *oauthHandler) promptUserID(r *http.Request) string {
+	userID, _ := h.promptSession(r)
+	return userID
 }
 
 // clearPromptSession removes the prompt cookie.
@@ -674,17 +698,25 @@ func headerOrQuery(r *http.Request, header, query string) string {
 
 // passkeyPrompt renders the passkey registration prompt page during OAuth flow.
 func (h *oauthHandler) passkeyPrompt(w http.ResponseWriter, r *http.Request) {
-	userID := h.promptUserID(r)
+	userID, next := h.promptSession(r)
 	if userID == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	next := r.URL.Query().Get("next")
-	h.render(w, "passkey_prompt.html", map[string]any{
+	data := map[string]any{
 		"HideNav":   true,
-		"SkipURL":   template.URL(next), //nolint:gosec // URL validated against registered redirect_uri before being placed in query string
 		"OAuthFlow": true,
-	})
+	}
+	// next comes from the HMAC-signed prompt cookie, where it was set to the
+	// server-built redirect URL (registered redirect_uri + code/state). It is
+	// therefore trusted and may carry a custom app scheme, so template.URL is
+	// justified. We deliberately ignore any ?next= query parameter, which an
+	// attacker could control and use for an open redirect. If no trusted next
+	// is present, the "Not now" link is simply omitted.
+	if next != "" {
+		data["SkipURL"] = template.URL(next) //nolint:gosec // next is from the HMAC-signed prompt cookie, not client input
+	}
+	h.render(w, "passkey_prompt.html", data)
 }
 
 // passkeyPromptRegisterBegin starts registration using the prompt session.
