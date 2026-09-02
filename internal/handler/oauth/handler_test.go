@@ -2,6 +2,7 @@ package oauth_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -530,4 +531,80 @@ func TestPasskeyPrompt_NoSession_Redirects(t *testing.T) {
 	h.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusSeeOther, rr.Code)
+}
+
+// --- Token endpoint: genuine server faults (issue #23, related observation) ---
+
+// RFC 6749 §5.2 enumerates the token-endpoint error codes and pairs them with
+// HTTP 400. `server_error` is not among them — it is an *authorization* endpoint
+// code (§4.1.2.1). The default branch is only reached on a genuine
+// infrastructure fault, which must surface as 5xx so monitoring and client
+// retry logic can tell it apart from a client mistake.
+func TestTokenEndpoint_ServerFaultsReturn500(t *testing.T) {
+	infraErr := errors.New("get auth code: database is locked")
+
+	t.Run("authorization_code", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		svc := mocks.NewMockOAuthServicer(ctrl)
+		svc.EXPECT().GetClient("client-1").Return(&domain.OAuthClient{ID: "client-1"}, nil)
+		svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil, infraErr)
+
+		h := newTestRouter(svc)
+		rr := postForm(t, h, "/oauth/token", url.Values{
+			"grant_type":    {"authorization_code"},
+			"client_id":     {"client-1"},
+			"code":          {"some-code"},
+			"redirect_uri":  {"https://myapp.example.com/callback"},
+			"code_verifier": {"verifier"},
+		})
+
+		assert.Equal(t, http.StatusInternalServerError, rr.Code)
+		var body map[string]string
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		assert.Equal(t, "server_error", body["error"])
+		// The internal cause must never leak to the client.
+		assert.NotContains(t, body["error_description"], "database is locked")
+	})
+
+	t.Run("refresh_token", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		svc := mocks.NewMockOAuthServicer(ctrl)
+		svc.EXPECT().RefreshToken("some-refresh-token").Return(nil, infraErr)
+
+		h := newTestRouter(svc)
+		rr := postForm(t, h, "/oauth/token", url.Values{
+			"grant_type":    {"refresh_token"},
+			"refresh_token": {"some-refresh-token"},
+		})
+
+		assert.Equal(t, http.StatusInternalServerError, rr.Code)
+		var body map[string]string
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		assert.Equal(t, "server_error", body["error"])
+	})
+}
+
+// Client-side mistakes must keep their RFC-mandated 400 — the 5xx change above
+// must not bleed into the normal error paths.
+func TestTokenEndpoint_ClientErrorsStayAt400(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	svc.EXPECT().GetClient("client-1").Return(&domain.OAuthClient{ID: "client-1"}, nil)
+	svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, service.ErrAuthCodeAlreadyUsed)
+
+	h := newTestRouter(svc)
+	rr := postForm(t, h, "/oauth/token", url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {"client-1"},
+		"code":          {"used-code"},
+		"redirect_uri":  {"https://myapp.example.com/callback"},
+		"code_verifier": {"verifier"},
+	})
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "invalid_grant", body["error"])
 }
