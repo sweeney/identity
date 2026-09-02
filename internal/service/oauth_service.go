@@ -219,7 +219,17 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 		return nil, ErrPKCEVerificationFailed
 	}
 
+	// Single-use enforcement is the conditional UPDATE inside MarkUsed, not the
+	// UsedAt check above: two concurrent exchanges of the same code both read
+	// UsedAt == nil, and only the one whose UPDATE affects a row may proceed.
+	// The store reports the lost race as domain.ErrNotFound; translate it back
+	// into the service sentinel so the token endpoint answers invalid_grant
+	// (RFC 6749 §5.2) instead of falling through to server_error. Any other
+	// error is a genuine infrastructure fault and must stay one.
 	if err := s.codes.MarkUsed(code.ID, time.Now().UTC()); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, ErrAuthCodeAlreadyUsed
+		}
 		return nil, fmt.Errorf("mark code used: %w", err)
 	}
 

@@ -553,3 +553,78 @@ func TestIssueClientCredentials_EmptyAudience(t *testing.T) {
 	_, err := svc.IssueClientCredentials(client, "read:users", "1.2.3.4")
 	assert.Error(t, err)
 }
+
+// --- ExchangeCode: concurrent-exchange race (issue #23) ---
+
+// When two requests exchange the same code concurrently, both pass the
+// `code.UsedAt == nil` check, but only one wins the conditional UPDATE in
+// MarkUsed. The loser gets domain.ErrNotFound from the store, which must be
+// translated back into the service sentinel so the token handler renders
+// `invalid_grant` (RFC 6749 §5.2) rather than falling through to `server_error`.
+func TestOAuthService_ExchangeCode_LostRaceMapsToAlreadyUsed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, authSvc, clients, codes := newOAuthService(t, ctrl)
+
+	verifier := "the-code-verifier-value"
+	rawCode := "raced-code"
+	codeHash := service.HashToken(rawCode)
+	now := time.Now().UTC()
+	authCode := &domain.AuthCode{
+		ID:            "code-race",
+		CodeHash:      codeHash,
+		ClientID:      "client-1",
+		UserID:        "user-123",
+		RedirectURI:   "https://myapp.example.com/callback",
+		CodeChallenge: pkceChallenge(verifier),
+		IssuedAt:      now.Add(-30 * time.Second),
+		ExpiresAt:     now.Add(30 * time.Second),
+		UsedAt:        nil, // read before the winner marked it used
+	}
+
+	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
+	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
+	// The winning racer already flipped used_at, so the conditional UPDATE
+	// affects zero rows and the store reports ErrNotFound.
+	codes.EXPECT().MarkUsed("code-race", gomock.Any()).Return(domain.ErrNotFound)
+	// Critically, the loser must not be issued tokens.
+	authSvc.EXPECT().IssueTokensForUser(gomock.Any(), gomock.Any()).Times(0)
+
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
+	assert.ErrorIs(t, err, service.ErrAuthCodeAlreadyUsed,
+		"losing racer must surface ErrAuthCodeAlreadyUsed so the handler maps it to invalid_grant")
+}
+
+// A genuine infrastructure failure from MarkUsed (disk error, locked database)
+// must NOT be laundered into ErrAuthCodeAlreadyUsed — only domain.ErrNotFound
+// means "someone else already redeemed this code".
+func TestOAuthService_ExchangeCode_MarkUsedInfraErrorIsNotAlreadyUsed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, authSvc, clients, codes := newOAuthService(t, ctrl)
+
+	verifier := "the-code-verifier-value"
+	rawCode := "broken-db-code"
+	codeHash := service.HashToken(rawCode)
+	now := time.Now().UTC()
+	authCode := &domain.AuthCode{
+		ID:            "code-infra",
+		CodeHash:      codeHash,
+		ClientID:      "client-1",
+		UserID:        "user-123",
+		RedirectURI:   "https://myapp.example.com/callback",
+		CodeChallenge: pkceChallenge(verifier),
+		IssuedAt:      now.Add(-30 * time.Second),
+		ExpiresAt:     now.Add(30 * time.Second),
+	}
+
+	diskErr := errors.New("database is locked")
+	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
+	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
+	codes.EXPECT().MarkUsed("code-infra", gomock.Any()).Return(diskErr)
+	authSvc.EXPECT().IssueTokensForUser(gomock.Any(), gomock.Any()).Times(0)
+
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, service.ErrAuthCodeAlreadyUsed,
+		"a real infrastructure fault must stay a server fault, not become invalid_grant")
+	assert.ErrorIs(t, err, diskErr, "the underlying cause must remain inspectable")
+}
