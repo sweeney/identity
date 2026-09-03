@@ -266,14 +266,20 @@ The `/oauth/token` endpoint uses RFC 6749 error format, which differs from the r
 | `invalid_grant` | 400 | Bad/expired/replayed code, PKCE failure, bad refresh token |
 | `unsupported_grant_type` | 400 | Grant type not recognized |
 | `unauthorized_client` | 400 | Client not authorized for this grant type |
-| `invalid_client` | 401 | Bad client credentials or auth method mismatch |
+| `invalid_client` | 401 | Bad client credentials or auth method mismatch (400 when the `client_id` is simply unknown and no credentials were presented) |
 | `invalid_scope` | 400 | Requested scope exceeds client's allowed scopes |
 | `access_denied` | 400 | Account disabled |
 | `server_error` | 500 | Unexpected internal error |
 
-**Retry guidance.** Every `4xx` code above means the request itself was wrong —
+**Retry guidance.** Every `error` code above means the request itself was wrong —
 retrying it unchanged will fail again. Only `server_error` (HTTP 500) is
 transient; retry it with backoff.
+
+Two non-RFC responses are also retryable: **429** (`rate_limit_exceeded`, in the
+standard error envelope rather than the RFC 6749 shape) — honour the
+`Retry-After` header — and any network-level failure. Everything else is final.
+`POST /oauth/token` sits behind the strict auth rate limiter (5 requests/minute
+per IP, burst 5), so a polling device is the client most likely to see a 429.
 
 In particular, an authorization code is single-use. If two requests exchange the
 same code — a double-submitted form, an over-eager retry, two tabs finishing the

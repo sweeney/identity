@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,12 +44,11 @@ import (
 
 // raceStack is a full, real dependency graph: SQLite -> stores -> services.
 type raceStack struct {
-	oauthSvc  *service.OAuthService
-	codeStore *store.OAuthCodeStore
-	database  *db.Database
-	userID    string
-	clientID  string
-	redirect  string
+	oauthSvc *service.OAuthService
+	database *db.Database
+	userID   string
+	clientID string
+	redirect string
 }
 
 // newRaceStack wires the real stack. codeRepo lets a test interpose a
@@ -103,12 +103,11 @@ func newRaceStack(t *testing.T, wrap func(domain.OAuthCodeRepository) domain.OAu
 	oauthSvc := service.NewOAuthService(authSvc, issuer, clients, codeRepo, audit, 60*time.Second)
 
 	return &raceStack{
-		oauthSvc:  oauthSvc,
-		codeStore: codeStore,
-		database:  database,
-		userID:    user.ID,
-		clientID:  client.ID,
-		redirect:  client.RedirectURIs[0],
+		oauthSvc: oauthSvc,
+		database: database,
+		userID:   user.ID,
+		clientID: client.ID,
+		redirect: client.RedirectURIs[0],
 	}
 }
 
@@ -127,15 +126,31 @@ type barrierCodeRepo struct {
 	domain.OAuthCodeRepository
 	readsDone *sync.WaitGroup
 	release   chan struct{}
+	arrivals  atomic.Int32
+	racers    int32
 	once      sync.Once
 }
 
+// gateTimeout bounds the wait at the gate. If fewer than `racers` callers ever
+// reach GetByHash — a racer rejected by a validation added ahead of the lookup,
+// say — the gate never opens. Without this the test would hang until the
+// package timeout and dump every goroutine, pointing at `chan receive` rather
+// than at the real cause; with it, the assertions run and report the failure.
+const gateTimeout = 30 * time.Second
+
 func (r *barrierCodeRepo) GetByHash(codeHash string) (*domain.AuthCode, error) {
 	code, err := r.OAuthCodeRepository.GetByHash(codeHash)
-	// Signal this racer has read the (still unused) row, then wait until
-	// every racer has done the same before anyone is allowed to write.
-	r.readsDone.Done()
-	<-r.release
+	// Signal this racer has read the (still unused) row, then wait until every
+	// racer has done the same before anyone is allowed to write. The count is
+	// bounded so an unexpected extra read cannot drive the WaitGroup negative
+	// and panic somewhere unrelated to the mistake.
+	if r.arrivals.Add(1) <= r.racers {
+		r.readsDone.Done()
+	}
+	select {
+	case <-r.release:
+	case <-time.After(gateTimeout):
+	}
 	return code, err
 }
 
@@ -150,7 +165,7 @@ func TestExchangeCode_ConcurrentRace_LoserGetsInvalidGrant(t *testing.T) {
 
 	var readsDone sync.WaitGroup
 	readsDone.Add(racers)
-	barrier := &barrierCodeRepo{readsDone: &readsDone, release: make(chan struct{})}
+	barrier := &barrierCodeRepo{readsDone: &readsDone, release: make(chan struct{}), racers: racers}
 
 	st := newRaceStack(t, func(real domain.OAuthCodeRepository) domain.OAuthCodeRepository {
 		barrier.OAuthCodeRepository = real
@@ -207,7 +222,7 @@ func TestExchangeCode_ConcurrentRace_NoDoubleIssuance(t *testing.T) {
 
 	var readsDone sync.WaitGroup
 	readsDone.Add(racers)
-	barrier := &barrierCodeRepo{readsDone: &readsDone, release: make(chan struct{})}
+	barrier := &barrierCodeRepo{readsDone: &readsDone, release: make(chan struct{}), racers: racers}
 
 	st := newRaceStack(t, func(real domain.OAuthCodeRepository) domain.OAuthCodeRepository {
 		barrier.OAuthCodeRepository = real
@@ -259,7 +274,7 @@ func TestTokenEndpoint_ConcurrentExchange_ReturnsInvalidGrant(t *testing.T) {
 
 	var readsDone sync.WaitGroup
 	readsDone.Add(racers)
-	barrier := &barrierCodeRepo{readsDone: &readsDone, release: make(chan struct{})}
+	barrier := &barrierCodeRepo{readsDone: &readsDone, release: make(chan struct{}), racers: racers}
 
 	st := newRaceStack(t, func(real domain.OAuthCodeRepository) domain.OAuthCodeRepository {
 		barrier.OAuthCodeRepository = real

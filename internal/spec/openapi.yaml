@@ -129,14 +129,29 @@ components:
       description: |
         RFC 6749 error format used by /oauth/token.
 
-        The §5.2 error codes are returned with HTTP 400. `server_error` is not a
-        §5.2 token-endpoint code — it signals a server-side fault and is returned
+        The §5.2 error codes are returned with HTTP 400, as are the RFC 8628
+        device-grant codes `authorization_pending`, `slow_down` and
+        `expired_token`. `invalid_client` is returned with HTTP 401 when the
+        client presented credentials and they were wrong (and with 400 when the
+        client_id is simply unknown). `server_error` is not a §5.2
+        token-endpoint code — it signals a server-side fault and is returned
         with HTTP 500, so clients can distinguish a bad request (do not retry)
         from an outage (retry with backoff).
       properties:
         error:
           type: string
-          enum: [invalid_request, invalid_grant, unsupported_grant_type, access_denied, server_error]
+          enum:
+            - invalid_request
+            - invalid_client
+            - invalid_grant
+            - unauthorized_client
+            - unsupported_grant_type
+            - invalid_scope
+            - access_denied
+            - authorization_pending
+            - slow_down
+            - expired_token
+            - server_error
         error_description:
           type: string
 
@@ -1036,6 +1051,10 @@ paths:
                 $ref: '#/components/schemas/OAuthError'
         "401":
           description: Invalid client credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
         "500":
           description: |
             Server-side fault (`server_error`). The request may be retried with backoff.
