@@ -55,7 +55,7 @@ func (h *oauthHandler) deviceAuthorize(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrInvalidScope):
 			oauthError(w, "invalid_scope", "Requested scope exceeds client's allowed scopes.")
 		default:
-			oauthError(w, "server_error", "An unexpected error occurred.")
+			oauthServerError(w)
 		}
 		return
 	}
@@ -107,7 +107,7 @@ func (h *oauthHandler) deviceClaim(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrInvalidScope):
 			oauthError(w, "invalid_scope", "Requested scope exceeds client's allowed scopes.")
 		default:
-			oauthError(w, "server_error", "An unexpected error occurred.")
+			oauthServerError(w)
 		}
 		return
 	}
@@ -155,7 +155,7 @@ func (h *oauthHandler) tokenDeviceCode(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrAccountDisabled):
 			oauthError(w, "access_denied", "Account is disabled.")
 		default:
-			oauthError(w, "server_error", "An unexpected error occurred.")
+			oauthServerError(w)
 		}
 		return
 	}

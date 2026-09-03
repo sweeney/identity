@@ -357,7 +357,7 @@ func (h *oauthHandler) tokenAuthCode(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrAccountDisabled):
 			oauthError(w, "access_denied", "Account is disabled.")
 		default:
-			oauthError(w, "server_error", "An unexpected error occurred.")
+			oauthServerError(w)
 		}
 		return
 	}
@@ -384,7 +384,7 @@ func (h *oauthHandler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrAccountDisabled):
 			oauthError(w, "access_denied", "Account is disabled.")
 		default:
-			oauthError(w, "server_error", "An unexpected error occurred.")
+			oauthServerError(w)
 		}
 		return
 	}
@@ -413,12 +413,19 @@ func (h *oauthHandler) tokenClientCredentials(w http.ResponseWriter, r *http.Req
 	if authMethod == "" {
 		authMethod = "none"
 	}
+	// RFC 6749 §5.2: a client that *attempted* authentication and got it wrong
+	// must receive 401 with WWW-Authenticate, not 400. Both branches below are
+	// reached only after extractClientCredentials succeeded, so credentials were
+	// presented — unlike the unknown-client_id paths, which never saw any and
+	// correctly stay at 400.
 	if authMethod == "none" {
-		oauthError(w, "invalid_client", "This client is not configured for client authentication.")
+		w.Header().Set("WWW-Authenticate", "Basic")
+		oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "This client is not configured for client authentication.")
 		return
 	}
 	if authMethod != creds.Method {
-		oauthError(w, "invalid_client", "Client authentication method mismatch.")
+		w.Header().Set("WWW-Authenticate", "Basic")
+		oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Client authentication method mismatch.")
 		return
 	}
 
@@ -439,7 +446,7 @@ func (h *oauthHandler) tokenClientCredentials(w http.ResponseWriter, r *http.Req
 		case errors.Is(err, service.ErrInvalidScope):
 			oauthError(w, "invalid_scope", "Requested scope exceeds client's allowed scopes.")
 		default:
-			oauthError(w, "server_error", "An unexpected error occurred.")
+			oauthServerError(w)
 		}
 		return
 	}
@@ -592,6 +599,18 @@ type oauthErrorBody struct {
 
 func oauthError(w http.ResponseWriter, code, description string) {
 	oauthErrorWithStatus(w, http.StatusBadRequest, code, description)
+}
+
+// oauthServerError reports a genuine server-side fault at the token endpoint.
+//
+// RFC 6749 §5.2 enumerates the token-endpoint error codes — invalid_request,
+// invalid_client, invalid_grant, unauthorized_client, unsupported_grant_type,
+// invalid_scope — and pairs them with HTTP 400. `server_error` is not among
+// them; it belongs to the authorization endpoint (§4.1.2.1). Returning it with
+// a 400 tells a client the request was its own fault and hides real outages
+// from monitoring, so the unexpected-error path answers 5xx instead.
+func oauthServerError(w http.ResponseWriter) {
+	oauthErrorWithStatus(w, http.StatusInternalServerError, "server_error", "An unexpected error occurred.")
 }
 
 func oauthErrorWithStatus(w http.ResponseWriter, status int, code, description string) {

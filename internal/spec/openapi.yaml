@@ -126,11 +126,32 @@ components:
     OAuthError:
       type: object
       required: [error, error_description]
-      description: RFC 6749 error format used by /oauth/token
+      description: |
+        RFC 6749 error format used by /oauth/token.
+
+        The §5.2 error codes are returned with HTTP 400, as are the RFC 8628
+        device-grant codes `authorization_pending`, `slow_down` and
+        `expired_token`. `invalid_client` is returned with HTTP 401 when the
+        client presented credentials and they were wrong (and with 400 when the
+        client_id is simply unknown). `server_error` is not a §5.2
+        token-endpoint code — it signals a server-side fault and is returned
+        with HTTP 500, so clients can distinguish a bad request (do not retry)
+        from an outage (retry with backoff).
       properties:
         error:
           type: string
-          enum: [invalid_request, invalid_grant, unsupported_grant_type, access_denied, server_error]
+          enum:
+            - invalid_request
+            - invalid_client
+            - invalid_grant
+            - unauthorized_client
+            - unsupported_grant_type
+            - invalid_scope
+            - access_denied
+            - authorization_pending
+            - slow_down
+            - expired_token
+            - server_error
         error_description:
           type: string
 
@@ -1019,9 +1040,28 @@ paths:
                   scope:
                     type: string
         "400":
-          description: Invalid request, unsupported grant type, invalid scope, or unauthorized client
+          description: |
+            Invalid request, unsupported grant type, invalid scope, or unauthorized client.
+            An authorization code that is unknown, expired, or already redeemed —
+            including one lost to a concurrent exchange of the same code — returns
+            `invalid_grant` (RFC 6749 §5.2). Clients must not retry these.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
         "401":
           description: Invalid client credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        "500":
+          description: |
+            Server-side fault (`server_error`). The request may be retried with backoff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
 
   /oauth/device_authorization:
     servers: *servers-root
@@ -1077,6 +1117,8 @@ paths:
                     example: 5
         "400":
           description: Invalid request, unknown client, or unauthorized client
+        "500":
+          description: Server-side fault (`server_error`)
 
   /oauth/device/claim:
     servers: *servers-root
@@ -1128,6 +1170,8 @@ paths:
                     type: integer
         "400":
           description: Unknown or revoked claim code, unknown client, or unauthorized client
+        "500":
+          description: Server-side fault (`server_error`)
 
   /oauth/device:
     servers: *servers-root
