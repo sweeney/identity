@@ -261,7 +261,9 @@ func TestClientCredentials_AuthMethodMismatch(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	// RFC 6749 §5.2: the client authenticated, just with the wrong method.
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Equal(t, "Basic", rr.Header().Get("WWW-Authenticate"))
 }
 
 func TestClientCredentials_PublicClient_Rejected(t *testing.T) {
@@ -285,7 +287,10 @@ func TestClientCredentials_PublicClient_Rejected(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	// Credentials were presented to a client registered for none — an
+	// authentication failure (401), not a malformed request (400).
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Equal(t, "Basic", rr.Header().Get("WWW-Authenticate"))
 }
 
 func TestClientCredentials_SecretRotation(t *testing.T) {

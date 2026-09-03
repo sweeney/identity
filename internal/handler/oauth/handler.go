@@ -413,12 +413,19 @@ func (h *oauthHandler) tokenClientCredentials(w http.ResponseWriter, r *http.Req
 	if authMethod == "" {
 		authMethod = "none"
 	}
+	// RFC 6749 §5.2: a client that *attempted* authentication and got it wrong
+	// must receive 401 with WWW-Authenticate, not 400. Both branches below are
+	// reached only after extractClientCredentials succeeded, so credentials were
+	// presented — unlike the unknown-client_id paths, which never saw any and
+	// correctly stay at 400.
 	if authMethod == "none" {
-		oauthError(w, "invalid_client", "This client is not configured for client authentication.")
+		w.Header().Set("WWW-Authenticate", "Basic")
+		oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "This client is not configured for client authentication.")
 		return
 	}
 	if authMethod != creds.Method {
-		oauthError(w, "invalid_client", "Client authentication method mismatch.")
+		w.Header().Set("WWW-Authenticate", "Basic")
+		oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Client authentication method mismatch.")
 		return
 	}
 
