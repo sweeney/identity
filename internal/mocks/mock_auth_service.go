@@ -55,6 +55,21 @@ func (mr *MockAuthServicerMockRecorder) AuthorizeUser(username, password, client
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AuthorizeUser", reflect.TypeOf((*MockAuthServicer)(nil).AuthorizeUser), username, password, clientIP)
 }
 
+// IssueTokensForGrant mocks base method.
+func (m *MockAuthServicer) IssueTokensForGrant(userID string, grant service.GrantContext) (*service.LoginResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IssueTokensForGrant", userID, grant)
+	ret0, _ := ret[0].(*service.LoginResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IssueTokensForGrant indicates an expected call of IssueTokensForGrant.
+func (mr *MockAuthServicerMockRecorder) IssueTokensForGrant(userID, grant any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueTokensForGrant", reflect.TypeOf((*MockAuthServicer)(nil).IssueTokensForGrant), userID, grant)
+}
+
 // IssueTokensForUser mocks base method.
 func (m *MockAuthServicer) IssueTokensForUser(userID, audience string) (*service.LoginResult, error) {
 	m.ctrl.T.Helper()

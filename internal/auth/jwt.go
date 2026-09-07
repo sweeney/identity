@@ -24,6 +24,7 @@ type identityClaims struct {
 	Username string      `json:"usr"`
 	Role     domain.Role `json:"rol"`
 	IsActive bool        `json:"act"`
+	Scope    string      `json:"scope,omitempty"`
 }
 
 // serviceClaims is the JWT claim set for client_credentials tokens (RFC 9068).
@@ -102,6 +103,7 @@ func (ti *TokenIssuer) Mint(claims domain.TokenClaims) (string, error) {
 		Username:         claims.Username,
 		Role:             claims.Role,
 		IsActive:         claims.IsActive,
+		Scope:            claims.Scope,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwtClaims)
@@ -293,6 +295,7 @@ func (ti *TokenIssuer) parseWithKey(tokenStr string, key *ecdsa.PrivateKey) (*do
 		Role:     c.Role,
 		IsActive: c.IsActive,
 		Audience: []string(c.Audience),
+		Scope:    c.Scope,
 	}, nil
 }
 

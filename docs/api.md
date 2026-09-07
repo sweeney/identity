@@ -524,7 +524,7 @@ client_id=my-sensor
 | Field | Required | Description |
 |---|---|---|
 | `client_id` | Yes | Registered client ID |
-| `scope` | No | Space-delimited scopes; defaults to all client scopes |
+| `scope` | No | Space-delimited scopes; defaults to all client scopes. The scope shown to the user on the approval page is the scope embedded in the issued access token (`scope` claim) and carried across every refresh. |
 
 **Response 200**:
 
@@ -641,7 +641,7 @@ client_id=my-sensor
 |---|---|---|
 | `client_id` | Yes | Registered client ID (baked in firmware) |
 | `claim_code` | Yes | 12-char claim code (baked in firmware or NVS) |
-| `scope` | No | Space-delimited scopes |
+| `scope` | No | Space-delimited scopes. Enforced: it appears as the `scope` claim on the issued access token and survives rotation. |
 
 **Response 200**:
 

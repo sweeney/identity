@@ -92,6 +92,18 @@ resource server being replayed against the Identity API.
 the claim verbatim; test membership with `HasAudience`, never by comparing or
 splitting strings.
 
+## Device grant scope and claim codes
+
+A device grant's `scope` is enforced, not just displayed. The scope the user
+approves is embedded as the `scope` claim on the issued access token and is
+carried on the refresh token, so it survives rotation rather than widening back
+to full privilege on the first refresh.
+
+Revoking a claim code at `/admin/claim-codes` stops the paired device two ways:
+its next poll fails with `claim_code_revoked`, and the refresh tokens that claim
+code already produced are revoked (`refresh_tokens.claim_code_id`, migration
+008). A claim code binds to exactly one user, compare-and-swap, on first use.
+
 ## Token rotation and theft detection
 
 Every refresh rotates the token: old token is revoked, new pair issued. If a **previously-used** refresh token is ever presented again, the server assumes the token was stolen. It revokes the **entire token family** and returns `token_family_compromised`. The client must clear all tokens and show the login screen.

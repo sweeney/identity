@@ -73,8 +73,10 @@ func TestDeviceFlowService_PollForToken_LiveClaimCode_StillWorks(t *testing.T) {
 	devices.EXPECT().MarkConsumed("appr-3", gomock.Any()).Return(nil)
 	claimCodes.EXPECT().GetByID("claim-2").Return(live, nil).AnyTimes()
 	clients.EXPECT().GetByID("device-client").Return(deviceClient(), nil)
-	auth.EXPECT().IssueTokensForUser("user-99", "https://api.example.com").
-		Return(&service.LoginResult{AccessToken: "a", RefreshToken: "r"}, nil)
+	auth.EXPECT().IssueTokensForGrant("user-99", service.GrantContext{
+		Audience:    "https://api.example.com",
+		ClaimCodeID: "claim-2",
+	}).Return(&service.LoginResult{AccessToken: "a", RefreshToken: "r"}, nil)
 
 	got, err := svc.PollForToken("device-client", "raw-appr-3", "1.2.3.4")
 	require.NoError(t, err)

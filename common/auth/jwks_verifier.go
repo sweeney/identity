@@ -35,6 +35,7 @@ type identityClaims struct {
 	Username string `json:"usr"`
 	Role     Role   `json:"rol"`
 	IsActive bool   `json:"act"`
+	Scope    string `json:"scope,omitempty"`
 }
 
 type serviceClaims struct {
@@ -226,6 +227,7 @@ func (v *JWKSVerifier) Parse(ctx context.Context, tokenStr string) (*TokenClaims
 		Role:     claims.Role,
 		IsActive: claims.IsActive,
 		Audience: []string(claims.Audience),
+		Scope:    claims.Scope,
 	}, nil
 }
 

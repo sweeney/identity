@@ -71,6 +71,7 @@ type DeviceFlowService struct {
 	clients    domain.OAuthClientRepository
 	devices    domain.DeviceAuthorizationRepository
 	claimCodes domain.ClaimCodeRepository
+	tokens     domain.TokenRepository
 	audit      domain.AuditRepository
 	cfg        DeviceFlowConfig
 }
@@ -81,6 +82,7 @@ func NewDeviceFlowService(
 	clients domain.OAuthClientRepository,
 	devices domain.DeviceAuthorizationRepository,
 	claimCodes domain.ClaimCodeRepository,
+	tokens domain.TokenRepository,
 	audit domain.AuditRepository,
 	cfg DeviceFlowConfig,
 ) *DeviceFlowService {
@@ -95,6 +97,7 @@ func NewDeviceFlowService(
 		clients:    clients,
 		devices:    devices,
 		claimCodes: claimCodes,
+		tokens:     tokens,
 		audit:      audit,
 		cfg:        cfg,
 	}
@@ -249,7 +252,15 @@ func (s *DeviceFlowService) PollForToken(clientID, rawDeviceCode, ip string) (*L
 		audience = client.Audience
 	}
 
-	result, err := s.auth.IssueTokensForUser(da.UserID, audience)
+	// The scope the user consented to on the approval page is the scope the
+	// device gets. It was validated at authorization time, persisted, and shown
+	// to the user — and then dropped here, so every device received a token
+	// with the user's full privileges regardless of what it asked for.
+	result, err := s.auth.IssueTokensForGrant(da.UserID, GrantContext{
+		Audience:    audience,
+		Scope:       da.Scope,
+		ClaimCodeID: da.ClaimCodeID,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -494,6 +505,15 @@ func (s *DeviceFlowService) RevokeClaimCode(id, ip string) error {
 
 	if err := s.claimCodes.Revoke(id, time.Now().UTC()); err != nil {
 		return fmt.Errorf("revoke: %w", err)
+	}
+
+	// Stopping the device's next poll is not enough on its own: it is already
+	// holding a refresh token good for 30 days. The admin UI says "the device
+	// will stop working", so the tokens the claim code produced go too.
+	if s.tokens != nil {
+		if err := s.tokens.RevokeByClaimCodeID(id); err != nil {
+			return fmt.Errorf("revoke tokens for claim code: %w", err)
+		}
 	}
 	s.record(&domain.AuthEvent{
 		EventType: domain.EventClaimCodeRevoked,

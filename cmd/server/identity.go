@@ -235,7 +235,7 @@ func runIdentityServer() error {
 	authSvc := service.NewAuthService(issuer, userStore, tokenStore, backupMgr, auditStore, cfg.RefreshTokenTTL)
 	userSvc := service.NewUserService(userStore, tokenStore, backupMgr, auditStore, 10)
 	oauthSvc := service.NewOAuthService(authSvc, issuer, oauthClientStore, oauthCodeStore, auditStore, 60*time.Second)
-	deviceSvc := service.NewDeviceFlowService(authSvc, oauthClientStore, deviceAuthStore, claimCodeStore, auditStore, service.DeviceFlowConfig{
+	deviceSvc := service.NewDeviceFlowService(authSvc, oauthClientStore, deviceAuthStore, claimCodeStore, tokenStore, auditStore, service.DeviceFlowConfig{
 		DeviceCodeTTL:   10 * time.Minute,
 		PollInterval:    5,
 		VerificationURI: cfg.JWTIssuer + "/oauth/device",

@@ -64,6 +64,12 @@ type loginArgs struct {
 	familyID   string // empty = generate new family
 	deviceHint string
 	audience   string // optional aud claim; set for OAuth PKCE flow
+
+	// scope is the space-delimited scope the grant was consented for, carried
+	// onto both the access token and the refresh token so it survives rotation.
+	scope string
+	// claimCodeID ties a device-grant family to the claim code that produced it.
+	claimCodeID string
 }
 
 // Login authenticates a user by username and password, returning JWT tokens.
@@ -146,10 +152,31 @@ func (s *AuthService) AuthorizeUser(username, password, clientIP string) (string
 	return user.ID, nil
 }
 
+// GrantContext describes what a pre-authenticated grant was actually for. It
+// travels onto the issued tokens and, via the refresh token, survives rotation.
+type GrantContext struct {
+	// Audience is the aud claim to embed; empty omits it.
+	Audience string
+	// Scope is the space-delimited scope the user consented to; empty means no
+	// scope restriction. The device grant consents to a scope, so it must be
+	// carried here or the device silently receives full user privileges.
+	Scope string
+	// ClaimCodeID records the claim code a device grant came from, so revoking
+	// that code can revoke the tokens it produced.
+	ClaimCodeID string
+}
+
 // IssueTokensForUser issues a token pair for a pre-authenticated user.
 // audience is the aud claim to embed in the access token; pass "" to omit it.
 // Used by OAuthService at the code exchange step.
 func (s *AuthService) IssueTokensForUser(userID, audience string) (*LoginResult, error) {
+	return s.IssueTokensForGrant(userID, GrantContext{Audience: audience})
+}
+
+// IssueTokensForGrant issues a token pair for a pre-authenticated user, carrying
+// the full grant context onto the tokens. Used by the device grant, where the
+// consented scope and the originating claim code both have to survive.
+func (s *AuthService) IssueTokensForGrant(userID string, grant GrantContext) (*LoginResult, error) {
 	user, err := s.users.GetByID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
@@ -157,7 +184,11 @@ func (s *AuthService) IssueTokensForUser(userID, audience string) (*LoginResult,
 	if !user.IsActive {
 		return nil, ErrAccountDisabled
 	}
-	return s.issueTokens(user, loginArgs{audience: audience})
+	return s.issueTokens(user, loginArgs{
+		audience:    grant.Audience,
+		scope:       grant.Scope,
+		claimCodeID: grant.ClaimCodeID,
+	})
 }
 
 // Refresh validates a refresh token and issues a new token pair via rotation.
@@ -230,6 +261,7 @@ func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
 		Role:     user.Role,
 		IsActive: user.IsActive,
 		Audience: domain.AudienceList(oldTok.Audience),
+		Scope:    oldTok.Scope,
 	}
 
 	accessToken, err := s.issuer.Mint(claims)
@@ -291,6 +323,7 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		Role:     user.Role,
 		IsActive: user.IsActive,
 		Audience: domain.AudienceList(args.audience),
+		Scope:    args.scope,
 	}
 
 	accessToken, err := s.issuer.Mint(claims)
@@ -317,6 +350,8 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		ParentTokenID: args.oldTokenID,
 		DeviceHint:    args.deviceHint,
 		Audience:      args.audience,
+		Scope:         args.scope,
+		ClaimCodeID:   args.claimCodeID,
 		IssuedAt:      now,
 		LastUsedAt:    now,
 		ExpiresAt:     now.Add(s.refreshTokenTTL),

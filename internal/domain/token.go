@@ -15,6 +15,8 @@ type RefreshToken struct {
 	ParentTokenID string // ID of the token this one replaced (may be empty for first in family)
 	DeviceHint    string // Informational only, e.g. "iPhone 15 / iOS 18"
 	Audience      string // aud claim to carry into new access tokens on rotation
+	Scope         string // space-delimited scope this grant was consented for; empty means unrestricted
+	ClaimCodeID   string // claim code that produced this family, if any; revoking it revokes the family
 	IssuedAt      time.Time
 	LastUsedAt    time.Time
 	ExpiresAt     time.Time
@@ -68,6 +70,12 @@ type TokenRepository interface {
 
 	// RevokeAllForUser revokes every refresh token belonging to a user.
 	RevokeAllForUser(userID string) error
+
+	// RevokeByClaimCodeID revokes every refresh token issued from the given
+	// claim code. Used when an admin revokes a device's sticker code, so the
+	// tokens it already produced die with it rather than living out the
+	// refresh token's 30-day window.
+	RevokeByClaimCodeID(claimCodeID string) error
 
 	// DeleteExpiredAndOldRevoked removes tokens that are expired or have been
 	// revoked for more than retentionDays days.

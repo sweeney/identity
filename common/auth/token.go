@@ -26,6 +26,27 @@ type TokenClaims struct {
 	Role     Role
 	IsActive bool
 	Audience []string
+
+	// Scope is the space-delimited scope this token was granted, empty when the
+	// grant carried no scope restriction. Unlike aud, scope is a single
+	// space-delimited string by definition (RFC 6749 §3.3), so there is no
+	// list/string ambiguity to preserve.
+	Scope string
+}
+
+// HasScope returns true if the given scope is in the token's space-delimited
+// scope list. A token with no scope has none — callers that treat an absent
+// scope as unrestricted must test Scope == "" themselves.
+func (c *TokenClaims) HasScope(scope string) bool {
+	if c.Scope == "" {
+		return false
+	}
+	for _, s := range strings.Split(c.Scope, " ") {
+		if s == scope {
+			return true
+		}
+	}
+	return false
 }
 
 // HasAudience reports whether aud appears in the token's audience list.

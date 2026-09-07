@@ -20,6 +20,11 @@ type AuthServicer interface {
 	// audience is the aud claim to embed in the access token; pass "" to omit it.
 	// Used by OAuthService at the code exchange step.
 	IssueTokensForUser(userID, audience string) (*LoginResult, error)
+
+	// IssueTokensForGrant issues a token pair carrying the full grant context —
+	// audience, consented scope, and originating claim code. Used by the device
+	// grant, where scope is consented by the user and must reach the token.
+	IssueTokensForGrant(userID string, grant GrantContext) (*LoginResult, error)
 }
 
 // UserServicer is the interface the API handler uses for user CRUD.
