@@ -275,8 +275,33 @@ func runIdentityServer() error {
 		waChallengeStore = store.NewWebAuthnChallengeStore(database)
 	}
 
-	// Cleanup goroutine: prune expired/old-revoked tokens, auth codes, and challenges every 24h
+	prune := func() {
+		if err := tokenStore.DeleteExpiredAndOldRevoked(7); err != nil {
+			log.Printf("token cleanup error: %v", err)
+		}
+		if err := oauthCodeStore.DeleteExpiredAndUsed(); err != nil {
+			log.Printf("oauth code cleanup error: %v", err)
+		}
+		if err := deviceAuthStore.DeleteExpired(); err != nil {
+			log.Printf("device authorization cleanup error: %v", err)
+		}
+		if waChallengeStore != nil {
+			if err := waChallengeStore.DeleteExpired(); err != nil {
+				log.Printf("webauthn challenge cleanup error: %v", err)
+			}
+		}
+	}
+
+	// Cleanup goroutine: prune expired/old-revoked tokens, auth codes, and
+	// challenges every 24h — and once at startup.
+	//
+	// The ticker alone meant a service that restarts more often than once a day
+	// never pruned at all: deploys, config changes and crashes all reset it, so
+	// on a frequently-deployed host expired tokens, used auth codes and spent
+	// WebAuthn challenges accumulated indefinitely.
 	go func() {
+		prune()
+
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -284,20 +309,7 @@ func runIdentityServer() error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := tokenStore.DeleteExpiredAndOldRevoked(7); err != nil {
-					log.Printf("token cleanup error: %v", err)
-				}
-				if err := oauthCodeStore.DeleteExpiredAndUsed(); err != nil {
-					log.Printf("oauth code cleanup error: %v", err)
-				}
-				if err := deviceAuthStore.DeleteExpired(); err != nil {
-					log.Printf("device authorization cleanup error: %v", err)
-				}
-				if waChallengeStore != nil {
-					if err := waChallengeStore.DeleteExpired(); err != nil {
-						log.Printf("webauthn challenge cleanup error: %v", err)
-					}
-				}
+				prune()
 			}
 		}
 	}()

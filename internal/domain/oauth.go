@@ -13,11 +13,15 @@ const (
 //
 //go:generate mockgen -destination=../mocks/mock_oauth_client_repository.go -package=mocks github.com/sweeney/identity/internal/domain OAuthClientRepository
 type OAuthClient struct {
-	ID                      string
-	Name                    string
-	RedirectURIs            []string
-	SecretHash              string   // bcrypt hash of client secret (empty for public clients)
-	SecretHashPrev          string   // previous hash, for rotation
+	ID             string
+	Name           string
+	RedirectURIs   []string
+	SecretHash     string // bcrypt hash of client secret (empty for public clients)
+	SecretHashPrev string // previous hash, for rotation
+	// SecretPrevExpiresAt is when the previous secret stops being accepted.
+	// Nil means no expiry — the pre-migration behaviour, kept for rows that
+	// already carried a previous secret.
+	SecretPrevExpiresAt     *time.Time
 	GrantTypes              []string // "authorization_code", "client_credentials"
 	Scopes                  []string // allowed scopes for this client
 	TokenEndpointAuthMethod string   // "none", "client_secret_basic", "client_secret_post"
@@ -27,6 +31,28 @@ type OAuthClient struct {
 }
 
 // HasGrantType returns true if the client is configured for the given grant type.
+// ClientSecretRotationWindow is how long a rotated-out client secret keeps
+// working. Long enough to redeploy every consumer of the client at leisure,
+// short enough that the rotation actually takes effect.
+const ClientSecretRotationWindow = 7 * 24 * time.Hour
+
+// PreviousSecretUsable reports whether the rotated-out secret should still be
+// accepted.
+//
+// Keeping the previous secret alive is what stops a rotation breaking a client
+// mid-deploy, but it was kept alive forever: a secret an operator deliberately
+// rotated away from stayed valid indefinitely, which is the opposite of what
+// rotating it was for.
+func (c *OAuthClient) PreviousSecretUsable(now time.Time) bool {
+	if c.SecretHashPrev == "" {
+		return false
+	}
+	if c.SecretPrevExpiresAt == nil {
+		return true
+	}
+	return now.Before(*c.SecretPrevExpiresAt)
+}
+
 func (c *OAuthClient) HasGrantType(gt string) bool {
 	for _, g := range c.GrantTypes {
 		if g == gt {

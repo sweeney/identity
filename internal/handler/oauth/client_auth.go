@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -70,8 +71,10 @@ func verifyClientSecret(client *domain.OAuthClient, secret string) bool {
 	if bcrypt.CompareHashAndPassword([]byte(client.SecretHash), []byte(secret)) == nil {
 		return true
 	}
-	// Try previous hash (rotation in progress)
-	if client.SecretHashPrev != "" {
+	// Try the previous hash, but only while it is still within its rotation
+	// window. It used to be accepted forever, so a secret an operator
+	// deliberately rotated away from stayed valid indefinitely.
+	if client.PreviousSecretUsable(time.Now().UTC()) {
 		return bcrypt.CompareHashAndPassword([]byte(client.SecretHashPrev), []byte(secret)) == nil
 	}
 	return false

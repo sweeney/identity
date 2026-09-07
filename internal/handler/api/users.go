@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -98,7 +99,8 @@ func (h *userHandler) create(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, domain.ErrUserLimitReached):
 			jsonError(w, http.StatusUnprocessableEntity, "user_limit_reached", "the maximum number of users has been reached")
 		case errors.Is(err, service.ErrWeakPassword):
-			jsonError(w, http.StatusUnprocessableEntity, "weak_password", "password must be at least 8 characters")
+			jsonError(w, http.StatusUnprocessableEntity, "weak_password",
+				fmt.Sprintf("password must be between %d and %d bytes", auth.MinPasswordLength, auth.MaxPasswordLength))
 		default:
 			jsonError(w, http.StatusInternalServerError, "internal_error", "failed to create user")
 		}
@@ -176,7 +178,8 @@ func (h *userHandler) update(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, domain.ErrConflict):
 			jsonError(w, http.StatusConflict, "username_taken", "a user with that username already exists")
 		case errors.Is(err, service.ErrWeakPassword):
-			jsonError(w, http.StatusUnprocessableEntity, "weak_password", "password must be at least 8 characters")
+			jsonError(w, http.StatusUnprocessableEntity, "weak_password",
+				fmt.Sprintf("password must be between %d and %d bytes", auth.MinPasswordLength, auth.MaxPasswordLength))
 		case errors.Is(err, service.ErrCannotDeleteLastAdmin):
 			jsonError(w, http.StatusConflict, "cannot_delete_last_admin",
 				"cannot demote or deactivate the last admin user")

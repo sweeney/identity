@@ -1080,7 +1080,7 @@ All errors follow this envelope:
 | `409` | `cannot_delete_last_admin` | Show error message. Returned by both `DELETE` and `PUT /users/{id}` — the last admin cannot be deleted, demoted, or deactivated. |
 | `422` | `validation_error` | Show field errors |
 | `400` | `validation_error` | Malformed input, e.g. a `role` other than `admin` or `user` |
-| `422` | `weak_password` | Show password strength requirement |
+| `422` | `weak_password` | Show password strength requirement (8–72 bytes; the upper bound is bcrypt's) |
 | `500` | `internal_error` | Show generic error |
 
 ### OAuth Errors (`/oauth/token`)

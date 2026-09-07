@@ -1033,6 +1033,7 @@ func (h *adminHandler) oauthGenerateSecret(w http.ResponseWriter, r *http.Reques
 
 	client.SecretHash = hash
 	client.SecretHashPrev = ""
+	client.SecretPrevExpiresAt = nil
 	if err := h.oauthClients.Update(client); err != nil {
 		http.Error(w, "failed to save secret", http.StatusInternalServerError)
 		return
@@ -1073,7 +1074,12 @@ func (h *adminHandler) oauthRotateSecret(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Give the outgoing secret a deadline. Keeping it alive is what stops a
+	// rotation breaking a client mid-deploy; keeping it alive forever is the
+	// opposite of rotating.
 	client.SecretHashPrev = client.SecretHash
+	prevExpiry := time.Now().UTC().Add(domain.ClientSecretRotationWindow)
+	client.SecretPrevExpiresAt = &prevExpiry
 	client.SecretHash = hash
 	if err := h.oauthClients.Update(client); err != nil {
 		http.Error(w, "failed to save secret", http.StatusInternalServerError)
@@ -1110,6 +1116,7 @@ func (h *adminHandler) oauthClearPrevSecret(w http.ResponseWriter, r *http.Reque
 	}
 
 	client.SecretHashPrev = ""
+	client.SecretPrevExpiresAt = nil
 	if err := h.oauthClients.Update(client); err != nil {
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return

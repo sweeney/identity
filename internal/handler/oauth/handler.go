@@ -167,10 +167,7 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		redirectURL := redirectURI + "?code=" + url.QueryEscape(rawCode)
-		if state != "" {
-			redirectURL += "&state=" + url.QueryEscape(state)
-		}
+		redirectURL := buildRedirect(redirectURI, rawCode, state)
 		h.clientRedirect(w, redirectURL)
 		return
 	}
@@ -203,10 +200,7 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build redirect URL with code and state
-	redirectURL := redirectURI + "?code=" + url.QueryEscape(rawCode)
-	if state != "" {
-		redirectURL += "&state=" + url.QueryEscape(state)
-	}
+	redirectURL := buildRedirect(redirectURI, rawCode, state)
 
 	// If user has no passkeys and the browser supports WebAuthn, show the prompt.
 	// redirectURL is server-built from the registered redirect_uri (validated in
@@ -288,10 +282,7 @@ func (h *oauthHandler) authorizePasskey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	redirectURL := redirectURI + "?code=" + url.QueryEscape(rawCode)
-	if state != "" {
-		redirectURL += "&state=" + url.QueryEscape(state)
-	}
+	redirectURL := buildRedirect(redirectURI, rawCode, state)
 
 	// If the caller accepts JSON (fetch from passkey-login.js), return the redirect URL
 	// instead of a 302 — this avoids CSP form-action issues with dynamic form submission.
@@ -562,6 +553,13 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 
 // discovery serves RFC 8414 authorization server metadata.
 func (h *oauthHandler) discovery(w http.ResponseWriter, r *http.Request) {
+	// Every other call site guards this; without the guard, discovery panicked
+	// whenever the token issuer was not wired.
+	if h.tokenIssuer == nil {
+		oauthErrorWithStatus(w, http.StatusServiceUnavailable, "temporarily_unavailable",
+			"Authorization server metadata is not configured.")
+		return
+	}
 	// Use the configured issuer from the token issuer — never trust the Host header.
 	issuer := h.tokenIssuer.Issuer()
 
@@ -851,4 +849,27 @@ func introspectionAudience(aud []string) any {
 		return aud[0]
 	}
 	return aud
+}
+
+// buildRedirect appends the authorization code (and state) to the client's
+// registered redirect URI.
+//
+// It parses rather than concatenating "?code=". A redirect URI may legitimately
+// carry its own query string — RFC 6749 §3.1.2 requires the server to preserve
+// it — and concatenating turns ...?next=x into ...?next=x?code=y, a single
+// malformed parameter from which the client can never read the code. If the URI
+// will not parse it is returned unchanged; validation upstream is what rejects
+// an unusable redirect URI, and silently dropping the code here would be worse.
+func buildRedirect(redirectURI, code, state string) string {
+	u, err := url.Parse(redirectURI)
+	if err != nil {
+		return redirectURI
+	}
+	q := u.Query()
+	q.Set("code", code)
+	if state != "" {
+		q.Set("state", state)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
