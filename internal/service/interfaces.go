@@ -65,7 +65,7 @@ type DeviceFlowServicer interface {
 	// User-facing (verification page)
 	LookupForVerification(rawCode string) (*DeviceApprovalView, error)
 	Approve(rawCode, userID, username, ip string) error
-	Deny(rawCode, ip string) error
+	Deny(rawCode, userID, username, ip string) error
 
 	// Admin-facing
 	CreateClaimCodes(clientID string, labels []string, ip string) ([]*ClaimCodeResult, error)

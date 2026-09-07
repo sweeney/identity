@@ -473,7 +473,7 @@ func TestDeviceFlowService_Deny(t *testing.T) {
 	devices.EXPECT().GetByUserCode("DENY-MEEE").Return(da, nil)
 	devices.EXPECT().Deny("deny-me", gomock.Any()).Return(nil)
 
-	err := svc.Deny("DENY-MEEE", "1.2.3.4")
+	err := svc.Deny("DENY-MEEE", "user-99", "alice", "1.2.3.4")
 	require.NoError(t, err)
 }
 

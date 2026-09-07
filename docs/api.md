@@ -526,6 +526,11 @@ client_id=my-sensor
 | `client_id` | Yes | Registered client ID |
 | `scope` | No | Space-delimited scopes; defaults to all client scopes. The scope shown to the user on the approval page is the scope embedded in the issued access token (`scope` claim) and carried across every refresh. |
 
+A client registered **with** a secret must authenticate on this endpoint
+(HTTP Basic or `client_secret_post`), the same rule `/oauth/token` applies.
+Screenless devices that cannot keep a secret should be registered as public
+clients and continue to send `client_id` alone.
+
 **Response 200**:
 
 ```json

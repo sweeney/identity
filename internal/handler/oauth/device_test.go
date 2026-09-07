@@ -20,6 +20,14 @@ import (
 )
 
 func newDeviceRouter(svc service.OAuthServicer, deviceSvc service.DeviceFlowServicer, authSvc service.AuthServicer) http.Handler {
+	// The device endpoints look the client up to decide whether it is
+	// confidential and must authenticate. Tests that do not care about that
+	// get a permissive default: an unknown client is treated as public, so the
+	// handler's own unknown-client path still runs. Declared last, so a test
+	// that sets its own GetClient expectation wins.
+	if m, ok := svc.(*mocks.MockOAuthServicer); ok {
+		m.EXPECT().GetClient(gomock.Any()).Return(nil, domain.ErrNotFound).AnyTimes()
+	}
 	return oauth.NewRouter(svc, "", nil, authSvc, nil, deviceSvc, "", "Test")
 }
 
@@ -378,15 +386,40 @@ func TestDeviceVerifyPost_Deny(t *testing.T) {
 	svc := mocks.NewMockOAuthServicer(ctrl)
 	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
 	authSvc := mocks.NewMockAuthServicer(ctrl)
-	deviceSvc.EXPECT().Deny("ABCD-1234", gomock.Any()).Return(nil)
+	// Denial now requires the same credentials as approval — it is the same
+	// decision with the opposite sign.
+	authSvc.EXPECT().AuthorizeUser("alice", "hunter2", gomock.Any()).Return("user-99", nil)
+	deviceSvc.EXPECT().Deny("ABCD-1234", "user-99", "alice", gomock.Any()).Return(nil)
+
+	h := newDeviceRouter(svc, deviceSvc, authSvc)
+	rr := postForm(t, h, "/oauth/device", url.Values{
+		"user_code": {"ABCD-1234"},
+		"username":  {"alice"},
+		"password":  {"hunter2"},
+		"action":    {"deny"},
+	})
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Device denied")
+}
+
+// Denial without credentials must not go through.
+func TestDeviceVerifyPost_Deny_RequiresAuthentication(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+
+	authSvc.EXPECT().AuthorizeUser("", "", gomock.Any()).
+		Return("", service.ErrInvalidCredentials)
+	// No Deny expectation: reaching it means an unauthenticated caller denied
+	// somebody else's device.
 
 	h := newDeviceRouter(svc, deviceSvc, authSvc)
 	rr := postForm(t, h, "/oauth/device", url.Values{
 		"user_code": {"ABCD-1234"},
 		"action":    {"deny"},
 	})
-	require.Equal(t, http.StatusOK, rr.Code)
-	assert.Contains(t, rr.Body.String(), "Device denied")
+	assert.Contains(t, rr.Body.String(), "Invalid username or password")
 }
 
 // --- Post-approval passkey registration prompt ---
