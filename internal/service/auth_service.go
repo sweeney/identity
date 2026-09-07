@@ -233,10 +233,16 @@ func (s *AuthService) IssueTokensForGrant(userID string, grant GrantContext) (*L
 // redeemable through the same unbound path.
 func (s *AuthService) RefreshForClient(rawRefreshToken, clientID string) (*LoginResult, error) {
 	tok, err := s.tokens.GetByHash(HashToken(rawRefreshToken))
-	if err == nil && tok.ClientID != clientID {
+	if err == nil && tok.ClientID != "" && tok.ClientID != clientID {
 		return nil, ErrRefreshTokenClientMismatch
 	}
-	return s.Refresh(rawRefreshToken)
+	// An empty ClientID is a token issued before the binding existed. It cannot
+	// be attributed to a client, so there is nothing to check — refusing it
+	// would sign out every session that predates the upgrade while buying no
+	// security, since accepting it is exactly the pre-migration posture. It is
+	// adopted instead: the rotated token comes back bound to the presenting
+	// client, so the binding takes effect after one refresh per session.
+	return s.refresh(rawRefreshToken, clientID)
 }
 
 // Refresh validates a refresh token and issues a new token pair via rotation.
@@ -244,6 +250,12 @@ func (s *AuthService) RefreshForClient(rawRefreshToken, clientID string) (*Login
 // single transaction by RotateToken, preventing the TOCTOU race condition
 // where concurrent requests could both observe the token as valid.
 func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
+	return s.refresh(rawRefreshToken, "")
+}
+
+// refresh rotates the token. adoptClientID, when non-empty, is recorded on the
+// replacement for a token that carried no client binding.
+func (s *AuthService) refresh(rawRefreshToken, adoptClientID string) (*LoginResult, error) {
 	tokenHash := HashToken(rawRefreshToken)
 
 	// Build the new token before entering the atomic rotation so we can
@@ -258,6 +270,7 @@ func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
 	newTok := &domain.RefreshToken{
 		ID:         uuid.New().String(),
 		TokenHash:  HashToken(rawRefresh),
+		ClientID:   adoptClientID,
 		IssuedAt:   now,
 		LastUsedAt: now,
 		ExpiresAt:  now.Add(s.refreshTokenTTL),

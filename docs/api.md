@@ -249,8 +249,10 @@ grant_type=refresh_token
 ```
 
 **`client_id` is required.** A refresh token is bound to the client it was
-issued to, so presenting it with a different `client_id` — or none — returns
-`invalid_grant`. This is what stops a leaked refresh token being redeemed by
+issued to, so presenting it with a *different* `client_id` returns
+`invalid_grant`. A token issued before client binding existed carries no
+client; it is accepted and adopted by the presenting client, so the binding
+takes effect after one refresh rather than invalidating the session. This is what stops a leaked refresh token being redeemed by
 another registered client for a user who never consented to it. A confidential
 client (one with a registered secret) must also authenticate here, exactly as
 it does on the `authorization_code` grant.

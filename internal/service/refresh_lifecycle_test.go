@@ -112,3 +112,81 @@ func TestAuthService_Logout_OwnTokenSucceeds(t *testing.T) {
 	svc := service.NewAuthService(newTestIssuer(t), users, tokens, backup, audit, time.Hour)
 	require.NoError(t, svc.Logout("user-1", "my-raw-token"))
 }
+
+// A refresh token issued before the client-binding migration has no recorded
+// client. A correct RFC 6749 client still sends its client_id on refresh, so
+// comparing the two rejected every pre-existing session on its first refresh —
+// signing out every OAuth user the moment the fix deployed.
+//
+// An unbound token predates the binding and cannot be attributed to a client;
+// refusing it buys nothing (that is the pre-migration posture either way) and
+// costs every live session. It is accepted and adopted: the rotated token comes
+// back bound to the presenting client, so the window closes after one refresh.
+func TestAuthService_RefreshForClient_AdoptsLegacyUnboundToken(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	users := mocks.NewMockUserRepository(ctrl)
+	tokens := mocks.NewMockTokenRepository(ctrl)
+	backup := mocks.NewMockBackupService(ctrl)
+	audit := mocks.NewMockAuditRepository(ctrl)
+	audit.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
+
+	legacy := &domain.RefreshToken{
+		ID: "tok-legacy", UserID: "user-123", FamilyID: "fam-1",
+		TokenHash: service.HashToken("legacy-raw"),
+		ClientID:  "", // issued before migration 009
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	tokens.EXPECT().GetByHash(legacy.TokenHash).Return(legacy, nil).AnyTimes()
+	users.EXPECT().GetByID("user-123").Return(activeUser(), nil).AnyTimes()
+
+	var rotated *domain.RefreshToken
+	tokens.EXPECT().RotateToken(legacy.TokenHash, gomock.Any()).
+		DoAndReturn(func(_ string, newTok *domain.RefreshToken) (*domain.RefreshToken, error) {
+			rotated = newTok
+			return legacy, nil
+		})
+
+	result, err := svcForRefresh(t, users, tokens, backup, audit).
+		RefreshForClient("legacy-raw", "claude")
+
+	require.NoError(t, err, "a pre-migration session must survive the upgrade")
+	require.NotNil(t, result)
+	require.NotNil(t, rotated)
+	assert.Equal(t, "claude", rotated.ClientID,
+		"the rotated token must be adopted by the presenting client, so the "+
+			"binding applies from here on")
+}
+
+// A token that *is* bound still refuses a different client.
+func TestAuthService_RefreshForClient_BoundTokenRefusesOtherClient(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	users := mocks.NewMockUserRepository(ctrl)
+	tokens := mocks.NewMockTokenRepository(ctrl)
+	backup := mocks.NewMockBackupService(ctrl)
+	audit := mocks.NewMockAuditRepository(ctrl)
+	audit.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
+
+	bound := &domain.RefreshToken{
+		ID: "tok-bound", UserID: "user-123", FamilyID: "fam-1",
+		TokenHash: service.HashToken("bound-raw"),
+		ClientID:  "photo-app",
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	tokens.EXPECT().GetByHash(bound.TokenHash).Return(bound, nil)
+	// No RotateToken expectation: the wrong client must not get a rotation.
+
+	_, err := svcForRefresh(t, users, tokens, backup, audit).
+		RefreshForClient("bound-raw", "attacker-app")
+	assert.ErrorIs(t, err, service.ErrRefreshTokenClientMismatch)
+}
+
+func svcForRefresh(
+	t *testing.T,
+	users *mocks.MockUserRepository,
+	tokens *mocks.MockTokenRepository,
+	backup *mocks.MockBackupService,
+	audit *mocks.MockAuditRepository,
+) *service.AuthService {
+	t.Helper()
+	return service.NewAuthService(newTestIssuer(t), users, tokens, backup, audit, 30*24*time.Hour)
+}

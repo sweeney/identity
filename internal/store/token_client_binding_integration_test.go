@@ -75,3 +75,37 @@ func TestTokenStore_NoClientBinding_ForDirectLogin(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got.ClientID)
 }
+
+// A token issued before the binding existed carries no client. When the
+// presenting client supplies one on rotation, the replacement adopts it —
+// that is what lets a pre-migration session survive the upgrade and become
+// bound, rather than being refused outright.
+func TestTokenStore_RotateToken_AdoptsClientWhenUnbound(t *testing.T) {
+	database := openTestDB(t)
+	users := store.NewUserStore(database)
+	tokens := store.NewTokenStore(database)
+
+	require.NoError(t, users.Create(&domain.User{
+		ID: "u-1", Username: "alice", PasswordHash: "x",
+		Role: domain.RoleUser, IsActive: true,
+	}))
+
+	now := time.Now().UTC()
+	require.NoError(t, tokens.Create(&domain.RefreshToken{
+		ID: "tok-legacy", UserID: "u-1", TokenHash: "hash-legacy", FamilyID: "fam-1",
+		ClientID: "", // predates migration 009
+		IssuedAt: now, LastUsedAt: now, ExpiresAt: now.Add(30 * 24 * time.Hour),
+	}))
+
+	_, err := tokens.RotateToken("hash-legacy", &domain.RefreshToken{
+		ID: "tok-adopted", UserID: "u-1", TokenHash: "hash-adopted", FamilyID: "fam-1",
+		ClientID: "claude", // the presenting client claims it
+		IssuedAt: now, LastUsedAt: now, ExpiresAt: now.Add(30 * 24 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	adopted, err := tokens.GetByHash("hash-adopted")
+	require.NoError(t, err)
+	assert.Equal(t, "claude", adopted.ClientID,
+		"the replacement must carry the adopting client, closing the binding gap")
+}

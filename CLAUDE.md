@@ -46,7 +46,7 @@ Human-readable guides are in `docs/`:
 3. User logs in on the Identity server
 4. Server redirects back with `?code=...&state=...`
 5. App exchanges code at `POST /oauth/token` with `code_verifier` → receive tokens
-6. Refresh via `POST /oauth/token` with `grant_type=refresh_token` **and `client_id`** — refresh tokens are bound to the issuing client, and a confidential client must authenticate here too
+6. Refresh via `POST /oauth/token` with `grant_type=refresh_token` **and `client_id`** — refresh tokens are bound to the issuing client (a token predating the binding is adopted on its next refresh), and a confidential client must authenticate here too
 
 ## Client Credentials flow (service-to-service)
 

@@ -167,7 +167,12 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	// the claim code would put the family beyond the reach of its revocation.
 	newToken.Scope = t.Scope
 	newToken.ClaimCodeID = t.ClaimCodeID
-	newToken.ClientID = t.ClientID
+	// Carry the client binding forward, unless the caller supplied one to adopt
+	// — a token issued before the binding existed has none, and the presenting
+	// client claims it on this rotation.
+	if newToken.ClientID == "" {
+		newToken.ClientID = t.ClientID
+	}
 	if newToken.ExpiresAt.IsZero() {
 		newToken.ExpiresAt = t.ExpiresAt
 	}
