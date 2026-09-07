@@ -280,9 +280,12 @@ def decode_claims(token):
         die(f"cannot decode token claims: {e}", EXIT_NO_TOKEN)
 
 
-def probe(url, token):
+def probe(url, token=None):
+    """GET url, optionally with a token. Without one, this reveals whether the
+    endpoint authenticates at all."""
     req = urllib.request.Request(url, method="GET")
-    req.add_header("Authorization", "Bearer " + token)
+    if token:
+        req.add_header("Authorization", "Bearer " + token)
     req.add_header("User-Agent", USER_AGENT)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
@@ -434,7 +437,14 @@ def main():
 
     print("How each service responds")
     worst = EXIT_OK
+    open_endpoints = []
     for u in urls:
+        # Probe unauthenticated first. An endpoint that answers without a token
+        # cannot tell you anything about the token — checking one and calling it
+        # a pass is a false negative that reads exactly like a real result.
+        bare_status, _ = probe(u)
+        is_open = bare_status is not None and 200 <= bare_status < 300
+
         status, detail = probe(u, token)
         if status is None:
             verdict, worst = f"UNREACHABLE ({detail})", max(worst, EXIT_REJECTED)
@@ -446,9 +456,19 @@ def main():
             verdict, worst = f"REJECTED — {detail or 'forbidden'}", EXIT_REJECTED
         else:
             verdict = f"HTTP {status} {detail}"
+        if is_open:
+            verdict += "   [open endpoint — proves nothing]"
+            open_endpoints.append(u)
         print(f"  {str(status or '---'):>4}  {u:<52} {verdict}")
 
     print()
+    if open_endpoints:
+        print("These endpoints answered without any token at all, so their result")
+        print("says nothing about this client's audiences:")
+        for u in open_endpoints:
+            print(f"  {u}")
+        print("Probe an endpoint that requires authentication instead.")
+        print()
     if worst != EXIT_OK:
         print("A rejection here is what this service will do in production.")
         print("If it says invalid_audience, add that service to this client's")
