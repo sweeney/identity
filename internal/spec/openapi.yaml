@@ -1004,7 +1004,10 @@ paths:
       description: |
         Supports four grant types:
         - `authorization_code` — exchange an auth code + PKCE verifier for tokens
-        - `refresh_token` — rotate a refresh token for a new token pair
+        - `refresh_token` — rotate a refresh token for a new token pair. `client_id`
+          is required: the token is bound to the client it was issued to, and
+          presenting it with a different client (or none) returns `invalid_grant`.
+          A confidential client must also authenticate, as on `authorization_code`.
         - `client_credentials` — service authenticates with client_id + client_secret, receives an access token (no refresh token)
         - `urn:ietf:params:oauth:grant-type:device_code` — RFC 8628 device flow poll. The device polls with its device_code from `/oauth/device_authorization` or `/oauth/device/claim` and receives tokens once a user has approved.
 
@@ -1031,6 +1034,9 @@ paths:
                   description: Space-delimited scopes (client_credentials, device_code)
                 client_id:
                   type: string
+                  description: |
+                    Required for `refresh_token` (the token is bound to its
+                    issuing client) and for `client_credentials`.
                 client_secret:
                   type: string
                 code:

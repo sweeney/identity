@@ -22,6 +22,12 @@ import (
 )
 
 func newTestRouter(svc service.OAuthServicer) http.Handler {
+	// The token endpoint looks the client up to decide whether it must
+	// authenticate. Tests that do not care get a permissive default; one that
+	// sets its own GetClient expectation first still wins.
+	if m, ok := svc.(*mocks.MockOAuthServicer); ok {
+		m.EXPECT().GetClient(gomock.Any()).Return(nil, domain.ErrNotFound).AnyTimes()
+	}
 	return oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
 }
 
@@ -373,7 +379,9 @@ func TestTokenEndpoint_RefreshToken_Success(t *testing.T) {
 		ExpiresIn:    900,
 		RefreshToken: "new-refresh",
 	}
-	svc.EXPECT().RefreshToken("old-refresh").Return(result, nil)
+	// Refresh is now scoped to the redeeming client; an empty client_id is the
+	// direct-login path, whose tokens carry no binding.
+	svc.EXPECT().RefreshTokenForClient("old-refresh", "").Return(result, nil)
 
 	h := newTestRouter(svc)
 	rr := postForm(t, h, "/oauth/token", url.Values{
@@ -570,7 +578,7 @@ func TestTokenEndpoint_ServerFaultsReturn500(t *testing.T) {
 	t.Run("refresh_token", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		svc := mocks.NewMockOAuthServicer(ctrl)
-		svc.EXPECT().RefreshToken("some-refresh-token").Return(nil, infraErr)
+		svc.EXPECT().RefreshTokenForClient("some-refresh-token", "").Return(nil, infraErr)
 
 		h := newTestRouter(svc)
 		rr := postForm(t, h, "/oauth/token", url.Values{

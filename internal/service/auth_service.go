@@ -70,6 +70,9 @@ type loginArgs struct {
 	scope string
 	// claimCodeID ties a device-grant family to the claim code that produced it.
 	claimCodeID string
+	// clientID is the OAuth client this grant was issued to; empty for a
+	// direct API login.
+	clientID string
 }
 
 // Login authenticates a user by username and password, returning JWT tokens.
@@ -188,6 +191,10 @@ type GrantContext struct {
 	// ClaimCodeID records the claim code a device grant came from, so revoking
 	// that code can revoke the tokens it produced.
 	ClaimCodeID string
+	// ClientID is the OAuth client this grant was issued to. Recorded on the
+	// refresh token so the refresh grant can refuse a token that belongs to a
+	// different client.
+	ClientID string
 }
 
 // IssueTokensForUser issues a token pair for a pre-authenticated user.
@@ -212,7 +219,24 @@ func (s *AuthService) IssueTokensForGrant(userID string, grant GrantContext) (*L
 		audience:    grant.Audience,
 		scope:       grant.Scope,
 		claimCodeID: grant.ClaimCodeID,
+		clientID:    grant.ClientID,
 	})
+}
+
+// RefreshForClient is Refresh, restricted to the OAuth client the token was
+// issued to.
+//
+// A refresh token that leaks — through a log, a proxy, a compromised client —
+// could otherwise be redeemed by any other registered client, for a user who
+// never consented to it. An empty clientID means the direct API login, which
+// has no client; tokens issued that way carry no binding and are only
+// redeemable through the same unbound path.
+func (s *AuthService) RefreshForClient(rawRefreshToken, clientID string) (*LoginResult, error) {
+	tok, err := s.tokens.GetByHash(HashToken(rawRefreshToken))
+	if err == nil && tok.ClientID != clientID {
+		return nil, ErrRefreshTokenClientMismatch
+	}
+	return s.Refresh(rawRefreshToken)
 }
 
 // Refresh validates a refresh token and issues a new token pair via rotation.
@@ -328,6 +352,19 @@ func (s *AuthService) Logout(userID, rawRefreshToken string) error {
 		return fmt.Errorf("get token: %w", err)
 	}
 
+	// The token has to belong to the caller. Logout looked it up by hash and
+	// revoked it on the strength of that alone, so any authenticated user
+	// holding somebody else's refresh token could end their session with it.
+	if tok.UserID != userID {
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventLogout,
+			UserID:    userID,
+			Username:  username,
+			Detail:    "refused: refresh token belongs to another user",
+		})
+		return ErrInvalidRefreshToken
+	}
+
 	err = s.tokens.RevokeByID(tok.ID)
 	if err == nil {
 		s.record(&domain.AuthEvent{
@@ -376,6 +413,7 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		Audience:      args.audience,
 		Scope:         args.scope,
 		ClaimCodeID:   args.claimCodeID,
+		ClientID:      args.clientID,
 		IssuedAt:      now,
 		LastUsedAt:    now,
 		ExpiresAt:     now.Add(s.refreshTokenTTL),

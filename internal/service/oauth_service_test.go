@@ -160,7 +160,9 @@ func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 	codes.EXPECT().MarkUsed("code-1", gomock.Any()).Return(nil)
 	clients.EXPECT().GetByID("client-1").Return(client, nil)
-	authSvc.EXPECT().IssueTokensForUser("user-123", "myapp").Return(loginResult, nil)
+	authSvc.EXPECT().IssueTokensForGrant("user-123", service.GrantContext{
+		Audience: "myapp", ClientID: "client-1",
+	}).Return(loginResult, nil)
 
 	result, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
 	require.NoError(t, err)
@@ -196,7 +198,9 @@ func TestOAuthService_ExchangeCode_NoAudience(t *testing.T) {
 	codes.EXPECT().MarkUsed("code-noaud", gomock.Any()).Return(nil)
 	clients.EXPECT().GetByID("client-1").Return(client, nil)
 	// Audience must be empty string when client has no audience
-	authSvc.EXPECT().IssueTokensForUser("user-123", "").Return(loginResult, nil)
+	authSvc.EXPECT().IssueTokensForGrant("user-123", service.GrantContext{
+		ClientID: "client-1",
+	}).Return(loginResult, nil)
 
 	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
 	require.NoError(t, err)

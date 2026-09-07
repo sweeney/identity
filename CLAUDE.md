@@ -46,7 +46,7 @@ Human-readable guides are in `docs/`:
 3. User logs in on the Identity server
 4. Server redirects back with `?code=...&state=...`
 5. App exchanges code at `POST /oauth/token` with `code_verifier` → receive tokens
-6. Refresh via `POST /oauth/token` with `grant_type=refresh_token`
+6. Refresh via `POST /oauth/token` with `grant_type=refresh_token` **and `client_id`** — refresh tokens are bound to the issuing client, and a confidential client must authenticate here too
 
 ## Client Credentials flow (service-to-service)
 
@@ -103,6 +103,9 @@ Revoking a claim code at `/admin/claim-codes` stops the paired device two ways:
 its next poll fails with `claim_code_revoked`, and the refresh tokens that claim
 code already produced are revoked (`refresh_tokens.claim_code_id`, migration
 008). A claim code binds to exactly one user, compare-and-swap, on first use.
+
+Changing a user's password revokes every refresh token they hold. Logout only
+revokes tokens belonging to the caller.
 
 ## Token rotation and theft detection
 

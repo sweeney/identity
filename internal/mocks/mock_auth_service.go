@@ -128,3 +128,18 @@ func (mr *MockAuthServicerMockRecorder) Refresh(rawRefreshToken any) *gomock.Cal
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Refresh", reflect.TypeOf((*MockAuthServicer)(nil).Refresh), rawRefreshToken)
 }
+
+// RefreshForClient mocks base method.
+func (m *MockAuthServicer) RefreshForClient(rawRefreshToken, clientID string) (*service.LoginResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RefreshForClient", rawRefreshToken, clientID)
+	ret0, _ := ret[0].(*service.LoginResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RefreshForClient indicates an expected call of RefreshForClient.
+func (mr *MockAuthServicerMockRecorder) RefreshForClient(rawRefreshToken, clientID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshForClient", reflect.TypeOf((*MockAuthServicer)(nil).RefreshForClient), rawRefreshToken, clientID)
+}

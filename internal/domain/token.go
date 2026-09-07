@@ -17,6 +17,7 @@ type RefreshToken struct {
 	Audience      string // aud claim to carry into new access tokens on rotation
 	Scope         string // space-delimited scope this grant was consented for; empty means unrestricted
 	ClaimCodeID   string // claim code that produced this family, if any; revoking it revokes the family
+	ClientID      string // OAuth client this token was issued to; empty for a direct API login
 	IssuedAt      time.Time
 	LastUsedAt    time.Time
 	ExpiresAt     time.Time

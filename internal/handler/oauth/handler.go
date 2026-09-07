@@ -380,9 +380,24 @@ func (h *oauthHandler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.svc.RefreshToken(rawRefreshToken)
+	// Confidential clients authenticate here, as they do on the
+	// authorization_code grant. Without it, knowing a client_id was enough.
+	clientID := r.FormValue("client_id")
+	if creds, ok := extractClientCredentials(r); ok && clientID == "" {
+		clientID = creds.ClientID
+	}
+	if !h.authenticateDeviceClient(w, r, clientID) {
+		return
+	}
+
+	// And the token has to belong to the client redeeming it. A refresh token
+	// that leaks could otherwise be redeemed by any other registered client,
+	// for a user who never consented to that client.
+	result, err := h.svc.RefreshTokenForClient(rawRefreshToken, clientID)
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrRefreshTokenClientMismatch):
+			oauthError(w, "invalid_grant", "That refresh token was not issued to this client.")
 		case errors.Is(err, service.ErrInvalidRefreshToken):
 			oauthError(w, "invalid_grant", "The refresh token is invalid.")
 		case errors.Is(err, service.ErrTokenFamilyCompromised):

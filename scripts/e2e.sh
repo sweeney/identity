@@ -303,11 +303,17 @@ REPLAY_T=$(curl -s -X POST "$BASE/oauth/token" \
   -d "grant_type=authorization_code&client_id=testapp&code=$CODE&redirect_uri=http://localhost:3000/callback&code_verifier=$VERIFIER")
 check "Code replay = invalid_grant" "invalid_grant" "$(echo "$REPLAY_T" | jq -r '.error')"
 
-# OAuth refresh
+# OAuth refresh — client_id is required: the token is bound to its issuing client
 OAUTH_R=$(curl -s -X POST "$BASE/oauth/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=refresh_token&refresh_token=$OAUTH_REFRESH")
+  -d "grant_type=refresh_token&refresh_token=$OAUTH_REFRESH&client_id=testapp")
 check_contains "OAuth refresh works" "eyJ" "$(echo "$OAUTH_R" | jq -r '.access_token')"
+
+# A refresh token issued to one client must not be redeemable by another.
+OAUTH_R_WRONG=$(curl -s -X POST "$BASE/oauth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=refresh_token&refresh_token=$(echo "$OAUTH_R" | jq -r '.refresh_token')&client_id=otherapp")
+check "Refresh with wrong client = invalid_grant" "invalid_grant" "$(echo "$OAUTH_R_WRONG" | jq -r '.error')"
 
 # ── 11. OAuth error pages ─────────────────────────────────────────────
 

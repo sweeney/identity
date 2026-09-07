@@ -129,6 +129,7 @@ func (s *UserService) Update(id string, input UpdateUserInput, meta ...AuditMeta
 		user.DisplayName = *input.DisplayName
 	}
 
+	passwordChanged := false
 	if input.Password != nil {
 		if err := auth.ValidatePasswordStrength(*input.Password); err != nil {
 			return nil, ErrWeakPassword
@@ -138,6 +139,7 @@ func (s *UserService) Update(id string, input UpdateUserInput, meta ...AuditMeta
 			return nil, fmt.Errorf("hash password: %w", err)
 		}
 		user.PasswordHash = hash
+		passwordChanged = true
 	}
 
 	// Guard the admin plane. Demoting or deactivating the only remaining admin
@@ -171,6 +173,17 @@ func (s *UserService) Update(id string, input UpdateUserInput, meta ...AuditMeta
 
 	if err := s.users.Update(user); err != nil {
 		return nil, err
+	}
+
+	// Changing a password is how someone responds to a compromise. Refresh
+	// tokens live 30 days on a sliding window, so leaving the existing ones
+	// usable makes that response do nothing: whoever had the old password keeps
+	// a working session for a month. Deactivation already revoked; a password
+	// change has exactly the same requirement.
+	if passwordChanged && !deactivating {
+		if err := s.tokens.RevokeAllForUser(id); err != nil {
+			return nil, fmt.Errorf("revoke tokens on password change: %w", err)
+		}
 	}
 
 	if deactivating {

@@ -245,7 +245,18 @@ Content-Type: application/x-www-form-urlencoded
 
 grant_type=refresh_token
 &refresh_token=<refresh-token>
+&client_id=<client-id>
 ```
+
+**`client_id` is required.** A refresh token is bound to the client it was
+issued to, so presenting it with a different `client_id` — or none — returns
+`invalid_grant`. This is what stops a leaked refresh token being redeemed by
+another registered client for a user who never consented to it. A confidential
+client (one with a registered secret) must also authenticate here, exactly as
+it does on the `authorization_code` grant.
+
+Refresh tokens from the direct API login (`POST /api/v1/auth/login`) carry no
+client and are refreshed through `POST /api/v1/auth/refresh`, not this endpoint.
 
 **Response 200**: Same token response shape.
 

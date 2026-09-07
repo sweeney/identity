@@ -25,6 +25,10 @@ type AuthServicer interface {
 	// audience, consented scope, and originating claim code. Used by the device
 	// grant, where scope is consented by the user and must reach the token.
 	IssueTokensForGrant(userID string, grant GrantContext) (*LoginResult, error)
+
+	// RefreshForClient refreshes only if the token was issued to clientID.
+	// An empty clientID means the direct API login, which has no client.
+	RefreshForClient(rawRefreshToken, clientID string) (*LoginResult, error)
 }
 
 // UserServicer is the interface the API handler uses for user CRUD.
@@ -48,6 +52,10 @@ type OAuthServicer interface {
 	AuthorizeByUserID(clientID, redirectURI, userID, username, codeChallenge, ip string) (rawCode string, err error)
 	ExchangeCode(clientID, code, redirectURI, codeVerifier string) (*LoginResult, error)
 	RefreshToken(rawRefreshToken string) (*LoginResult, error)
+
+	// RefreshTokenForClient refreshes only if the token was issued to clientID,
+	// so a leaked refresh token cannot be redeemed by a different client.
+	RefreshTokenForClient(rawRefreshToken, clientID string) (*LoginResult, error)
 	GetClient(clientID string) (*domain.OAuthClient, error)
 	IssueClientCredentials(client *domain.OAuthClient, requestedScope, ip string) (*ClientCredentialsResult, error)
 }

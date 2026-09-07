@@ -3,9 +3,15 @@ package service
 import "errors"
 
 var (
-	ErrInvalidCredentials     = errors.New("invalid credentials")
-	ErrAccountDisabled        = errors.New("account disabled")
-	ErrInvalidRefreshToken    = errors.New("invalid refresh token")
+	ErrInvalidCredentials  = errors.New("invalid credentials")
+	ErrAccountDisabled     = errors.New("account disabled")
+	ErrInvalidRefreshToken = errors.New("invalid refresh token")
+
+	// ErrRefreshTokenClientMismatch is returned when a refresh token issued to
+	// one OAuth client is presented by another. The token is not invalid — it
+	// is simply not this client's to redeem.
+	ErrRefreshTokenClientMismatch = errors.New("refresh token belongs to another client")
+
 	ErrRefreshTokenExpired    = errors.New("refresh token expired")
 	ErrTokenFamilyCompromised = errors.New("token family compromised")
 	ErrWeakPassword           = errors.New("password too weak")
