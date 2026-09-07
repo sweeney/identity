@@ -738,17 +738,19 @@ func (h *adminHandler) oauthList(w http.ResponseWriter, r *http.Request) {
 }
 
 // knownAudiences returns the service names offerable as audiences: every
-// registered client id, plus every audience already in use, plus this server.
+// audience already in use, plus this server.
 //
-// The services in a swee.net-style deployment are themselves registered clients
-// — they need client_credentials to call each other — so the clients table is
-// already the list of known service names. Deriving it means a new service is
-// offerable the moment it is registered, with no separate registry to curate
-// and no chance of the two drifting apart.
+// Deliberately *not* client ids. The clients table registers OAuth clients, and
+// a resource server is a different thing that merely overlaps: services making
+// outbound calls appear here because they need client_credentials, but a
+// service that only receives tokens — the config service, say — never registers
+// at all, while browser apps like an admin SPA register and should never be
+// named as an audience by anyone.
 //
-// Not every client is a resource server, so some entries are things nobody
-// should pick. This is a suggestion list, not a constraint: free text remains
-// available for anything not represented here.
+// Audiences in use are the honest source. A client_credentials client is
+// required to have one, so every service that registers still appears via its
+// own audience; and a resource server that is not a client appears as soon as
+// anything names it, typed once into the free-text box.
 func (h *adminHandler) knownAudiences(excludeClientID string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -770,7 +772,6 @@ func (h *adminHandler) knownAudiences(excludeClientID string) []string {
 		return out
 	}
 	for _, c := range clients {
-		add(c.ID)
 		for _, a := range c.Audiences {
 			add(a)
 		}

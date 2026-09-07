@@ -81,12 +81,17 @@ three:
 { "aud": ["statehouse", "countinghouse", "id.swee.net"] }
 ```
 
-Select the services on the client form. The list offered is every registered
-client id plus every audience already in use — the services in this deployment
-are themselves registered clients, since they need `client_credentials` to call
-each other, so the clients table already *is* the register of known service
-names. Anything not listed can be typed into the free-text box, and becomes
-offerable from then on.
+Select the services on the client form. The list offered is every audience
+already in use, plus this server — deliberately *not* client ids, because a
+client and a resource server are different things. A service that makes
+outbound calls appears because it needs a `client_credentials` registration
+(which requires an audience), but a service that only receives tokens never
+registers at all, and a browser app like an admin SPA registers and should
+never be named as an audience by anyone.
+
+So a resource server that is not a client — the config service, say — is not
+listed until something names it. Type it into the free-text box once and it is
+offered from then on.
 
 Each named service accepts the token; anything else refuses it. So the client
 above can call statehouse and countinghouse and Identity, while a client naming

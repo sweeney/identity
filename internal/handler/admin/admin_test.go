@@ -846,7 +846,13 @@ func TestOAuthClientCreate_ClientCredentials_RequiresAudience(t *testing.T) {
 func TestOAuthClientCreate_ClientCredentials_WithAudience_Succeeds(t *testing.T) {
 	handler, oauthClients, _ := newRouterWithOAuth(t)
 	session := loginSession(t, handler)
-	oauthClients.EXPECT().Create(gomock.Any()).Return(nil)
+	// Assert what actually reaches the store, not merely that Create was
+	// called: a form value silently failing to arrive would otherwise pass.
+	oauthClients.EXPECT().Create(gomock.Any()).DoAndReturn(func(c *domain.OAuthClient) error {
+		assert.Equal(t, []string{"https://api.example.com"}, c.Audiences,
+			"the submitted audience must reach the stored client")
+		return nil
+	})
 
 	csrf := csrfTokenFor(session.Value)
 	form := url.Values{
@@ -856,6 +862,38 @@ func TestOAuthClientCreate_ClientCredentials_WithAudience_Succeeds(t *testing.T)
 		"grant_types":                {"client_credentials"},
 		"audience":                   {"https://api.example.com"},
 		"token_endpoint_auth_method": {"client_secret_basic"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(session)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusSeeOther, rr.Code)
+}
+
+// A client may name several services: the select posts one value per choice,
+// and the free-text box may hold more.
+func TestOAuthClientCreate_MultipleAudiences(t *testing.T) {
+	handler, oauthClients, _ := newRouterWithOAuth(t)
+	session := loginSession(t, handler)
+	oauthClients.EXPECT().Create(gomock.Any()).DoAndReturn(func(c *domain.OAuthClient) error {
+		assert.Equal(t, []string{"statehouse", "countinghouse", "config", "extra"}, c.Audiences,
+			"every selected and typed audience must be stored, in order, without duplicates")
+		return nil
+	})
+
+	csrf := csrfTokenFor(session.Value)
+	form := url.Values{
+		"_csrf":                      {csrf},
+		"id":                         {"net.swee.mac"},
+		"name":                       {"Mac App"},
+		"redirect_uris":              {"swee://callback"},
+		"grant_types":                {"authorization_code"},
+		"token_endpoint_auth_method": {"none"},
+		// Two from the select, then two typed into the free-text box, with a
+		// duplicate of an already-selected value that must be dropped.
+		"audience": {"statehouse", "countinghouse", "config extra statehouse"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/oauth/new", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -898,7 +936,7 @@ func TestOAuthClientEdit_ClientCredentials_RequiresAuthMethod(t *testing.T) {
 		ID:                      "svc-client",
 		Name:                    "Service Client",
 		GrantTypes:              []string{"client_credentials"},
-		Audiences:                []string{"https://api.example.com"},
+		Audiences:               []string{"https://api.example.com"},
 		TokenEndpointAuthMethod: "client_secret_basic",
 	}
 	oauthClients.EXPECT().GetByID("svc-client").Return(existingClient, nil)
@@ -931,7 +969,7 @@ func TestOAuthClientEdit_ClientCredentials_RequiresAudience(t *testing.T) {
 		ID:         "svc-client",
 		Name:       "Service Client",
 		GrantTypes: []string{"client_credentials"},
-		Audiences:   []string{"https://api.example.com"},
+		Audiences:  []string{"https://api.example.com"},
 	}
 	oauthClients.EXPECT().GetByID("svc-client").Return(existingClient, nil)
 	// No Update call expected — validation fires first
