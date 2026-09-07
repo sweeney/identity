@@ -70,13 +70,13 @@ func TestTokenStore_CreateAndGetByHash_WithAudience(t *testing.T) {
 
 	u := seedUser(t, us, "grace-aud")
 	tok := newToken(u.ID, "family-aud", "rawtoken-aud1")
-	tok.Audience = "mqttproxy"
+	tok.Audiences = []string{"mqttproxy"}
 
 	require.NoError(t, ts.Create(tok))
 
 	got, err := ts.GetByHash(sha256hex("rawtoken-aud1"))
 	require.NoError(t, err)
-	assert.Equal(t, "mqttproxy", got.Audience)
+	assert.Equal(t, []string{"mqttproxy"}, got.Audiences)
 }
 
 func TestTokenStore_RotateToken_PreservesAudience(t *testing.T) {
@@ -86,7 +86,7 @@ func TestTokenStore_RotateToken_PreservesAudience(t *testing.T) {
 
 	u := seedUser(t, us, "aud-rotate")
 	old := newToken(u.ID, "family-aud-rotate", "rawtoken-aud-old")
-	old.Audience = "mqttproxy"
+	old.Audiences = []string{"mqttproxy"}
 	require.NoError(t, ts.Create(old))
 
 	newTok := &domain.RefreshToken{
@@ -99,13 +99,13 @@ func TestTokenStore_RotateToken_PreservesAudience(t *testing.T) {
 
 	gotOld, err := ts.RotateToken(sha256hex("rawtoken-aud-old"), newTok)
 	require.NoError(t, err)
-	assert.Equal(t, "mqttproxy", gotOld.Audience, "returned old token should carry audience")
-	assert.Equal(t, "mqttproxy", newTok.Audience, "new token should inherit audience from old token")
+	assert.Equal(t, []string{"mqttproxy"}, gotOld.Audiences, "returned old token should carry audience")
+	assert.Equal(t, []string{"mqttproxy"}, newTok.Audiences, "new token should inherit audience from old token")
 
 	// Verify new token was persisted with the audience
 	gotNew, err := ts.GetByHash(sha256hex("rawtoken-aud-new"))
 	require.NoError(t, err)
-	assert.Equal(t, "mqttproxy", gotNew.Audience)
+	assert.Equal(t, []string{"mqttproxy"}, gotNew.Audiences)
 }
 
 func TestTokenStore_GetByHash_NotFound(t *testing.T) {

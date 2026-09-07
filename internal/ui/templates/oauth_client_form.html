@@ -60,7 +60,20 @@
     </label>
     <label>
         Audience <small>(aud claim in issued tokens)</small>
-        <input type="text" name="audience" value="{{if .Client}}{{.Client.Audience}}{{else}}{{.FormAudience}}{{end}}" placeholder="e.g. statehouse, or id.swee.net">
+        {{$selected := .FormAudiences}}{{if .Client}}{{$selected = .Client.Audiences}}{{end}}
+        {{if .KnownAudiences}}
+        <div class="audience-picker">
+            {{range .KnownAudiences}}
+            <label class="audience-option">
+                <input type="checkbox" name="audience" value="{{.}}"
+                    {{$name := .}}{{range $selected}}{{if eq . $name}}checked{{end}}{{end}}>
+                <span>{{.}}</span>
+            </label>
+            {{end}}
+        </div>
+        {{end}}
+        <input type="text" name="audience" value="{{range $selected}}{{if not (has $.KnownAudiences .)}}{{.}} {{end}}{{end}}"
+            placeholder="another service, or several separated by spaces">
         <small class="field-help">
             The service these tokens are <em>for</em>. A token naming a different
             service is refused here with <code>invalid_audience</code> — that is

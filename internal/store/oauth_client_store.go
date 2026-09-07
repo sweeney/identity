@@ -34,8 +34,12 @@ func (s *OAuthClientStore) Create(client *domain.OAuthClient) error {
 	if err != nil {
 		return fmt.Errorf("marshal scopes: %w", err)
 	}
+	auds, err := json.Marshal(nonNilStrings(client.Audiences))
+	if err != nil {
+		return fmt.Errorf("marshal audiences: %w", err)
+	}
 	_, err = s.db.DB().Exec(
-		`INSERT INTO oauth_clients (id, name, redirect_uris, client_secret_hash, client_secret_hash_prev, client_secret_prev_expires_at, grant_types, scopes, token_endpoint_auth_method, audience, created_at, updated_at)
+		`INSERT INTO oauth_clients (id, name, redirect_uris, client_secret_hash, client_secret_hash_prev, client_secret_prev_expires_at, grant_types, scopes, token_endpoint_auth_method, audiences, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		client.ID,
 		client.Name,
@@ -46,7 +50,7 @@ func (s *OAuthClientStore) Create(client *domain.OAuthClient) error {
 		string(grantTypes),
 		string(scopes),
 		client.TokenEndpointAuthMethod,
-		client.Audience,
+		string(auds),
 		formatTime(client.CreatedAt),
 		formatTime(client.UpdatedAt),
 	)
@@ -58,7 +62,7 @@ func (s *OAuthClientStore) Create(client *domain.OAuthClient) error {
 
 func (s *OAuthClientStore) GetByID(id string) (*domain.OAuthClient, error) {
 	row := s.db.DB().QueryRow(
-		`SELECT id, name, redirect_uris, client_secret_hash, client_secret_hash_prev, client_secret_prev_expires_at, grant_types, scopes, token_endpoint_auth_method, audience, created_at, updated_at
+		`SELECT id, name, redirect_uris, client_secret_hash, client_secret_hash_prev, client_secret_prev_expires_at, grant_types, scopes, token_endpoint_auth_method, audiences, created_at, updated_at
 		 FROM oauth_clients WHERE id = ?`, id,
 	)
 	return scanOAuthClient(row)
@@ -66,7 +70,7 @@ func (s *OAuthClientStore) GetByID(id string) (*domain.OAuthClient, error) {
 
 func (s *OAuthClientStore) List() ([]*domain.OAuthClient, error) {
 	rows, err := s.db.DB().Query(
-		`SELECT id, name, redirect_uris, client_secret_hash, client_secret_hash_prev, client_secret_prev_expires_at, grant_types, scopes, token_endpoint_auth_method, audience, created_at, updated_at
+		`SELECT id, name, redirect_uris, client_secret_hash, client_secret_hash_prev, client_secret_prev_expires_at, grant_types, scopes, token_endpoint_auth_method, audiences, created_at, updated_at
 		 FROM oauth_clients ORDER BY name`,
 	)
 	if err != nil {
@@ -98,8 +102,12 @@ func (s *OAuthClientStore) Update(client *domain.OAuthClient) error {
 	if err != nil {
 		return fmt.Errorf("marshal scopes: %w", err)
 	}
+	auds, err := json.Marshal(nonNilStrings(client.Audiences))
+	if err != nil {
+		return fmt.Errorf("marshal audiences: %w", err)
+	}
 	res, err := s.db.DB().Exec(
-		`UPDATE oauth_clients SET name=?, redirect_uris=?, client_secret_hash=?, client_secret_hash_prev=?, client_secret_prev_expires_at=?, grant_types=?, scopes=?, token_endpoint_auth_method=?, audience=?, updated_at=? WHERE id=?`,
+		`UPDATE oauth_clients SET name=?, redirect_uris=?, client_secret_hash=?, client_secret_hash_prev=?, client_secret_prev_expires_at=?, grant_types=?, scopes=?, token_endpoint_auth_method=?, audiences=?, updated_at=? WHERE id=?`,
 		client.Name,
 		string(uris),
 		client.SecretHash,
@@ -108,7 +116,7 @@ func (s *OAuthClientStore) Update(client *domain.OAuthClient) error {
 		string(grantTypes),
 		string(scopes),
 		client.TokenEndpointAuthMethod,
-		client.Audience,
+		string(auds),
 		formatTime(time.Now().UTC()),
 		client.ID,
 	)
@@ -136,10 +144,10 @@ func (s *OAuthClientStore) Delete(id string) error {
 
 func scanOAuthClient(row *sql.Row) (*domain.OAuthClient, error) {
 	var c domain.OAuthClient
-	var urisJSON, grantTypesJSON, scopesJSON, createdAt, updatedAt string
+	var urisJSON, grantTypesJSON, scopesJSON, audsJSON, createdAt, updatedAt string
 	var prevExpires sql.NullString
 
-	err := row.Scan(&c.ID, &c.Name, &urisJSON, &c.SecretHash, &c.SecretHashPrev, &prevExpires, &grantTypesJSON, &scopesJSON, &c.TokenEndpointAuthMethod, &c.Audience, &createdAt, &updatedAt)
+	err := row.Scan(&c.ID, &c.Name, &urisJSON, &c.SecretHash, &c.SecretHashPrev, &prevExpires, &grantTypesJSON, &scopesJSON, &c.TokenEndpointAuthMethod, &audsJSON, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -151,6 +159,10 @@ func scanOAuthClient(row *sql.Row) (*domain.OAuthClient, error) {
 		if t, pErr := time.Parse(time.RFC3339Nano, prevExpires.String); pErr == nil {
 			c.SecretPrevExpiresAt = &t
 		}
+	}
+
+	if err := json.Unmarshal([]byte(audsJSON), &c.Audiences); err != nil {
+		return nil, fmt.Errorf("unmarshal audiences: %w", err)
 	}
 
 	if err := json.Unmarshal([]byte(urisJSON), &c.RedirectURIs); err != nil {
@@ -179,10 +191,10 @@ func scanOAuthClient(row *sql.Row) (*domain.OAuthClient, error) {
 
 func scanOAuthClientRow(rows *sql.Rows) (*domain.OAuthClient, error) {
 	var c domain.OAuthClient
-	var urisJSON, grantTypesJSON, scopesJSON, createdAt, updatedAt string
+	var urisJSON, grantTypesJSON, scopesJSON, audsJSON, createdAt, updatedAt string
 	var prevExpires sql.NullString
 
-	err := rows.Scan(&c.ID, &c.Name, &urisJSON, &c.SecretHash, &c.SecretHashPrev, &prevExpires, &grantTypesJSON, &scopesJSON, &c.TokenEndpointAuthMethod, &c.Audience, &createdAt, &updatedAt)
+	err := rows.Scan(&c.ID, &c.Name, &urisJSON, &c.SecretHash, &c.SecretHashPrev, &prevExpires, &grantTypesJSON, &scopesJSON, &c.TokenEndpointAuthMethod, &audsJSON, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("scan oauth client row: %w", err)
 	}
@@ -191,6 +203,10 @@ func scanOAuthClientRow(rows *sql.Rows) (*domain.OAuthClient, error) {
 		if t, pErr := time.Parse(time.RFC3339Nano, prevExpires.String); pErr == nil {
 			c.SecretPrevExpiresAt = &t
 		}
+	}
+
+	if err := json.Unmarshal([]byte(audsJSON), &c.Audiences); err != nil {
+		return nil, fmt.Errorf("unmarshal audiences: %w", err)
 	}
 
 	if err := json.Unmarshal([]byte(urisJSON), &c.RedirectURIs); err != nil {
@@ -222,4 +238,13 @@ func nullableTime(t *time.Time) any {
 		return nil
 	}
 	return formatTime(*t)
+}
+
+// nonNilStrings renders a nil slice as an empty JSON array rather than null,
+// matching how the other list columns in this table are stored.
+func nonNilStrings(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
 }

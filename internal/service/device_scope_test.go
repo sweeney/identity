@@ -42,7 +42,7 @@ func TestDeviceFlowService_PollForToken_IssuesTokenWithConsentedScope(t *testing
 		DoAndReturn(func(_ string, grant service.GrantContext) (*service.LoginResult, error) {
 			assert.Equal(t, "read:sensors", grant.Scope,
 				"the device must receive exactly the scope the user consented to")
-			assert.Equal(t, "https://api.example.com", grant.Audience)
+			assert.Equal(t, []string{"https://api.example.com"}, grant.Audience)
 			return &service.LoginResult{AccessToken: "a", RefreshToken: "r"}, nil
 		})
 

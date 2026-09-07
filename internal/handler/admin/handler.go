@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -736,9 +737,52 @@ func (h *adminHandler) oauthList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// knownAudiences returns the service names offerable as audiences: every
+// registered client id, plus every audience already in use, plus this server.
+//
+// The services in a swee.net-style deployment are themselves registered clients
+// — they need client_credentials to call each other — so the clients table is
+// already the list of known service names. Deriving it means a new service is
+// offerable the moment it is registered, with no separate registry to curate
+// and no chance of the two drifting apart.
+//
+// Not every client is a resource server, so some entries are things nobody
+// should pick. This is a suggestion list, not a constraint: free text remains
+// available for anything not represented here.
+func (h *adminHandler) knownAudiences(excludeClientID string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(v string) {
+		if v == "" || seen[v] || v == excludeClientID {
+			return
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+
+	if h.tokenIssuer != nil {
+		if u, err := url.Parse(h.tokenIssuer.Issuer()); err == nil && u.Host != "" {
+			add(u.Host)
+		}
+	}
+	clients, err := h.oauthClients.List()
+	if err != nil {
+		return out
+	}
+	for _, c := range clients {
+		add(c.ID)
+		for _, a := range c.Audiences {
+			add(a)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (h *adminHandler) oauthNewGet(w http.ResponseWriter, r *http.Request) {
 	h.render(w, r, "oauth_client_form.html", map[string]any{
-		"FormAction": "/admin/oauth/new",
+		"FormAction":     "/admin/oauth/new",
+		"KnownAudiences": h.knownAudiences(""),
 	})
 }
 
@@ -749,7 +793,9 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 	grantTypes := r.Form["grant_types"]
 	authMethod := r.FormValue("token_endpoint_auth_method")
 	rawScopes := r.FormValue("scopes")
-	audience := strings.TrimSpace(r.FormValue("audience"))
+	// The form posts one `audience` value per selected service, plus any typed
+	// into the free-text box, so a client can name several.
+	audiences := splitAudiences(r.PostForm["audience"])
 
 	if id == "" || name == "" {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
@@ -759,7 +805,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -772,7 +818,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -784,7 +830,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 		authMethod = "none"
 	}
 
-	if sliceContains(grantTypes, "client_credentials") && audience == "" {
+	if sliceContains(grantTypes, "client_credentials") && len(audiences) == 0 {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction":       "/admin/oauth/new",
 			"Error":            "Audience is required for client_credentials grant type.",
@@ -792,7 +838,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -805,7 +851,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -818,7 +864,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -833,7 +879,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 		GrantTypes:              grantTypes,
 		Scopes:                  scopes,
 		TokenEndpointAuthMethod: authMethod,
-		Audience:                audience,
+		Audiences:               audiences,
 		CreatedAt:               now,
 		UpdatedAt:               now,
 	}
@@ -846,7 +892,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -866,8 +912,9 @@ func (h *adminHandler) oauthEditGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.render(w, r, "oauth_client_form.html", map[string]any{
-		"FormAction": "/admin/oauth/" + id + "/edit",
-		"Client":     client,
+		"FormAction":     "/admin/oauth/" + id + "/edit",
+		"Client":         client,
+		"KnownAudiences": h.knownAudiences(client.ID),
 	})
 }
 
@@ -893,7 +940,9 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 	grantTypes := r.Form["grant_types"]
 	authMethod := r.FormValue("token_endpoint_auth_method")
 	rawScopes := r.FormValue("scopes")
-	audience := strings.TrimSpace(r.FormValue("audience"))
+	// The form posts one `audience` value per selected service, plus any typed
+	// into the free-text box, so a client can name several.
+	audiences := splitAudiences(r.PostForm["audience"])
 
 	if name == "" {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
@@ -911,7 +960,7 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 		authMethod = "none"
 	}
 
-	if sliceContains(grantTypes, "client_credentials") && audience == "" {
+	if sliceContains(grantTypes, "client_credentials") && len(audiences) == 0 {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction": "/admin/oauth/" + id + "/edit",
 			"Client":     client,
@@ -943,7 +992,7 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 	client.GrantTypes = grantTypes
 	client.Scopes = splitLines(rawScopes)
 	client.TokenEndpointAuthMethod = authMethod
-	client.Audience = audience
+	client.Audiences = audiences
 	if err := h.oauthClients.Update(client); err != nil {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction": "/admin/oauth/" + id + "/edit",
@@ -1371,3 +1420,25 @@ func validClientID(id string) bool {
 var _ = (*adminHandler)(nil)
 var _ = time.Now
 var _ = uuid.New
+
+// splitAudiences normalises the audience values posted by the client form.
+// Each checkbox posts its own value and the free-text box may hold several
+// separated by whitespace or commas; blanks and duplicates are dropped so the
+// stored list is exactly what was meant.
+func splitAudiences(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range values {
+		for _, field := range strings.FieldsFunc(v, func(r rune) bool {
+			return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+		}) {
+			field = strings.TrimSpace(field)
+			if field == "" || seen[field] {
+				continue
+			}
+			seen[field] = true
+			out = append(out, field)
+		}
+	}
+	return out
+}

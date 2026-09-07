@@ -10,14 +10,14 @@ import (
 type RefreshToken struct {
 	ID            string
 	UserID        string
-	TokenHash     string // SHA-256 hex of the raw bearer token
-	FamilyID      string // Groups a rotation chain; whole family invalidated on reuse detection
-	ParentTokenID string // ID of the token this one replaced (may be empty for first in family)
-	DeviceHint    string // Informational only, e.g. "iPhone 15 / iOS 18"
-	Audience      string // aud claim to carry into new access tokens on rotation
-	Scope         string // space-delimited scope this grant was consented for; empty means unrestricted
-	ClaimCodeID   string // claim code that produced this family, if any; revoking it revokes the family
-	ClientID      string // OAuth client this token was issued to; empty for a direct API login
+	TokenHash     string   // SHA-256 hex of the raw bearer token
+	FamilyID      string   // Groups a rotation chain; whole family invalidated on reuse detection
+	ParentTokenID string   // ID of the token this one replaced (may be empty for first in family)
+	DeviceHint    string   // Informational only, e.g. "iPhone 15 / iOS 18"
+	Audiences     []string // aud claim to carry into new access tokens on rotation
+	Scope         string   // space-delimited scope this grant was consented for; empty means unrestricted
+	ClaimCodeID   string   // claim code that produced this family, if any; revoking it revokes the family
+	ClientID      string   // OAuth client this token was issued to; empty for a direct API login
 	IssuedAt      time.Time
 	LastUsedAt    time.Time
 	ExpiresAt     time.Time
@@ -38,7 +38,8 @@ type TokenClaims = commonauth.TokenClaims
 type ServiceTokenClaims = commonauth.ServiceTokenClaims
 
 // AudienceList builds a token audience list from a single configured audience
-// string (an OAuth client's Audience, or a refresh token's). Empty yields nil.
+// string. Retained for callers that genuinely have one value; a client's
+// audiences are already a list and need no conversion.
 var AudienceList = commonauth.AudienceList
 
 // TokenRepository defines all persistence operations for refresh tokens.

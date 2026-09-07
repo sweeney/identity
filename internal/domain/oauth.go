@@ -25,7 +25,7 @@ type OAuthClient struct {
 	GrantTypes              []string // "authorization_code", "client_credentials"
 	Scopes                  []string // allowed scopes for this client
 	TokenEndpointAuthMethod string   // "none", "client_secret_basic", "client_secret_post"
-	Audience                string   // aud claim for issued tokens
+	Audiences               []string // services these tokens are for; empty means none
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }
@@ -35,6 +35,16 @@ type OAuthClient struct {
 // working. Long enough to redeploy every consumer of the client at leisure,
 // short enough that the rotation actually takes effect.
 const ClientSecretRotationWindow = 7 * 24 * time.Hour
+
+// HasAudience reports whether the client mints tokens for the named service.
+func (c *OAuthClient) HasAudience(aud string) bool {
+	for _, a := range c.Audiences {
+		if a == aud {
+			return true
+		}
+	}
+	return false
+}
 
 // PreviousSecretUsable reports whether the rotated-out secret should still be
 // accepted.

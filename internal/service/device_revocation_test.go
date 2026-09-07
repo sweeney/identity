@@ -74,7 +74,7 @@ func TestDeviceFlowService_PollForToken_LiveClaimCode_StillWorks(t *testing.T) {
 	claimCodes.EXPECT().GetByID("claim-2").Return(live, nil).AnyTimes()
 	clients.EXPECT().GetByID("device-client").Return(deviceClient(), nil)
 	auth.EXPECT().IssueTokensForGrant("user-99", service.GrantContext{
-		Audience:    "https://api.example.com",
+		Audience:    []string{"https://api.example.com"},
 		ClientID:    "device-client",
 		ClaimCodeID: "claim-2",
 	}).Return(&service.LoginResult{AccessToken: "a", RefreshToken: "r"}, nil)

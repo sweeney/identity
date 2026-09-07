@@ -26,7 +26,7 @@ func scopedToken(id, hash, userID string) *domain.RefreshToken {
 		UserID:      userID,
 		TokenHash:   hash,
 		FamilyID:    "family-1",
-		Audience:    "https://api.example.com",
+		Audiences:   []string{"https://api.example.com"},
 		Scope:       "read:sensors",
 		ClaimCodeID: "claim-1",
 		IssuedAt:    now,

@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -24,7 +25,7 @@ func (s *TokenStore) Create(token *domain.RefreshToken) error {
 	_, err := s.db.DB().Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  audience, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
+		  audiences, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		token.ID,
 		token.UserID,
@@ -32,7 +33,7 @@ func (s *TokenStore) Create(token *domain.RefreshToken) error {
 		token.FamilyID,
 		nullableString(token.ParentTokenID),
 		token.DeviceHint,
-		token.Audience,
+		mustJSONStrings(token.Audiences),
 		token.Scope,
 		nullableString(token.ClaimCodeID),
 		nullableString(token.ClientID),
@@ -50,7 +51,7 @@ func (s *TokenStore) Create(token *domain.RefreshToken) error {
 func (s *TokenStore) GetByHash(tokenHash string) (*domain.RefreshToken, error) {
 	row := s.db.DB().QueryRow(
 		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
-		        device_hint, audience, scope, COALESCE(claim_code_id,''), COALESCE(client_id,''),
+		        device_hint, audiences, scope, COALESCE(claim_code_id,''), COALESCE(client_id,''),
 		        issued_at, last_used_at, expires_at, is_revoked
 		 FROM refresh_tokens WHERE token_hash = ?`, tokenHash,
 	)
@@ -77,7 +78,7 @@ func (s *TokenStore) Rotate(oldTokenID string, newToken *domain.RefreshToken) er
 	if _, err := tx.Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  audience, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
+		  audiences, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		newToken.ID,
 		newToken.UserID,
@@ -85,7 +86,7 @@ func (s *TokenStore) Rotate(oldTokenID string, newToken *domain.RefreshToken) er
 		newToken.FamilyID,
 		nullableString(newToken.ParentTokenID),
 		newToken.DeviceHint,
-		newToken.Audience,
+		mustJSONStrings(newToken.Audiences),
 		newToken.Scope,
 		nullableString(newToken.ClaimCodeID),
 		nullableString(newToken.ClientID),
@@ -123,18 +124,19 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	// Read old token within the transaction
 	row := tx.QueryRow(
 		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
-		        device_hint, audience, scope, COALESCE(claim_code_id,''), COALESCE(client_id,''),
+		        device_hint, audiences, scope, COALESCE(claim_code_id,''), COALESCE(client_id,''),
 		        issued_at, last_used_at, expires_at, is_revoked
 		 FROM refresh_tokens WHERE token_hash = ?`, oldTokenHash,
 	)
 
 	var t domain.RefreshToken
 	var isRevoked int
+	var audsJSON string
 	var issuedAt, lastUsedAt, expiresAt string
 
 	scanErr := row.Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
-		&t.DeviceHint, &t.Audience, &t.Scope, &t.ClaimCodeID, &t.ClientID,
+		&t.DeviceHint, &audsJSON, &t.Scope, &t.ClaimCodeID, &t.ClientID,
 		&issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
 	)
 	if scanErr != nil {
@@ -142,6 +144,9 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("scan token: %w", scanErr)
+	}
+	if err := json.Unmarshal([]byte(audsJSON), &t.Audiences); err != nil {
+		return nil, fmt.Errorf("unmarshal audiences: %w", err)
 	}
 
 	t.IsRevoked = isRevoked == 1
@@ -161,7 +166,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	newToken.FamilyID = t.FamilyID
 	newToken.ParentTokenID = t.ID
 	newToken.DeviceHint = t.DeviceHint
-	newToken.Audience = t.Audience
+	newToken.Audiences = t.Audiences
 	// Scope and claim-code binding travel with the family. Dropping the scope
 	// on rotation would silently widen the grant back to full privilege; losing
 	// the claim code would put the family beyond the reach of its revocation.
@@ -188,7 +193,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	if _, err := tx.Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  audience, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
+		  audiences, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		newToken.ID,
 		newToken.UserID,
@@ -196,7 +201,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 		newToken.FamilyID,
 		nullableString(newToken.ParentTokenID),
 		newToken.DeviceHint,
-		newToken.Audience,
+		mustJSONStrings(newToken.Audiences),
 		newToken.Scope,
 		nullableString(newToken.ClaimCodeID),
 		nullableString(newToken.ClientID),
@@ -283,11 +288,12 @@ func (s *TokenStore) DeleteExpiredAndOldRevoked(retentionDays int) error {
 func scanToken(row *sql.Row) (*domain.RefreshToken, error) {
 	var t domain.RefreshToken
 	var isRevoked int
+	var audsJSON string
 	var issuedAt, lastUsedAt, expiresAt string
 
 	err := row.Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
-		&t.DeviceHint, &t.Audience, &t.Scope, &t.ClaimCodeID, &t.ClientID,
+		&t.DeviceHint, &audsJSON, &t.Scope, &t.ClaimCodeID, &t.ClientID,
 		&issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -295,6 +301,9 @@ func scanToken(row *sql.Row) (*domain.RefreshToken, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("scan token: %w", err)
+	}
+	if err := json.Unmarshal([]byte(audsJSON), &t.Audiences); err != nil {
+		return nil, fmt.Errorf("unmarshal audiences: %w", err)
 	}
 
 	t.IsRevoked = isRevoked == 1
@@ -309,4 +318,14 @@ func nullableString(s string) any {
 		return nil
 	}
 	return s
+}
+
+// mustJSONStrings renders a string list for storage, as an empty array when nil.
+// Marshalling []string cannot fail, so the error is discarded deliberately.
+func mustJSONStrings(v []string) string {
+	if v == nil {
+		v = []string{}
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
 }

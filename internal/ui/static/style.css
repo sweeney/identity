@@ -47,6 +47,10 @@ a:hover { color: var(--brand-hover); text-decoration: underline; }
 small { color: var(--text-muted); font-size: 0.85em; }
 /* Explanatory text under a form field: a paragraph, not an inline aside. */
 .field-help { display: block; margin-top: 0.35rem; line-height: 1.45; font-weight: normal; }
+/* Audience picker: known service names as checkboxes, above a free-text field. */
+.audience-picker { display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; margin: 0.35rem 0 0.5rem; }
+.audience-option { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: normal; margin: 0; }
+.audience-option input { width: auto; margin: 0; }
 code { background: var(--bg-surface); padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
 
 /* Nav */

@@ -247,9 +247,9 @@ func (s *DeviceFlowService) PollForToken(clientID, rawDeviceCode, ip string) (*L
 	}
 
 	client, err := s.clients.GetByID(da.ClientID)
-	audience := ""
+	var audience []string
 	if err == nil {
-		audience = client.Audience
+		audience = client.Audiences
 	}
 
 	// The scope the user consented to on the approval page is the scope the

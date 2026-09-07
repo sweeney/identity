@@ -63,7 +63,7 @@ type loginArgs struct {
 	oldTokenID string
 	familyID   string // empty = generate new family
 	deviceHint string
-	audience   string // optional aud claim; set for OAuth PKCE flow
+	audience   []string // optional aud claim; set for OAuth PKCE flow
 
 	// scope is the space-delimited scope the grant was consented for, carried
 	// onto both the access token and the refresh token so it survives rotation.
@@ -182,8 +182,8 @@ func (s *AuthService) AuthorizeUser(username, password, clientIP string) (string
 // GrantContext describes what a pre-authenticated grant was actually for. It
 // travels onto the issued tokens and, via the refresh token, survives rotation.
 type GrantContext struct {
-	// Audience is the aud claim to embed; empty omits it.
-	Audience string
+	// Audience lists the services these tokens are for; empty omits the claim.
+	Audience []string
 	// Scope is the space-delimited scope the user consented to; empty means no
 	// scope restriction. The device grant consents to a scope, so it must be
 	// carried here or the device silently receives full user privileges.
@@ -201,7 +201,7 @@ type GrantContext struct {
 // audience is the aud claim to embed in the access token; pass "" to omit it.
 // Used by OAuthService at the code exchange step.
 func (s *AuthService) IssueTokensForUser(userID, audience string) (*LoginResult, error) {
-	return s.IssueTokensForGrant(userID, GrantContext{Audience: audience})
+	return s.IssueTokensForGrant(userID, GrantContext{Audience: domain.AudienceList(audience)})
 }
 
 // IssueTokensForGrant issues a token pair for a pre-authenticated user, carrying
@@ -321,7 +321,7 @@ func (s *AuthService) refresh(rawRefreshToken, adoptClientID string) (*LoginResu
 		Username: user.Username,
 		Role:     user.Role,
 		IsActive: user.IsActive,
-		Audience: domain.AudienceList(oldTok.Audience),
+		Audience: oldTok.Audiences,
 		Scope:    oldTok.Scope,
 	}
 
@@ -396,7 +396,7 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		Username: user.Username,
 		Role:     user.Role,
 		IsActive: user.IsActive,
-		Audience: domain.AudienceList(args.audience),
+		Audience: args.audience,
 		Scope:    args.scope,
 	}
 
@@ -423,7 +423,7 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		FamilyID:      familyID,
 		ParentTokenID: args.oldTokenID,
 		DeviceHint:    args.deviceHint,
-		Audience:      args.audience,
+		Audiences:     args.audience,
 		Scope:         args.scope,
 		ClaimCodeID:   args.claimCodeID,
 		ClientID:      args.clientID,

@@ -22,6 +22,17 @@ type Config struct {
 func NewRouter(cfg Config, authSvc service.AuthServicer, userSvc service.UserServicer, oauthClients domain.OAuthClientRepository, auditRepo domain.AuditRepository, backupSvc domain.BackupService, tokenIssuer *auth.TokenIssuer, webauthnSvc service.WebAuthnServicer, deviceSvc service.DeviceFlowServicer) http.Handler {
 	funcs := template.FuncMap{
 		"assetVer": func() string { return ui.AssetVersion },
+		// has reports whether a list contains a value. Used by the audience
+		// picker to decide which selected values are already offered as
+		// checkboxes and which belong in the free-text field.
+		"has": func(list []string, v string) bool {
+			for _, item := range list {
+				if item == v {
+					return true
+				}
+			}
+			return false
+		},
 	}
 
 	// Parse only the base template at startup; page templates are cloned in per-request.

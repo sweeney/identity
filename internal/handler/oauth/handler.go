@@ -13,6 +13,7 @@ import (
 
 	"github.com/sweeney/identity/common/httputil"
 	"github.com/sweeney/identity/internal/auth"
+	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/ui"
 )
@@ -533,7 +534,8 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 	// against every client — the safe default.
 	if h.tokenIssuer != nil {
 		if uc, err := h.tokenIssuer.Parse(r.Context(), token); err == nil {
-			if client.Audience == "" || !uc.HasAudience(client.Audience) {
+			// The introspecting client must be one this token was minted for.
+			if !anyAudienceMatches(uc, client.Audiences) {
 				jsonOK(w, map[string]any{"active": false})
 				return
 			}
@@ -872,4 +874,16 @@ func buildRedirect(redirectURI, code, state string) string {
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// anyAudienceMatches reports whether the token names at least one of the
+// client's audiences. A client with no audience at all introspects nothing as
+// active — it has no claim on any token, which is the safe default.
+func anyAudienceMatches(uc *domain.TokenClaims, clientAudiences []string) bool {
+	for _, a := range clientAudiences {
+		if a != "" && uc.HasAudience(a) {
+			return true
+		}
+	}
+	return false
 }

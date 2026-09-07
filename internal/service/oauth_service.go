@@ -234,7 +234,7 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 	}
 
 	return s.auth.IssueTokensForGrant(code.UserID, GrantContext{
-		Audience: client.Audience,
+		Audience: client.Audiences,
 		ClientID: client.ID,
 	})
 }
@@ -280,7 +280,7 @@ func (s *OAuthService) IssueClientCredentials(client *domain.OAuthClient, reques
 
 	claims := domain.ServiceTokenClaims{
 		ClientID: client.ID,
-		Audience: domain.AudienceList(client.Audience),
+		Audience: client.Audiences,
 		Scope:    scope,
 	}
 

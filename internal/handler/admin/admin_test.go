@@ -898,7 +898,7 @@ func TestOAuthClientEdit_ClientCredentials_RequiresAuthMethod(t *testing.T) {
 		ID:                      "svc-client",
 		Name:                    "Service Client",
 		GrantTypes:              []string{"client_credentials"},
-		Audience:                "https://api.example.com",
+		Audiences:                []string{"https://api.example.com"},
 		TokenEndpointAuthMethod: "client_secret_basic",
 	}
 	oauthClients.EXPECT().GetByID("svc-client").Return(existingClient, nil)
@@ -931,7 +931,7 @@ func TestOAuthClientEdit_ClientCredentials_RequiresAudience(t *testing.T) {
 		ID:         "svc-client",
 		Name:       "Service Client",
 		GrantTypes: []string{"client_credentials"},
-		Audience:   "https://api.example.com",
+		Audiences:   []string{"https://api.example.com"},
 	}
 	oauthClients.EXPECT().GetByID("svc-client").Return(existingClient, nil)
 	// No Update call expected — validation fires first
@@ -1308,12 +1308,12 @@ func TestPasskeyPrompt_SafeRelativeNext(t *testing.T) {
 // no unsanitized scheme reaches the href.
 func TestPasskeyPrompt_UnsafeNextFallsBack(t *testing.T) {
 	cases := []string{
-		"https://evil.example/login",      // absolute open redirect
-		"//evil.example",                  // protocol-relative
-		"javascript:alert(1)",             // latent XSS
-		"com.foo.bar://callback",          // custom scheme
-		"http://evil.example",             // absolute http
-		" /admin/ok",                      // leading whitespace then path
+		"https://evil.example/login", // absolute open redirect
+		"//evil.example",             // protocol-relative
+		"javascript:alert(1)",        // latent XSS
+		"com.foo.bar://callback",     // custom scheme
+		"http://evil.example",        // absolute http
+		" /admin/ok",                 // leading whitespace then path
 	}
 	for _, next := range cases {
 		t.Run(next, func(t *testing.T) {

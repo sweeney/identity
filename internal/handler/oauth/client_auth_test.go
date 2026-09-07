@@ -43,7 +43,7 @@ func TestClientCredentials_ValidBasicAuth(t *testing.T) {
 		GrantTypes:              []string{"client_credentials"},
 		Scopes:                  []string{"read:users"},
 		TokenEndpointAuthMethod: "client_secret_basic",
-		Audience:                "https://api.example.com",
+		Audiences:               []string{"https://api.example.com"},
 	}
 
 	svc.EXPECT().GetClient("my-service").Return(client, nil)
@@ -87,7 +87,7 @@ func TestClientCredentials_FormPost(t *testing.T) {
 		GrantTypes:              []string{"client_credentials"},
 		Scopes:                  []string{"read:users"},
 		TokenEndpointAuthMethod: "client_secret_post",
-		Audience:                "https://api.example.com",
+		Audiences:               []string{"https://api.example.com"},
 	}
 
 	svc.EXPECT().GetClient("my-service").Return(client, nil)
@@ -184,7 +184,7 @@ func TestClientCredentials_WrongGrantType(t *testing.T) {
 		SecretHash:              hash,
 		GrantTypes:              []string{"authorization_code"}, // not client_credentials
 		TokenEndpointAuthMethod: "client_secret_basic",
-		Audience:                "https://api.example.com",
+		Audiences:               []string{"https://api.example.com"},
 	}
 
 	svc.EXPECT().GetClient("my-service").Return(client, nil)
@@ -213,7 +213,7 @@ func TestClientCredentials_InvalidScope(t *testing.T) {
 		GrantTypes:              []string{"client_credentials"},
 		Scopes:                  []string{"read:users"},
 		TokenEndpointAuthMethod: "client_secret_basic",
-		Audience:                "https://api.example.com",
+		Audiences:               []string{"https://api.example.com"},
 	}
 
 	svc.EXPECT().GetClient("my-service").Return(client, nil)
@@ -306,7 +306,7 @@ func TestClientCredentials_SecretRotation(t *testing.T) {
 		GrantTypes:              []string{"client_credentials"},
 		Scopes:                  []string{"read:users"},
 		TokenEndpointAuthMethod: "client_secret_basic",
-		Audience:                "https://api.example.com",
+		Audiences:               []string{"https://api.example.com"},
 	}
 
 	// Old secret should still work
@@ -652,7 +652,7 @@ func TestIntrospect_UserToken_WrongClient_ReturnsInactive(t *testing.T) {
 		SecretHash:              hashB,
 		GrantTypes:              []string{"authorization_code"},
 		TokenEndpointAuthMethod: "client_secret_basic",
-		Audience:                "https://app-b.example.com",
+		Audiences:               []string{"https://app-b.example.com"},
 	}
 	// GetClient is called once during client auth, and again to resolve the
 	// requesting client's configured audience.
@@ -700,7 +700,7 @@ func TestIntrospect_UserToken_NoAudienceClient_ReturnsInactive(t *testing.T) {
 		SecretHash:              hashC,
 		GrantTypes:              []string{"authorization_code"},
 		TokenEndpointAuthMethod: "client_secret_basic",
-		Audience:                "",
+		Audiences:               []string{},
 	}
 	svc.EXPECT().GetClient("client-c").Return(clientC, nil).AnyTimes()
 
@@ -740,7 +740,7 @@ func TestIntrospect_UserToken_OwningClient_ReturnsActive(t *testing.T) {
 		SecretHash:              hashA,
 		GrantTypes:              []string{"authorization_code"},
 		TokenEndpointAuthMethod: "client_secret_basic",
-		Audience:                "https://app-a.example.com",
+		Audiences:               []string{"https://app-a.example.com"},
 	}
 	svc.EXPECT().GetClient("client-a").Return(clientA, nil).AnyTimes()
 

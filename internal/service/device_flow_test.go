@@ -58,7 +58,7 @@ func deviceClient() *domain.OAuthClient {
 		Name:       "Home IoT",
 		GrantTypes: []string{domain.GrantTypeDeviceCode},
 		Scopes:     []string{"read:sensors", "write:sensors"},
-		Audience:   "https://api.example.com",
+		Audiences:  []string{"https://api.example.com"},
 	}
 }
 
@@ -328,7 +328,7 @@ func TestDeviceFlowService_PollForToken_Approved_IssuesTokens(t *testing.T) {
 		RefreshToken: "refresh.xyz",
 	}
 	auth.EXPECT().IssueTokensForGrant("user-99", service.GrantContext{
-		Audience: "https://api.example.com",
+		Audience: []string{"https://api.example.com"},
 		ClientID: "device-client",
 	}).Return(tokens, nil)
 

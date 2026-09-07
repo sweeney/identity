@@ -470,7 +470,7 @@ func TestAuthService_Refresh_PreservesAudience(t *testing.T) {
 		UserID:    "user-123",
 		TokenHash: tokenHash,
 		FamilyID:  "family-aud",
-		Audience:  "mqttproxy",
+		Audiences: []string{"mqttproxy"},
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 		IsRevoked: false,
 	}

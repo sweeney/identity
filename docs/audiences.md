@@ -72,23 +72,32 @@ do not name the service. Leave it unset and `aud` is ignored entirely.
 | An app talking to several services | see below | One field cannot name several services. |
 | Unsure, and it only calls Identity | leave empty | No `aud` is accepted by Identity. It is also accepted by every downstream service, so this is the widest option — prefer a real value once you know it. |
 
-**The multi-service case has no clean answer in the current schema.** The client
-registration holds a single string, so a native app that signs in once and talks
-to statehouse, countinghouse and Identity cannot name all three. The options:
+**A client may name several services.** RFC 7519 §4.1.3 defines `aud` as a list,
+and that is the mechanism for "this token is for these recipients". A native app
+that signs in once and talks to statehouse, countinghouse and Identity names all
+three:
 
-1. **A shared ecosystem audience** — e.g. `swee.net` on the client, with every
-   service (Identity included) configured to accept it. Draws the boundary at
-   the edge of the ecosystem: outside cannot get in, but a token leaked from one
-   internal service still works against the others. Requires Identity to be told
-   explicitly that it answers to that name.
-2. **Multi-valued `aud`** — `["id.swee.net","statehouse"]`. JWT allows it and
-   Identity already reads `aud` as a list (`TokenClaims.Audience` is a
-   `[]string`, with `HasAudience`), but client registration cannot yet *store*
-   more than one, so this needs a schema change.
-3. **A token per service** (RFC 8707 resource indicators) — the client asks for
-   `resource=https://statehouse.swee.net` and gets a token audienced to just
-   that, requesting another for the next service. Correct and fully isolating.
-   Identity does not implement this.
+```json
+{ "aud": ["statehouse", "countinghouse", "id.swee.net"] }
+```
+
+Tick the services on the client form. The list offered is every registered
+client id plus every audience already in use — the services in this deployment
+are themselves registered clients, since they need `client_credentials` to call
+each other, so the clients table already *is* the register of known service
+names. Anything not listed can be typed into the free-text box, and becomes
+offerable from then on.
+
+Each named service accepts the token; anything else refuses it. So the client
+above can call statehouse and countinghouse and Identity, while a client naming
+only `["statehouse"]` can call statehouse and nothing else — including not
+Identity.
+
+The remaining option, not implemented here, is **a token per service** (RFC 8707
+resource indicators): the client asks for `resource=https://statehouse.swee.net`
+and gets a token audienced to just that, requesting another for the next
+service. That isolates further — a token leaked from statehouse names only
+statehouse — at the cost of a token exchange per service.
 
 ---
 
@@ -110,17 +119,20 @@ this is the thing to finish: a scope is a more precise statement than a role.
 
 ---
 
-## If user tokens should be ecosystem-wide
+## If user tokens should be broad
 
 A reasonable model is *service tokens narrow, user tokens broad*: once someone
 has authenticated, their token works across the whole suite, and roles or scopes
 provide the granularity.
 
-The cost is specific. Ecosystem-wide user tokens name Identity too, so the
-audience check stops distinguishing and the escalation at the top of this
-document is reachable again: a user token harvested from any service can
-administer Identity, because the role check alone cannot tell a replayed token
-from a legitimate one.
+The cost is specific, and multi-valued `aud` lets you avoid most of it: a
+client that names the services it uses but *not* Identity gets tokens that work
+across the suite and cannot administer Identity at all. The escalation at the
+top of this document only returns if the client names Identity as well.
+
+If it must — because the app calls `/auth/me` — then the audience check stops
+distinguishing for that client, and the role check alone cannot tell a replayed
+token from a legitimate one.
 
 That is recoverable without giving up the model, because the distinction that
 matters is not Identity-versus-others but **ordinary versus management**:
