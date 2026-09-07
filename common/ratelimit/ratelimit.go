@@ -61,19 +61,43 @@ func (l *Limiter) getVisitor(ip string) *rate.Limiter {
 		return v.limiter
 	}
 
-	// Enforce max visitors
+	// Enforce max visitors.
 	if len(l.visitors) >= l.maxVisitors {
-		// Emergency cleanup — remove entries older than 30 seconds
+		// Emergency cleanup — remove entries older than 30 seconds.
 		l.cleanupLocked(30 * time.Second)
 	}
-	if len(l.visitors) >= l.maxVisitors {
-		// Still full — return a deny-all limiter (don't store it)
-		return rate.NewLimiter(0, 0)
+	// Still full: evict the least recently seen entry to make room. This used
+	// to return a deny-all limiter to every unseen IP instead, which turns a
+	// full table into a service-wide outage — and the table is fillable by
+	// whoever can produce distinct keys, so the cap became a denial-of-service
+	// lever rather than a safeguard. A full table means we are tracking too
+	// many visitors, not that the next visitor is hostile.
+	for len(l.visitors) >= l.maxVisitors {
+		if !l.evictOldestLocked() {
+			break
+		}
 	}
 
 	limiter := rate.NewLimiter(l.rate, l.burst)
 	l.visitors[ip] = &visitor{limiter: limiter, lastSeen: l.now()}
 	return limiter
+}
+
+// evictOldestLocked removes the least recently seen visitor. Returns false when
+// there is nothing to evict. Caller must hold l.mu.
+func (l *Limiter) evictOldestLocked() bool {
+	var oldestIP string
+	var oldestSeen time.Time
+	for ip, v := range l.visitors {
+		if oldestIP == "" || v.lastSeen.Before(oldestSeen) {
+			oldestIP, oldestSeen = ip, v.lastSeen
+		}
+	}
+	if oldestIP == "" {
+		return false
+	}
+	delete(l.visitors, oldestIP)
+	return true
 }
 
 // cleanupLoop removes visitors that haven't been seen in the last 3 minutes.

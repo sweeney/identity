@@ -316,6 +316,17 @@ func runIdentityServer() error {
 	if !cfg.RateLimitDisabled {
 		authRateLimiter = ratelimit.NewLimiter(5.0/60.0, 5, cfg.TrustProxy)
 		generalRateLimiter = ratelimit.NewLimiter(120.0/60.0, 30, cfg.TrustProxy)
+		if cfg.TrustProxyCIDRs != "" {
+			// Replace the default trust set (loopback + private ranges) before
+			// any request is served. CF-Connecting-IP is honoured only from
+			// these addresses; everything else is keyed on its peer address.
+			trusted, err := httputil.ParseTrustedProxies(cfg.TrustProxyCIDRs)
+			if err != nil {
+				return fmt.Errorf("trusted proxies: %w", err)
+			}
+			httputil.DefaultTrustedProxies = trusted
+			log.Printf("trusting CF-Connecting-IP only from: %s", cfg.TrustProxyCIDRs)
+		}
 		if len(cfg.RateLimitAllowlist) > 0 {
 			log.Printf("rate limiting enabled (%d allowlisted IP/CIDR entries)", len(cfg.RateLimitAllowlist))
 		} else {

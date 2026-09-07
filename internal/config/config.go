@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sweeney/identity/common/httputil"
 )
 
 // Environment represents the deployment environment.
@@ -49,6 +51,10 @@ type Config struct {
 
 	// Proxy trust: "cloudflare" trusts CF-Connecting-IP header, "" trusts nothing
 	TrustProxy string
+	// TrustProxyCIDRs limits which source addresses may set CF-Connecting-IP.
+	// Empty means the default set (loopback and private ranges), which is what
+	// a Cloudflare Tunnel deployment sees — cloudflared proxies to a local port.
+	TrustProxyCIDRs string
 
 	// CORS
 	CORSOrigins []string
@@ -144,6 +150,17 @@ func Load() (*Config, error) {
 	}
 	if cfg.Env == EnvProduction && !strings.HasPrefix(cfg.JWTIssuer, "https://") {
 		errs = append(errs, fmt.Errorf("JWT_ISSUER must be an https:// URL in production (got %q); set JWT_ISSUER=https://yourdomain.com", cfg.JWTIssuer))
+	}
+
+	// TRUST_PROXY_CIDRS: which source addresses may set CF-Connecting-IP.
+	// Only meaningful with TRUST_PROXY=cloudflare. Validated here so a typo
+	// fails startup rather than silently trusting nothing (which would key
+	// every request on the proxy's own address).
+	cfg.TrustProxyCIDRs = strings.TrimSpace(os.Getenv("TRUST_PROXY_CIDRS"))
+	if cfg.TrustProxyCIDRs != "" {
+		if _, err := httputil.ParseTrustedProxies(cfg.TrustProxyCIDRs); err != nil {
+			errs = append(errs, fmt.Errorf("TRUST_PROXY_CIDRS: %w", err))
+		}
 	}
 
 	// TRUST_PROXY: "cloudflare" trusts CF-Connecting-IP, anything else means use RemoteAddr
