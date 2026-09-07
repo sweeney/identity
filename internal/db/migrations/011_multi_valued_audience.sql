@@ -10,16 +10,24 @@
 -- Stored as a JSON array, matching how this table already holds redirect_uris,
 -- grant_types and scopes — `audience` was the odd one out.
 --
--- The backfill is exact: an empty audience becomes [], a single value becomes a
--- one-element array. Nothing changes on the wire, because golang-jwt already
--- marshals a one-element ClaimStrings as ["x"].
+-- IDEMPOTENCE MATTERS HERE. Migrations are re-applied on every startup: the
+-- ALTER fails with "duplicate column name" and is skipped, but anything after
+-- it runs again. A bare `UPDATE ... SET audiences = <from audience>` therefore
+-- reverted every edit made since the migration, on every restart — and wiped
+-- the column outright for clients created afterwards, whose legacy `audience`
+-- is empty. So the backfill clears the legacy column as it goes: after the
+-- first run nothing matches, and re-running is a no-op.
 ALTER TABLE oauth_clients ADD COLUMN audiences TEXT NOT NULL DEFAULT '[]';
 UPDATE oauth_clients
-   SET audiences = CASE WHEN audience = '' THEN '[]' ELSE json_array(audience) END;
+   SET audiences = json_array(audience),
+       audience  = ''
+ WHERE audience <> '';
 
 -- Refresh tokens carry the audience forward across rotation, so they need the
 -- same shape — otherwise a multi-audience grant would collapse to one value on
--- its first refresh.
+-- its first refresh. Same idempotence rule.
 ALTER TABLE refresh_tokens ADD COLUMN audiences TEXT NOT NULL DEFAULT '[]';
 UPDATE refresh_tokens
-   SET audiences = CASE WHEN audience = '' THEN '[]' ELSE json_array(audience) END;
+   SET audiences = json_array(audience),
+       audience  = ''
+ WHERE audience <> '';
