@@ -115,7 +115,8 @@ components:
           description: |
             Snake_case error code. Always check this field, not the HTTP status alone.
             Known codes: invalid_credentials, account_disabled, invalid_refresh_token,
-            token_expired, token_family_compromised, forbidden, invalid_audience, not_found, username_taken,
+            token_expired, token_family_compromised, forbidden, invalid_audience,
+            request_too_large, not_found, username_taken,
             cannot_delete_last_admin, validation_error, user_limit_reached, weak_password,
             rate_limited, internal_error, webauthn_not_enabled, webauthn_invalid_challenge,
             webauthn_verification_failed, webauthn_credential_not_found, webauthn_credential_limit

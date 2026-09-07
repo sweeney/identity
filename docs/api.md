@@ -1074,6 +1074,7 @@ All errors follow this envelope:
 | `403` | `account_disabled` | Show "account disabled" message |
 | `403` | `forbidden` | Show permission error |
 | `403` | `invalid_audience` | Token was minted for another service — use a token issued for Identity |
+| `413` | `request_too_large` | Request body exceeds 256 KiB — do not retry unchanged |
 | `404` | `not_found` | Show not found UI |
 | `409` | `username_taken` | Show inline field error |
 | `409` | `cannot_delete_last_admin` | Show error message. Returned by both `DELETE` and `PUT /users/{id}` — the last admin cannot be deleted, demoted, or deactivated. |

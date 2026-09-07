@@ -182,3 +182,40 @@ func TestJWKSVerifier_CancelledWinner_DoesNotFailWaiters(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// The JWKS response was decoded straight from the body with no size limit and
+// no content-type check. The verifier fetches from a configured URL, so this is
+// not attacker-controlled in normal operation — but a compromised or
+// misconfigured endpoint, or anything able to answer in its place, could hand
+// back an unbounded stream and the verifier would allocate all of it.
+func TestJWKSVerifier_RejectsOversizedJWKSResponse(t *testing.T) {
+	var served atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Stream indefinitely; a bounded reader stops consuming, an unbounded
+		// one keeps allocating.
+		chunk := make([]byte, 32<<10)
+		for i := range chunk {
+			chunk[i] = ' '
+		}
+		w.Write([]byte(`{"keys":[`)) //nolint:errcheck
+		for i := 0; i < 512; i++ {   // 16 MiB if fully consumed
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+			served.Add(int64(len(chunk)))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
+	v := newVerifier(t, srv.URL)
+	tok, err := ti.Mint(domain.TokenClaims{UserID: "u1", Username: "alice", Role: domain.RoleUser, IsActive: true})
+	require.NoError(t, err)
+
+	_, err = v.Parse(context.Background(), tok)
+	require.Error(t, err)
+	assert.Less(t, served.Load(), int64(8<<20),
+		"the JWKS body must be bounded, not consumed to whatever length it claims")
+}

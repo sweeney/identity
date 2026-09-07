@@ -144,7 +144,36 @@ func NewRouter(issuer *auth.TokenIssuer, authSvc service.AuthServicer, userSvc s
 		}
 	}
 
-	return mux
+	// Bound every request body. The auth endpoints are unauthenticated, so
+	// anyone can post to them, and the handlers read the body before deciding
+	// anything about it — an unbounded read there is free memory pressure for
+	// an attacker. Nothing this API accepts needs more than a few kilobytes;
+	// the WebAuthn assertion is the largest, and it is far below the cap.
+	return limitRequestBody(mux, maxRequestBodyBytes)
+}
+
+// maxRequestBodyBytes caps any single request body. Generous next to the
+// largest legitimate payload (a WebAuthn assertion), tiny next to what an
+// unbounded read allows.
+const maxRequestBodyBytes = 256 << 10 // 256 KiB
+
+// limitRequestBody wraps next so that reading past the cap fails rather than
+// allocating. The error is surfaced as 413 in the standard envelope, so a
+// client sees a code it can act on instead of a decode failure.
+func limitRequestBody(next http.Handler, limit int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Body != http.NoBody {
+			// Reject on the declared length before reading a byte, when the
+			// client provides one.
+			if r.ContentLength > limit {
+				jsonError(w, http.StatusRequestEntityTooLarge, "request_too_large",
+					"request body is too large")
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // userStatusProvider adapts the UserServicer into auth.UserStatusProvider,

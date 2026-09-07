@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
+	"mime"
 	"net/http"
 	"strings"
 	"sync"
@@ -70,6 +72,10 @@ const (
 	// revoked key stays accepted for as long as the JWKS endpoint stays down —
 	// which is precisely the window an attacker who forced that outage wants.
 	defaultJWKSMaxStale = 30 * time.Minute
+
+	// maxJWKSBytes bounds the JWKS response body. A key set holding a handful
+	// of P-256 keys is well under a kilobyte.
+	maxJWKSBytes = 1 << 20 // 1 MiB
 )
 
 // JWKSVerifierConfig configures a verifier that validates tokens issued by a
@@ -466,8 +472,18 @@ func (v *JWKSVerifier) fetchKeys(ctx context.Context) (map[string]*ecdsa.PublicK
 		return nil, fmt.Errorf("jwks status %d", resp.StatusCode)
 	}
 
+	// A key set is a few hundred bytes. Decoding straight from the body meant
+	// consuming whatever the endpoint chose to send: a compromised or
+	// misconfigured endpoint, or anything answering in its place, could hand
+	// back an unbounded stream and we would allocate all of it.
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		if mediaType, _, err := mime.ParseMediaType(ct); err != nil || mediaType != "application/json" {
+			return nil, fmt.Errorf("jwks content-type %q is not application/json", ct)
+		}
+	}
+
 	var set jwkSet
-	if err := json.NewDecoder(resp.Body).Decode(&set); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJWKSBytes)).Decode(&set); err != nil {
 		return nil, fmt.Errorf("decode jwks: %w", err)
 	}
 
