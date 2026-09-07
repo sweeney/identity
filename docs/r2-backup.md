@@ -118,7 +118,7 @@ production/backups/2026/03/17/identity-2026-03-17T14:30:00Z.sqlite3
 development/backups/2026/03/17/identity-2026-03-17T10:00:00Z.sqlite3
 ```
 
-The environment is set by `IDENTITY_ENV` (defaults to `development`).
+The environment is set by `IDENTITY_ENV` (defaults to `development`; an unrecognised value fails startup).
 
 ---
 

@@ -90,15 +90,22 @@ func Load() (*Config, error) {
 		BCryptCost:      12,
 	}
 
-	// Environment: defaults to development
-	switch Environment(os.Getenv("IDENTITY_ENV")) {
+	var errs []error
+
+	// Environment: unset defaults to development, but anything unrecognised is
+	// an error rather than a silent downgrade. Development mode is what relaxes
+	// the production controls — the https:// issuer requirement, secure cookies,
+	// the localhost WebAuthn RP ID — so a typo like IDENTITY_ENV=prod must not
+	// quietly turn them off.
+	switch env := Environment(os.Getenv("IDENTITY_ENV")); env {
 	case EnvProduction:
 		cfg.Env = EnvProduction
-	default:
+	case EnvDevelopment, "":
 		cfg.Env = EnvDevelopment
+	default:
+		errs = append(errs, fmt.Errorf("IDENTITY_ENV: unknown environment %q (want %q or %q)",
+			string(env), EnvDevelopment, EnvProduction))
 	}
-
-	var errs []error
 
 	// Optional: initial admin credentials (only used for first-run seed)
 	cfg.AdminUsername = os.Getenv("ADMIN_USERNAME")

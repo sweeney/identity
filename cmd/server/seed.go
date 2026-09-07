@@ -45,16 +45,26 @@ func seedIfEmpty(svc *service.UserService, username, password string) error {
 		generated = true
 	}
 
+	// A generated password exists in exactly two places: this variable and the
+	// file. Persist it BEFORE creating the account — if the write fails after
+	// the user exists, the only admin has a password nobody has ever seen, and
+	// the only way back in is --reset-admin.
+	if generated {
+		if writeErr := writeInitialPassword(username, password); writeErr != nil {
+			return writeErr
+		}
+	}
+
 	_, err = svc.Create(username, username, password, domain.RoleAdmin)
 	if err != nil {
+		if generated {
+			// The account was not created, so the file describes nothing.
+			os.Remove(initialPasswordFile)
+		}
 		return fmt.Errorf("seed admin user: %w", err)
 	}
 
 	if generated {
-		content := fmt.Sprintf("Username: %s\nPassword: %s\n", username, password)
-		if writeErr := os.WriteFile(initialPasswordFile, []byte(content), 0600); writeErr != nil {
-			return fmt.Errorf("write %s: %w", initialPasswordFile, writeErr)
-		}
 		log.Println("════════════════════════════════════════════════════")
 		log.Println("  FIRST RUN — admin account created")
 		log.Printf("  Credentials written to %s", initialPasswordFile)
@@ -66,6 +76,42 @@ func seedIfEmpty(svc *service.UserService, username, password string) error {
 	}
 
 	return nil
+}
+
+// writeInitialPassword writes the generated credentials with owner-only
+// permissions.
+//
+// os.WriteFile would not do: it applies its permission argument only when it
+// creates the file, so a leftover file with looser permissions keeps them, and
+// it follows a symlink at that path. Removing any existing entry first and
+// creating with O_EXCL means the mode is always ours and a symlink is replaced
+// rather than written through.
+func writeInitialPassword(username, password string) error {
+	// Lstat, not Stat: a symlink here must be seen as a symlink and replaced,
+	// never followed. Anything that is not a regular file or symlink is not
+	// something we put there, so refuse rather than delete it.
+	switch info, err := os.Lstat(initialPasswordFile); {
+	case err == nil && (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0):
+		if rmErr := os.Remove(initialPasswordFile); rmErr != nil {
+			return fmt.Errorf("clear stale %s: %w", initialPasswordFile, rmErr)
+		}
+	case err == nil:
+		return fmt.Errorf("cannot write %s: path exists and is not a regular file (mode %s)",
+			initialPasswordFile, info.Mode())
+	case !os.IsNotExist(err):
+		return fmt.Errorf("stat %s: %w", initialPasswordFile, err)
+	}
+
+	f, err := os.OpenFile(initialPasswordFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", initialPasswordFile, err)
+	}
+	defer f.Close()
+
+	if _, err := fmt.Fprintf(f, "Username: %s\nPassword: %s\n", username, password); err != nil {
+		return fmt.Errorf("write %s: %w", initialPasswordFile, err)
+	}
+	return f.Close()
 }
 
 func generatePassword() (string, error) {
