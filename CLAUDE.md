@@ -110,7 +110,8 @@ code already produced are revoked (`refresh_tokens.claim_code_id`, migration
 008). A claim code binds to exactly one user, compare-and-swap, on first use.
 
 Changing a user's password revokes every refresh token they hold. Logout only
-revokes tokens belonging to the caller.
+revokes tokens belonging to the caller. Refresh tokens from the OAuth, device
+and claim-code grants are all bound to the issuing client.
 
 ## Token rotation and theft detection
 

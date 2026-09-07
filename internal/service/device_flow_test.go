@@ -329,6 +329,7 @@ func TestDeviceFlowService_PollForToken_Approved_IssuesTokens(t *testing.T) {
 	}
 	auth.EXPECT().IssueTokensForGrant("user-99", service.GrantContext{
 		Audience: "https://api.example.com",
+		ClientID: "device-client",
 	}).Return(tokens, nil)
 
 	got, err := svc.PollForToken("device-client", "raw-appr-1", "1.2.3.4")

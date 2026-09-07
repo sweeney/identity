@@ -95,3 +95,33 @@ func TestDeviceFlowService_RevokeClaimCode_RevokesIssuedTokens(t *testing.T) {
 
 	require.NoError(t, svc.RevokeClaimCode("claim-7", "1.2.3.4"))
 }
+
+// The device grant issues refresh tokens like any other flow, so they must
+// carry the client they were issued to. ExchangeCode set this on the PKCE path
+// and PollForToken did not, leaving device tokens unbound: a leaked device
+// refresh token could be redeemed by any other registered client, which is the
+// exact hole WP4 closed everywhere else.
+func TestDeviceFlowService_PollForToken_BindsTokenToClient(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, auth, clients, devices, _ := newDeviceFlowService(t, ctrl)
+
+	da := pendingAuthorization("bind-1", "device-client", 5*time.Minute)
+	da.Status = domain.DeviceStatusApproved
+	da.UserID = "user-99"
+
+	devices.EXPECT().GetByDeviceHash(da.DeviceCodeHash).Return(da, nil)
+	devices.EXPECT().MarkPolled("bind-1", gomock.Any()).Return(nil)
+	devices.EXPECT().MarkConsumed("bind-1", gomock.Any()).Return(nil)
+	clients.EXPECT().GetByID("device-client").Return(deviceClient(), nil)
+
+	auth.EXPECT().
+		IssueTokensForGrant("user-99", gomock.Any()).
+		DoAndReturn(func(_ string, grant service.GrantContext) (*service.LoginResult, error) {
+			assert.Equal(t, "device-client", grant.ClientID,
+				"a device-grant token must be bound to the client that polled for it")
+			return &service.LoginResult{AccessToken: "a", RefreshToken: "r"}, nil
+		})
+
+	_, err := svc.PollForToken("device-client", "raw-bind-1", "1.2.3.4")
+	require.NoError(t, err)
+}

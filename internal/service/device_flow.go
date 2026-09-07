@@ -257,8 +257,13 @@ func (s *DeviceFlowService) PollForToken(clientID, rawDeviceCode, ip string) (*L
 	// to the user — and then dropped here, so every device received a token
 	// with the user's full privileges regardless of what it asked for.
 	result, err := s.auth.IssueTokensForGrant(da.UserID, GrantContext{
-		Audience:    audience,
-		Scope:       da.Scope,
+		Audience: audience,
+		Scope:    da.Scope,
+		// The device grant issues refresh tokens like any other flow, so they
+		// carry the client they were issued to. Without this, a leaked device
+		// refresh token was redeemable by any other registered client — the
+		// hole WP4 closed on the PKCE path.
+		ClientID:    da.ClientID,
 		ClaimCodeID: da.ClaimCodeID,
 	})
 	if err != nil {
