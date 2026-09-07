@@ -130,11 +130,22 @@ func (s *AuthService) Login(username, password, deviceHint, clientIP string) (*L
 }
 
 // AuthorizeUser authenticates without issuing tokens. Returns userID on success.
-// Used by OAuthService at the authorize step.
+// Used by OAuthService at the authorize step and by the device verification page.
+//
+// Every failure is audited, exactly as Login audits its own. This is the same
+// password check reachable through /oauth/authorize and /oauth/device, and
+// without these records credential stuffing through either endpoint left no
+// trace at all — including on the admin dashboard, which is where an operator
+// would notice it.
 func (s *AuthService) AuthorizeUser(username, password, clientIP string) (string, error) {
 	user, err := s.users.GetByUsername(username)
 	if errors.Is(err, domain.ErrNotFound) {
 		auth.CheckPassword(password, dummyHash) //nolint:errcheck
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventLoginFailure,
+			Username:  username,
+			IPAddress: clientIP,
+		})
 		return "", ErrInvalidCredentials
 	}
 	if err != nil {
@@ -142,10 +153,23 @@ func (s *AuthService) AuthorizeUser(username, password, clientIP string) (string
 	}
 
 	if err := auth.CheckPassword(password, user.PasswordHash); err != nil {
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventLoginFailure,
+			UserID:    user.ID,
+			Username:  username,
+			IPAddress: clientIP,
+		})
 		return "", ErrInvalidCredentials
 	}
 
 	if !user.IsActive {
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventLoginFailure,
+			UserID:    user.ID,
+			Username:  username,
+			IPAddress: clientIP,
+			Detail:    "account disabled",
+		})
 		return "", ErrAccountDisabled
 	}
 

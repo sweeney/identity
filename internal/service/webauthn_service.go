@@ -335,7 +335,7 @@ func (s *WebAuthnService) FinishLogin(challengeID string, r *http.Request, devic
 
 	if err != nil {
 		username := s.lookupUsername(authenticatedUserID)
-		s.recordEvent(domain.EventPasskeyLoginFailure, authenticatedUserID, username, err.Error())
+		s.recordLoginEvent(domain.EventPasskeyLoginFailure, authenticatedUserID, username, err.Error(), deviceHint, clientIP)
 		return nil, ErrWebAuthnVerificationFailed
 	}
 
@@ -356,7 +356,7 @@ func (s *WebAuthnService) FinishLogin(challengeID string, r *http.Request, devic
 		username := s.lookupUsername(authenticatedUserID)
 		detail := fmt.Sprintf("credential_id=%s stored_sign_count=%d presented_sign_count=%d",
 			storedCred.ID, storedCred.SignCount, credential.Authenticator.SignCount)
-		s.recordEvent(domain.EventPasskeyCloneWarning, authenticatedUserID, username, detail)
+		s.recordLoginEvent(domain.EventPasskeyCloneWarning, authenticatedUserID, username, detail, deviceHint, clientIP)
 	}
 
 	now := time.Now().UTC()
@@ -378,7 +378,7 @@ func (s *WebAuthnService) FinishLogin(challengeID string, r *http.Request, devic
 		return nil, err
 	}
 
-	s.recordEvent(domain.EventPasskeyLoginSuccess, user.ID, user.Username, "")
+	s.recordLoginEvent(domain.EventPasskeyLoginSuccess, user.ID, user.Username, "", deviceHint, clientIP)
 	return result, nil
 }
 
@@ -455,6 +455,15 @@ func ShouldWarnPasskeyClone(cloneWarning bool, storedSignCount, presentedSignCou
 
 // recordEvent writes an audit event, ignoring errors (best-effort).
 func (s *WebAuthnService) recordEvent(eventType, userID, username, detail string) {
+	s.recordLoginEvent(eventType, userID, username, detail, "", "")
+}
+
+// recordLoginEvent writes an audit event including the client IP and device
+// hint. Passkey login events used to drop both, so every passkey sign-in and
+// every failed attempt landed in the audit log with no address attached —
+// leaving the one class of login the dashboard could not attribute, and no way
+// to spot a run of failures from a single source.
+func (s *WebAuthnService) recordLoginEvent(eventType, userID, username, detail, deviceHint, clientIP string) {
 	if s.audit == nil {
 		return
 	}
@@ -463,6 +472,8 @@ func (s *WebAuthnService) recordEvent(eventType, userID, username, detail string
 		EventType:  eventType,
 		UserID:     userID,
 		Username:   username,
+		DeviceHint: deviceHint,
+		IPAddress:  clientIP,
 		Detail:     detail,
 		OccurredAt: time.Now().UTC(),
 	})

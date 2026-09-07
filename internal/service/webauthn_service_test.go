@@ -24,6 +24,11 @@ func newTestWebAuthn(t *testing.T) *webauthn.WebAuthn {
 	return wa
 }
 
+// webauthnRecordedEvents captures what the service audited during a test, so
+// assertions can check the fields an event carries and not merely that one was
+// written. Reset by newTestWebAuthnService.
+var webauthnRecordedEvents []*domain.AuthEvent
+
 func newTestWebAuthnService(t *testing.T, ctrl *gomock.Controller) (
 	*service.WebAuthnService,
 	*mocks.MockUserRepository,
@@ -36,7 +41,11 @@ func newTestWebAuthnService(t *testing.T, ctrl *gomock.Controller) (
 	credRepo := mocks.NewMockWebAuthnCredentialRepository(ctrl)
 	challengeRepo := mocks.NewMockWebAuthnChallengeRepository(ctrl)
 	auditRepo := mocks.NewMockAuditRepository(ctrl)
-	auditRepo.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
+	webauthnRecordedEvents = nil
+	auditRepo.EXPECT().Record(gomock.Any()).DoAndReturn(func(e *domain.AuthEvent) error {
+		webauthnRecordedEvents = append(webauthnRecordedEvents, e)
+		return nil
+	}).AnyTimes()
 
 	wa := newTestWebAuthn(t)
 	issuer := newTestIssuer(t)

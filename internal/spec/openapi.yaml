@@ -832,6 +832,17 @@ paths:
           description: Challenge ID from the begin step (also accepted via `X-Challenge-ID` header)
           schema:
             type: string
+        - name: device_hint
+          in: query
+          required: false
+          description: |
+            Optional human-readable device label, e.g. "iPhone 15 / iOS 18" (also
+            accepted via `X-Device-Hint` header). Recorded on the refresh token
+            and on the audit event. The password login takes this in its JSON
+            body; here the body is the WebAuthn assertion, so it travels as a
+            header or query parameter instead.
+          schema:
+            type: string
       requestBody:
         required: true
         description: Raw JSON output from navigator.credentials.get()

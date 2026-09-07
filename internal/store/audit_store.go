@@ -22,11 +22,7 @@ func NewAuditStore(database *db.Database) *AuditStore {
 
 func (s *AuditStore) Record(event *domain.AuthEvent) error {
 	// Emit to stdout for journalctl / process logs
-	if event.Detail != "" {
-		log.Printf("audit: %s user=%s detail=%s ip=%s", event.EventType, event.Username, event.Detail, event.IPAddress)
-	} else {
-		log.Printf("audit: %s user=%s ip=%s", event.EventType, event.Username, event.IPAddress)
-	}
+	log.Print(auditLogLine(event))
 
 	_, err := s.db.DB().Exec(
 		`INSERT INTO auth_events (id, event_type, user_id, username, client_id, device_hint, ip_address, detail, occurred_at)
@@ -118,4 +114,22 @@ func scanAuthEvents(rows *sql.Rows) ([]*domain.AuthEvent, error) {
 		events = append(events, &e)
 	}
 	return events, rows.Err()
+}
+
+// auditLogLine renders one audit event as a single log line.
+//
+// Every interpolated value is quoted with %q. Username in particular is
+// unauthenticated input — a failed login records whatever was typed — so a
+// value containing a newline would otherwise write additional, fully-formed
+// audit lines into the process log, forging events that are indistinguishable
+// from real ones to anyone reading journalctl or shipping the log elsewhere.
+// %q escapes newlines, carriage returns, tabs and other control characters
+// while leaving ordinary values readable and greppable.
+func auditLogLine(event *domain.AuthEvent) string {
+	if event.Detail != "" {
+		return fmt.Sprintf("audit: %s user=%q detail=%q ip=%q",
+			event.EventType, event.Username, event.Detail, event.IPAddress)
+	}
+	return fmt.Sprintf("audit: %s user=%q ip=%q",
+		event.EventType, event.Username, event.IPAddress)
 }

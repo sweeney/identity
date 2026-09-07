@@ -130,7 +130,10 @@ func (h *webauthnHandler) loginBegin(w http.ResponseWriter, r *http.Request) {
 
 func (h *webauthnHandler) loginFinish(w http.ResponseWriter, r *http.Request) {
 	challengeID := headerOrQuery(r, "X-Challenge-ID", "challenge_id")
-	deviceHint := ""
+	// The password login takes a device_hint in its JSON body; this endpoint's
+	// body is the WebAuthn assertion, so the hint comes as a header or query
+	// parameter. Without it every passkey login was recorded with no device.
+	deviceHint := headerOrQuery(r, "X-Device-Hint", "device_hint")
 
 	if challengeID == "" {
 		jsonError(w, http.StatusBadRequest, "validation_error", "challenge_id query parameter is required")

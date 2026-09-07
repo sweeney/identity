@@ -94,6 +94,10 @@ Response: `201 Created` with the credential details.
 
 ### Authentication
 
+Pass an optional `device_hint` (query parameter or `X-Device-Hint` header) to
+`login/finish` to label the device on the refresh token and in the audit log,
+the way `device_hint` does for password login.
+
 **Begin login** (no auth required):
 
 ```
