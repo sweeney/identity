@@ -219,6 +219,21 @@ func (s *DeviceFlowService) PollForToken(clientID, rawDeviceCode, ip string) (*L
 		return nil, ErrInvalidDeviceCode
 	}
 
+	// A session that came from a claim code lives or dies with it. Revoking a
+	// sticker code is how an operator retires a lost or compromised device, and
+	// the admin UI promises "the device will stop working" — but the device has
+	// long since traded the sticker for a device_code, so the check has to
+	// happen here, on every poll, not only at claim time.
+	if da.ClaimCodeID != "" {
+		cc, ccErr := s.claimCodes.GetByID(da.ClaimCodeID)
+		switch {
+		case ccErr == nil && cc.IsRevoked():
+			return nil, ErrClaimCodeRevoked
+		case ccErr != nil && !errors.Is(ccErr, domain.ErrNotFound):
+			return nil, fmt.Errorf("lookup claim code: %w", ccErr)
+		}
+	}
+
 	// Atomic single-consume. If a second poll sneaks in after approval and
 	// before this call, only one wins.
 	if err := s.devices.MarkConsumed(da.ID, now); err != nil {
