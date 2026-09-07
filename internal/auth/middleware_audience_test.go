@@ -167,3 +167,56 @@ func TestRequireAudience_AcceptsIssuerHostAsSelf(t *testing.T) {
 		})
 	}
 }
+
+// A service token naming this server by its bare host must be accepted for the
+// same reason a user token is: the issuer URL and its host are the same
+// service, and identity decides which names mean itself.
+//
+// The two branches of RequireAudience had drifted — the user path expanded the
+// issuer into its equivalent names and the service path compared the raw
+// string — so a client_credentials client registered with `id.swee.net` was
+// refused against an issuer of `https://id.swee.net`.
+func TestRequireAudience_ServiceToken_AcceptsIssuerHostAsSelf(t *testing.T) {
+	const issuerURL = "https://id.example.com"
+
+	tests := []struct {
+		name       string
+		audience   string
+		wantStatus int
+	}{
+		{name: "issuer URL", audience: "https://id.example.com", wantStatus: http.StatusOK},
+		{name: "bare host", audience: "id.example.com", wantStatus: http.StatusOK},
+
+		{name: "another service", audience: "statehouse", wantStatus: http.StatusForbidden},
+		{name: "another host", audience: "photo-api.example", wantStatus: http.StatusForbidden},
+		{name: "suffix lookalike", audience: "evil-id.example.com", wantStatus: http.StatusForbidden},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			key, err := auth.GenerateKey()
+			require.NoError(t, err)
+			issuer, err := auth.NewTokenIssuer(key, nil, issuerURL, 15*time.Minute)
+			require.NoError(t, err)
+
+			token, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
+				ClientID: "countinghouse",
+				Audience: []string{tc.audience},
+				Scope:    "read:users",
+			}, 15*time.Minute)
+			require.NoError(t, err)
+
+			rr := serveWithAudience(t, issuer, issuerURL, token)
+			assert.Equal(t, tc.wantStatus, rr.Code)
+		})
+	}
+}
+
+// A service token still must name an audience at all.
+func TestRequireAudience_ServiceToken_EmptyAudienceStillRejected(t *testing.T) {
+	issuer := newTestIssuer(t)
+	_, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
+		ClientID: "svc", Audience: nil, Scope: "read:users",
+	}, 15*time.Minute)
+	require.Error(t, err, "minting a service token with no audience must fail outright")
+}

@@ -249,8 +249,9 @@ func RequireAudience(audience string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if sc := ServiceClaimsFromContext(r.Context()); sc != nil {
 				// Service tokens must always name an audience, so an empty
-				// list is a rejection rather than a pass.
-				if !sc.HasAudience(audience) {
+				// list is a rejection rather than a pass — but the names that
+				// mean this server are the same ones a user token may use.
+				if len(sc.Audience) == 0 || !AudienceAllowed(sc.Audience, audience) {
 					writeError(w, http.StatusForbidden, "invalid_audience", "token audience does not match this service")
 					return
 				}
