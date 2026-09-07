@@ -76,6 +76,22 @@ Passkeys also work on the server-rendered login pages (admin UI and OAuth author
 
 See `docs/passkeys.md` for full API reference and integration guide.
 
+## Token audience
+
+A token's `aud` claim names the service it was minted for, and Identity enforces
+it on the way in. Tokens from a direct `/api/v1/auth/login` carry no audience and
+are usable here; tokens minted through the OAuth, device or claim-code grants
+carry the requesting client's configured audience, and Identity rejects those
+with `403 invalid_audience` (`RequireAudience` in `internal/auth/middleware.go`,
+and an explicit `auth.AudienceAllowed` check on the three public bridges that
+parse a token directly — `/admin/login/passkey`, `/oauth/authorize/passkey`,
+`/oauth/device/passkey`). This is what stops a token delegated to a sibling
+resource server being replayed against the Identity API.
+
+`TokenClaims.Audience` and `ServiceTokenClaims.Audience` are `[]string` holding
+the claim verbatim; test membership with `HasAudience`, never by comparing or
+splitting strings.
+
 ## Token rotation and theft detection
 
 Every refresh rotates the token: old token is revoked, new pair issued. If a **previously-used** refresh token is ever presented again, the server assumes the token was stolen. It revokes the **entire token family** and returns `token_family_compromised`. The client must clear all tokens and show the login screen.
@@ -95,7 +111,7 @@ All API errors return the same shape (`/oauth/token` uses RFC 6749 format instea
 { "error": "snake_case_code", "message": "Human readable" }
 ```
 
-Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expired`, `invalid_refresh_token`, `account_disabled`, `forbidden`, `unknown_client`, `invalid_redirect_uri`, `invalid_auth_code`, `pkce_verification_failed`, `webauthn_not_enabled`, `webauthn_invalid_challenge`, `webauthn_verification_failed`, `webauthn_no_credentials`, `webauthn_credential_not_found`, `invalid_client`, `unauthorized_client`, `invalid_scope`, `insufficient_scope`
+Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expired`, `invalid_refresh_token`, `account_disabled`, `forbidden`, `unknown_client`, `invalid_redirect_uri`, `invalid_auth_code`, `pkce_verification_failed`, `webauthn_not_enabled`, `webauthn_invalid_challenge`, `webauthn_verification_failed`, `webauthn_no_credentials`, `webauthn_credential_not_found`, `invalid_client`, `unauthorized_client`, `invalid_scope`, `insufficient_scope`, `invalid_audience`
 
 ## Running locally
 
@@ -143,7 +159,7 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `internal/auth/jwt.go` | JWT mint/parse, supports previous-secret fallback |
 | `internal/auth/middleware.go` | `RequireAuth` and `RequireAdmin` middleware |
 | `common/ratelimit/ratelimit.go` | Per-IP rate limiting middleware |
-| `internal/httputil/clientip.go` | Shared client IP extraction with proxy trust |
+| `common/httputil/clientip.go` | Shared client IP extraction with proxy trust |
 | `internal/store/token_store.go` | Token rotation with atomic TOCTOU-safe transaction |
 | `internal/store/audit_store.go` | Audit event recording (also emits to stdout) |
 | `internal/domain/oauth.go` | OAuth types, auth event constants, repository interfaces |

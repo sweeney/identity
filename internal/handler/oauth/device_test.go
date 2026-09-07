@@ -525,7 +525,7 @@ func mintUserToken(t *testing.T, issuer *auth.TokenIssuer, userID, username stri
 		Username: username,
 		Role:     "user",
 		IsActive: true,
-		Audience: "https://id.example.com",
+		Audience: []string{"https://id.example.com"},
 	})
 	require.NoError(t, err)
 	return tok
@@ -590,7 +590,7 @@ func TestDeviceVerifyPasskey_ServiceTokenRejected(t *testing.T) {
 
 	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
 		ClientID: "some-service",
-		Audience: "https://id.example.com",
+		Audience: []string{"https://id.example.com"},
 		Scope:    "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)

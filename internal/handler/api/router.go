@@ -83,9 +83,13 @@ func NewRouter(issuer *auth.TokenIssuer, authSvc service.AuthServicer, userSvc s
 	// requireUserAuth wraps a handler with RequireAuth + RequireAudience to ensure:
 	// 1. The request has a valid bearer token.
 	// 2. The user is still active and their role is current (live DB check).
-	// 3. Service tokens (client_credentials) are rejected unless they were issued for this
-	//    specific identity server (audience must match the issuer string). This prevents
-	//    cross-service token replay where a token for service-A is used against this API.
+	// 3. The token was issued for this specific identity server. Service tokens
+	//    (client_credentials) always name an audience and must match the issuer
+	//    string; user tokens name one when they were minted through the OAuth,
+	//    device or claim-code grants, carrying the requesting client's audience,
+	//    and must match it too. Only a direct-login token, which names no
+	//    audience at all, passes unrestricted. This prevents cross-service token
+	//    replay where a token delegated to service-A is used against this API.
 	requireUserAuth := func(next http.Handler) http.Handler {
 		return auth.RequireAuthWithStatus(issuer, statusProvider, auth.RequireAudience(issuer.Issuer())(next))
 	}

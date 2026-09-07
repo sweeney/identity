@@ -66,7 +66,7 @@ case errors.Is(err, commonauth.ErrTokenInvalid):
 case err != nil:
     // unexpected
 default:
-    // claims.UserID, claims.Username, claims.Role, claims.IsActive
+    // claims.UserID, claims.Username, claims.Role, claims.IsActive, claims.Audience
 }
 ```
 
@@ -161,7 +161,20 @@ token verification.
   behind a reverse proxy that rewrites the host.
 - **Audience.** Set `RequiredAudience` to reject tokens not minted for your
   service. Service tokens always carry an `aud`; user tokens carry one only when
-  the login/authorize request specified it.
+  they were minted through the OAuth, device or claim-code grants, in which case
+  it is the requesting client's configured audience. A token from a direct
+  `/api/v1/auth/login` carries none.
+
+  Both `TokenClaims.Audience` and `ServiceTokenClaims.Audience` are `[]string`,
+  holding the `aud` claim verbatim, and both types have a `HasAudience(aud)`
+  helper. Test membership with it rather than comparing or splitting strings: a
+  space is legal inside a single `aud` value, so joining the list and
+  re-splitting it is lossy in both directions. `Parse` and `ParseServiceToken`
+  both populate the field.
+
+  Setting `RequiredAudience` is the belt to `HasAudience`'s braces — it makes
+  the JWT parser itself reject a non-matching `aud`, and (because it requires
+  the claim to be present) also rejects tokens that carry no audience at all.
 - **Errors.** Only `ErrTokenExpired` and `ErrTokenInvalid` are returned from the
   parse calls — map both to `401`, and map a failed `HasScope` check to `403`.
 - **Versioning.** The `common` module is pinned to an exact version by consumers;

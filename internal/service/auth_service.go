@@ -229,7 +229,7 @@ func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
 		Username: user.Username,
 		Role:     user.Role,
 		IsActive: user.IsActive,
-		Audience: oldTok.Audience,
+		Audience: domain.AudienceList(oldTok.Audience),
 	}
 
 	accessToken, err := s.issuer.Mint(claims)
@@ -290,7 +290,7 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		Username: user.Username,
 		Role:     user.Role,
 		IsActive: user.IsActive,
-		Audience: args.audience,
+		Audience: domain.AudienceList(args.audience),
 	}
 
 	accessToken, err := s.issuer.Mint(claims)

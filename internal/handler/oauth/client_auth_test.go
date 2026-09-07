@@ -381,7 +381,7 @@ func TestIntrospect_ServiceToken_WrongClient_ReturnsInactive(t *testing.T) {
 	// client-A mints a service token
 	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
 		ClientID: "client-a",
-		Audience: "https://api.example.com",
+		Audience: []string{"https://api.example.com"},
 		Scope:    "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
@@ -421,7 +421,7 @@ func TestIntrospect_ServiceToken_OwningClient_ReturnsActive(t *testing.T) {
 
 	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
 		ClientID: "client-a",
-		Audience: "https://api.example.com",
+		Audience: []string{"https://api.example.com"},
 		Scope:    "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
@@ -460,7 +460,7 @@ func TestIntrospect_ServiceToken_IncludesAudClaim(t *testing.T) {
 
 	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
 		ClientID: "client-a",
-		Audience: "https://api.example.com",
+		Audience: []string{"https://api.example.com"},
 		Scope:    "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
@@ -641,7 +641,7 @@ func TestIntrospect_UserToken_WrongClient_ReturnsInactive(t *testing.T) {
 		Username: "alice",
 		Role:     domain.RoleUser,
 		IsActive: true,
-		Audience: "https://app-a.example.com",
+		Audience: []string{"https://app-a.example.com"},
 	})
 	require.NoError(t, err)
 
@@ -689,7 +689,7 @@ func TestIntrospect_UserToken_NoAudienceClient_ReturnsInactive(t *testing.T) {
 		Username: "alice",
 		Role:     domain.RoleUser,
 		IsActive: true,
-		Audience: "https://app-a.example.com",
+		Audience: []string{"https://app-a.example.com"},
 	})
 	require.NoError(t, err)
 
@@ -730,7 +730,7 @@ func TestIntrospect_UserToken_OwningClient_ReturnsActive(t *testing.T) {
 		Username: "alice",
 		Role:     domain.RoleUser,
 		IsActive: true,
-		Audience: "https://app-a.example.com",
+		Audience: []string{"https://app-a.example.com"},
 	})
 	require.NoError(t, err)
 

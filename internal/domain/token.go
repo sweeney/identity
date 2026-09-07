@@ -34,6 +34,10 @@ type TokenClaims = commonauth.TokenClaims
 // ServiceTokenClaims holds the parsed contents of a service (client credentials) JWT.
 type ServiceTokenClaims = commonauth.ServiceTokenClaims
 
+// AudienceList builds a token audience list from a single configured audience
+// string (an OAuth client's Audience, or a refresh token's). Empty yields nil.
+var AudienceList = commonauth.AudienceList
+
 // TokenRepository defines all persistence operations for refresh tokens.
 //
 //go:generate mockgen -destination=../mocks/mock_token_repository.go -package=mocks github.com/sweeney/identity/internal/domain TokenRepository

@@ -16,7 +16,7 @@ func TestMintServiceToken_AllClaims(t *testing.T) {
 	issuer := newTestIssuer(t)
 	claims := domain.ServiceTokenClaims{
 		ClientID: "my-service",
-		Audience: "https://api.example.com",
+		Audience: []string{"https://api.example.com"},
 		Scope:    "read:users write:users",
 	}
 
@@ -27,7 +27,7 @@ func TestMintServiceToken_AllClaims(t *testing.T) {
 	parsed, err := issuer.ParseServiceToken(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "my-service", parsed.ClientID)
-	assert.Equal(t, "https://api.example.com", parsed.Audience)
+	assert.Equal(t, []string{"https://api.example.com"}, parsed.Audience)
 	assert.Equal(t, "read:users write:users", parsed.Scope)
 	assert.NotEmpty(t, parsed.JTI)
 }
@@ -36,7 +36,7 @@ func TestMintServiceToken_EmptyAudience_Error(t *testing.T) {
 	issuer := newTestIssuer(t)
 	claims := domain.ServiceTokenClaims{
 		ClientID: "my-service",
-		Audience: "",
+		Audience: []string{""},
 		Scope:    "read:users",
 	}
 
@@ -49,7 +49,7 @@ func TestMintServiceToken_EmptyScope(t *testing.T) {
 	issuer := newTestIssuer(t)
 	claims := domain.ServiceTokenClaims{
 		ClientID: "my-service",
-		Audience: "https://api.example.com",
+		Audience: []string{"https://api.example.com"},
 		Scope:    "",
 	}
 
@@ -65,7 +65,7 @@ func TestMintServiceToken_UniqueJTI(t *testing.T) {
 	issuer := newTestIssuer(t)
 	claims := domain.ServiceTokenClaims{
 		ClientID: "my-service",
-		Audience: "https://api.example.com",
+		Audience: []string{"https://api.example.com"},
 		Scope:    "read:users",
 	}
 
@@ -83,7 +83,7 @@ func TestMintServiceToken_Expired(t *testing.T) {
 	issuer := newTestIssuer(t)
 	claims := domain.ServiceTokenClaims{
 		ClientID: "my-service",
-		Audience: "https://api.example.com",
+		Audience: []string{"https://api.example.com"},
 		Scope:    "read:users",
 	}
 
@@ -126,7 +126,7 @@ func TestParse_RejectsServiceToken(t *testing.T) {
 	issuer := newTestIssuer(t)
 	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
 		ClientID: "my-service",
-		Audience: "https://api.example.com",
+		Audience: []string{"https://api.example.com"},
 		Scope:    "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestMintServiceToken_KeyRotation(t *testing.T) {
 	issuer1, err := auth.NewTokenIssuer(key1, nil, "test-issuer", 15*time.Minute)
 	require.NoError(t, err)
 	token, err := issuer1.MintServiceToken(domain.ServiceTokenClaims{
-		ClientID: "svc", Audience: "https://api", Scope: "read:x",
+		ClientID: "svc", Audience: []string{"https://api"}, Scope: "read:x",
 	}, 15*time.Minute)
 	require.NoError(t, err)
 

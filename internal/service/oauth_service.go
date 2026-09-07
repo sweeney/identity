@@ -272,7 +272,7 @@ func (s *OAuthService) IssueClientCredentials(client *domain.OAuthClient, reques
 
 	claims := domain.ServiceTokenClaims{
 		ClientID: client.ID,
-		Audience: client.Audience,
+		Audience: domain.AudienceList(client.Audience),
 		Scope:    scope,
 	}
 

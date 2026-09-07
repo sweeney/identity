@@ -17,7 +17,7 @@ func TestRequireAuth_ServiceToken(t *testing.T) {
 	issuer := newTestIssuer(t)
 	token, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
 		ClientID: "my-service",
-		Audience: "https://api.example.com",
+		Audience: []string{"https://api.example.com"},
 		Scope:    "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestRequireAuth_UserToken(t *testing.T) {
 func TestRequireScope_ServiceToken_HasScope(t *testing.T) {
 	issuer := newTestIssuer(t)
 	token, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
-		ClientID: "svc", Audience: "https://api", Scope: "read:users write:users",
+		ClientID: "svc", Audience: []string{"https://api"}, Scope: "read:users write:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
 
@@ -88,7 +88,7 @@ func TestRequireScope_ServiceToken_HasScope(t *testing.T) {
 func TestRequireScope_ServiceToken_MissingScope(t *testing.T) {
 	issuer := newTestIssuer(t)
 	token, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
-		ClientID: "svc", Audience: "https://api", Scope: "read:users",
+		ClientID: "svc", Audience: []string{"https://api"}, Scope: "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
 
@@ -160,7 +160,7 @@ func TestRequireAdmin_StillWorks(t *testing.T) {
 func TestRequireAudience_MatchingAudience(t *testing.T) {
 	issuer := newTestIssuer(t)
 	token, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
-		ClientID: "svc", Audience: "https://api.example.com", Scope: "read:users",
+		ClientID: "svc", Audience: []string{"https://api.example.com"}, Scope: "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
 
@@ -178,7 +178,7 @@ func TestRequireAudience_MatchingAudience(t *testing.T) {
 func TestRequireAudience_WrongAudience(t *testing.T) {
 	issuer := newTestIssuer(t)
 	token, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
-		ClientID: "svc", Audience: "https://api.example.com", Scope: "read:users",
+		ClientID: "svc", Audience: []string{"https://api.example.com"}, Scope: "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
 
@@ -214,7 +214,7 @@ func TestRequireAudience_UserTokenPassesThrough(t *testing.T) {
 func TestRequireAdmin_ServiceToken_Forbidden(t *testing.T) {
 	issuer := newTestIssuer(t)
 	token, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
-		ClientID: "svc", Audience: "https://api.example.com", Scope: "read:users",
+		ClientID: "svc", Audience: []string{"https://api.example.com"}, Scope: "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
 

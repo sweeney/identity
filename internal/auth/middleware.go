@@ -196,29 +196,55 @@ func RequireScope(scope string) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireAudience is middleware that checks a service token's aud claim contains
-// the expected audience. User tokens pass through (they don't have aud claims).
-// This prevents a token issued for service A from being replayed against service B.
+// AudienceAllowed reports whether a token bearing the audience list aud may be
+// used against the service identified by self.
+//
+// An empty list means the token names no audience — it came from a direct
+// /api/v1/auth/login and is only ever presented to this identity server, so it
+// is allowed. A non-empty list is a boundary the issuer drew deliberately: the
+// token is for the services it names and no others.
+//
+// Use this wherever a token is parsed directly rather than through
+// RequireAudience — the public passkey bridges do exactly that.
+func AudienceAllowed(aud []string, self string) bool {
+	if len(aud) == 0 {
+		return true
+	}
+	for _, a := range aud {
+		if a == self {
+			return true
+		}
+	}
+	return false
+}
+
+// RequireAudience is middleware that checks a token's aud claim against the
+// audience of this service, rejecting anything issued for somewhere else. This
+// prevents a token issued for service A from being replayed against service B.
+//
+// Service tokens (client_credentials) always carry an audience and must match
+// it. User tokens carry one only when minted through the OAuth, device or
+// claim-code grants, where it is the requesting client's configured audience;
+// a token from a direct login carries none and passes.
 func RequireAudience(audience string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			sc := ServiceClaimsFromContext(r.Context())
-			if sc != nil {
-				// Service token — must have matching audience.
-				// Audience may be space-delimited if the JWT aud claim is an array.
-				matched := false
-				for _, a := range strings.Split(sc.Audience, " ") {
-					if a == audience {
-						matched = true
-						break
-					}
+			if sc := ServiceClaimsFromContext(r.Context()); sc != nil {
+				// Service tokens must always name an audience, so an empty
+				// list is a rejection rather than a pass.
+				if !sc.HasAudience(audience) {
+					writeError(w, http.StatusForbidden, "invalid_audience", "token audience does not match this service")
+					return
 				}
-				if !matched {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if uc := ClaimsFromContext(r.Context()); uc != nil {
+				if !AudienceAllowed(uc.Audience, audience) {
 					writeError(w, http.StatusForbidden, "invalid_audience", "token audience does not match this service")
 					return
 				}
 			}
-			// User tokens and matched service tokens pass through
 			next.ServeHTTP(w, r)
 		})
 	}

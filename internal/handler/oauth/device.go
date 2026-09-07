@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sweeney/identity/common/httputil"
+	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/service"
 )
 
@@ -349,6 +350,16 @@ func (h *oauthHandler) deviceVerifyPasskey(w http.ResponseWriter, r *http.Reques
 	claims, err := h.tokenIssuer.Parse(r.Context(), accessToken)
 	if err != nil {
 		errResp(http.StatusUnauthorized, "invalid_token", "Invalid or expired token.")
+		return
+	}
+
+	// Approving a device grants it a 30-day refresh token, with no consent
+	// screen on this path. Only a token minted for this server may do that —
+	// otherwise anyone holding the victim's OAuth-delegated token (a sibling
+	// resource server, a third-party client) could approve a device of their
+	// own choosing on the victim's behalf.
+	if !auth.AudienceAllowed(claims.Audience, h.tokenIssuer.Issuer()) {
+		errResp(http.StatusForbidden, "invalid_audience", "That token was not issued for this server.")
 		return
 	}
 

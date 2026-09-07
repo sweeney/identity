@@ -265,6 +265,14 @@ func (h *oauthHandler) authorizePasskey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Only a token minted for this server may be exchanged for an
+	// authorization code; one carrying another service's audience was
+	// delegated elsewhere and must not stand in for a login here.
+	if !auth.AudienceAllowed(claims.Audience, h.tokenIssuer.Issuer()) {
+		errResp(http.StatusForbidden, "invalid_audience", "That token was not issued for this server.")
+		return
+	}
+
 	// Re-validate client
 	_, err = h.svc.ValidateAuthorizeRequest(clientID, redirectURI)
 	if err != nil {
@@ -494,7 +502,7 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 				"active":     true,
 				"sub":        sc.ClientID,
 				"client_id":  sc.ClientID,
-				"aud":        sc.Audience,
+				"aud":        introspectionAudience(sc.Audience),
 				"scope":      sc.Scope,
 				"token_type": "Bearer",
 				"jti":        sc.JTI,
@@ -517,7 +525,7 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 	// against every client — the safe default.
 	if h.tokenIssuer != nil {
 		if uc, err := h.tokenIssuer.Parse(r.Context(), token); err == nil {
-			if client.Audience == "" || uc.Audience != client.Audience {
+			if client.Audience == "" || !uc.HasAudience(client.Audience) {
 				jsonOK(w, map[string]any{"active": false})
 				return
 			}
@@ -803,4 +811,15 @@ func (h *oauthHandler) passkeyPromptRegisterFinish(w http.ResponseWriter, r *htt
 
 	h.clearPromptSession(w)
 	w.WriteHeader(http.StatusCreated)
+}
+
+// introspectionAudience renders an aud claim for an RFC 7662 response. A single
+// audience is emitted as a bare string, matching how the JWT itself encodes it
+// (and the shape documented in docs/api.md); anything else is emitted as the
+// list it is.
+func introspectionAudience(aud []string) any {
+	if len(aud) == 1 {
+		return aud[0]
+	}
+	return aud
 }

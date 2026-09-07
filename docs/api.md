@@ -1057,6 +1057,7 @@ All errors follow this envelope:
 | `401` | `token_family_compromised` | Clear all tokens, alert user, show login |
 | `403` | `account_disabled` | Show "account disabled" message |
 | `403` | `forbidden` | Show permission error |
+| `403` | `invalid_audience` | Token was minted for another service — use a token issued for Identity |
 | `404` | `not_found` | Show not found UI |
 | `409` | `username_taken` | Show inline field error |
 | `409` | `cannot_delete_last_admin` | Show error message |

@@ -225,6 +225,7 @@ func (v *JWKSVerifier) Parse(ctx context.Context, tokenStr string) (*TokenClaims
 		Username: claims.Username,
 		Role:     claims.Role,
 		IsActive: claims.IsActive,
+		Audience: []string(claims.Audience),
 	}, nil
 }
 
@@ -259,7 +260,7 @@ func (v *JWKSVerifier) ParseServiceToken(ctx context.Context, tokenStr string) (
 	}
 	return &ServiceTokenClaims{
 		ClientID:  claims.ClientID,
-		Audience:  strings.Join(claims.Audience, " "),
+		Audience:  []string(claims.Audience),
 		Scope:     claims.Scope,
 		JTI:       claims.ID,
 		ExpiresAt: exp,
