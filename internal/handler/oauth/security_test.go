@@ -73,7 +73,7 @@ func TestAuthorizePasskey_ServiceToken_Rejected(t *testing.T) {
 	// Mint a service token (typ: at+jwt) — must not be accepted as a user token.
 	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
 		ClientID: "some-service",
-		Audience: "https://id.example.com",
+		Audience: []string{"https://id.example.com"},
 		Scope:    "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
@@ -93,6 +93,7 @@ func TestAuthorizePasskey_ServiceToken_Rejected(t *testing.T) {
 	req.Header.Set("Origin", "https://id.example.com")
 	req.Body = http.NoBody
 	req.Form = form
+	req.PostForm = form
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

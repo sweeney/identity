@@ -29,9 +29,13 @@
         <span class="passkey-divider-text">or</span>
         <span class="passkey-divider-line"></span>
     </div>
+    <!-- Approve and deny share one form and one set of credentials. Denial is
+         the same decision as approval with the opposite sign, so it needs the
+         same proof of who is deciding: a separate credential-free deny form let
+         anyone who could read the code off the device's screen block its owner
+         from signing it in. -->
     <form method="POST" action="/oauth/device" id="device-approve-form">
         <input type="hidden" name="user_code" value="{{.UserCode}}">
-        <input type="hidden" name="action" value="approve">
         <label>
             Username
             <input type="text" name="username" required autocapitalize="none" autocorrect="off" spellcheck="false">
@@ -40,12 +44,8 @@
             Password
             <input type="password" name="password" required autocomplete="current-password">
         </label>
-        <button type="submit">Approve</button>
-    </form>
-    <form method="POST" action="/oauth/device" id="device-deny-form" style="margin-top:0.75rem">
-        <input type="hidden" name="user_code" value="{{.UserCode}}">
-        <input type="hidden" name="action" value="deny">
-        <button type="submit" class="btn btn-secondary">Deny this device</button>
+        <button type="submit" name="action" value="approve">Approve</button>
+        <button type="submit" name="action" value="deny" class="btn btn-secondary" style="margin-top:0.75rem">Deny this device</button>
     </form>
     {{else if .Error}}
     <form method="GET" action="/oauth/device">

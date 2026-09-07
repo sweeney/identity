@@ -63,7 +63,16 @@ type loginArgs struct {
 	oldTokenID string
 	familyID   string // empty = generate new family
 	deviceHint string
-	audience   string // optional aud claim; set for OAuth PKCE flow
+	audience   []string // optional aud claim; set for OAuth PKCE flow
+
+	// scope is the space-delimited scope the grant was consented for, carried
+	// onto both the access token and the refresh token so it survives rotation.
+	scope string
+	// claimCodeID ties a device-grant family to the claim code that produced it.
+	claimCodeID string
+	// clientID is the OAuth client this grant was issued to; empty for a
+	// direct API login.
+	clientID string
 }
 
 // Login authenticates a user by username and password, returning JWT tokens.
@@ -124,11 +133,22 @@ func (s *AuthService) Login(username, password, deviceHint, clientIP string) (*L
 }
 
 // AuthorizeUser authenticates without issuing tokens. Returns userID on success.
-// Used by OAuthService at the authorize step.
+// Used by OAuthService at the authorize step and by the device verification page.
+//
+// Every failure is audited, exactly as Login audits its own. This is the same
+// password check reachable through /oauth/authorize and /oauth/device, and
+// without these records credential stuffing through either endpoint left no
+// trace at all — including on the admin dashboard, which is where an operator
+// would notice it.
 func (s *AuthService) AuthorizeUser(username, password, clientIP string) (string, error) {
 	user, err := s.users.GetByUsername(username)
 	if errors.Is(err, domain.ErrNotFound) {
 		auth.CheckPassword(password, dummyHash) //nolint:errcheck
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventLoginFailure,
+			Username:  username,
+			IPAddress: clientIP,
+		})
 		return "", ErrInvalidCredentials
 	}
 	if err != nil {
@@ -136,20 +156,58 @@ func (s *AuthService) AuthorizeUser(username, password, clientIP string) (string
 	}
 
 	if err := auth.CheckPassword(password, user.PasswordHash); err != nil {
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventLoginFailure,
+			UserID:    user.ID,
+			Username:  username,
+			IPAddress: clientIP,
+		})
 		return "", ErrInvalidCredentials
 	}
 
 	if !user.IsActive {
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventLoginFailure,
+			UserID:    user.ID,
+			Username:  username,
+			IPAddress: clientIP,
+			Detail:    "account disabled",
+		})
 		return "", ErrAccountDisabled
 	}
 
 	return user.ID, nil
 }
 
+// GrantContext describes what a pre-authenticated grant was actually for. It
+// travels onto the issued tokens and, via the refresh token, survives rotation.
+type GrantContext struct {
+	// Audience lists the services these tokens are for; empty omits the claim.
+	Audience []string
+	// Scope is the space-delimited scope the user consented to; empty means no
+	// scope restriction. The device grant consents to a scope, so it must be
+	// carried here or the device silently receives full user privileges.
+	Scope string
+	// ClaimCodeID records the claim code a device grant came from, so revoking
+	// that code can revoke the tokens it produced.
+	ClaimCodeID string
+	// ClientID is the OAuth client this grant was issued to. Recorded on the
+	// refresh token so the refresh grant can refuse a token that belongs to a
+	// different client.
+	ClientID string
+}
+
 // IssueTokensForUser issues a token pair for a pre-authenticated user.
 // audience is the aud claim to embed in the access token; pass "" to omit it.
 // Used by OAuthService at the code exchange step.
 func (s *AuthService) IssueTokensForUser(userID, audience string) (*LoginResult, error) {
+	return s.IssueTokensForGrant(userID, GrantContext{Audience: domain.AudienceList(audience)})
+}
+
+// IssueTokensForGrant issues a token pair for a pre-authenticated user, carrying
+// the full grant context onto the tokens. Used by the device grant, where the
+// consented scope and the originating claim code both have to survive.
+func (s *AuthService) IssueTokensForGrant(userID string, grant GrantContext) (*LoginResult, error) {
 	user, err := s.users.GetByID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
@@ -157,7 +215,34 @@ func (s *AuthService) IssueTokensForUser(userID, audience string) (*LoginResult,
 	if !user.IsActive {
 		return nil, ErrAccountDisabled
 	}
-	return s.issueTokens(user, loginArgs{audience: audience})
+	return s.issueTokens(user, loginArgs{
+		audience:    grant.Audience,
+		scope:       grant.Scope,
+		claimCodeID: grant.ClaimCodeID,
+		clientID:    grant.ClientID,
+	})
+}
+
+// RefreshForClient is Refresh, restricted to the OAuth client the token was
+// issued to.
+//
+// A refresh token that leaks — through a log, a proxy, a compromised client —
+// could otherwise be redeemed by any other registered client, for a user who
+// never consented to it. An empty clientID means the direct API login, which
+// has no client; tokens issued that way carry no binding and are only
+// redeemable through the same unbound path.
+func (s *AuthService) RefreshForClient(rawRefreshToken, clientID string) (*LoginResult, error) {
+	tok, err := s.tokens.GetByHash(HashToken(rawRefreshToken))
+	if err == nil && tok.ClientID != "" && tok.ClientID != clientID {
+		return nil, ErrRefreshTokenClientMismatch
+	}
+	// An empty ClientID is a token issued before the binding existed. It cannot
+	// be attributed to a client, so there is nothing to check — refusing it
+	// would sign out every session that predates the upgrade while buying no
+	// security, since accepting it is exactly the pre-migration posture. It is
+	// adopted instead: the rotated token comes back bound to the presenting
+	// client, so the binding takes effect after one refresh per session.
+	return s.refresh(rawRefreshToken, clientID)
 }
 
 // Refresh validates a refresh token and issues a new token pair via rotation.
@@ -165,6 +250,12 @@ func (s *AuthService) IssueTokensForUser(userID, audience string) (*LoginResult,
 // single transaction by RotateToken, preventing the TOCTOU race condition
 // where concurrent requests could both observe the token as valid.
 func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
+	return s.refresh(rawRefreshToken, "")
+}
+
+// refresh rotates the token. adoptClientID, when non-empty, is recorded on the
+// replacement for a token that carried no client binding.
+func (s *AuthService) refresh(rawRefreshToken, adoptClientID string) (*LoginResult, error) {
 	tokenHash := HashToken(rawRefreshToken)
 
 	// Build the new token before entering the atomic rotation so we can
@@ -179,6 +270,7 @@ func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
 	newTok := &domain.RefreshToken{
 		ID:         uuid.New().String(),
 		TokenHash:  HashToken(rawRefresh),
+		ClientID:   adoptClientID,
 		IssuedAt:   now,
 		LastUsedAt: now,
 		ExpiresAt:  now.Add(s.refreshTokenTTL),
@@ -229,7 +321,8 @@ func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
 		Username: user.Username,
 		Role:     user.Role,
 		IsActive: user.IsActive,
-		Audience: oldTok.Audience,
+		Audience: oldTok.Audiences,
+		Scope:    oldTok.Scope,
 	}
 
 	accessToken, err := s.issuer.Mint(claims)
@@ -272,6 +365,19 @@ func (s *AuthService) Logout(userID, rawRefreshToken string) error {
 		return fmt.Errorf("get token: %w", err)
 	}
 
+	// The token has to belong to the caller. Logout looked it up by hash and
+	// revoked it on the strength of that alone, so any authenticated user
+	// holding somebody else's refresh token could end their session with it.
+	if tok.UserID != userID {
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventLogout,
+			UserID:    userID,
+			Username:  username,
+			Detail:    "refused: refresh token belongs to another user",
+		})
+		return ErrInvalidRefreshToken
+	}
+
 	err = s.tokens.RevokeByID(tok.ID)
 	if err == nil {
 		s.record(&domain.AuthEvent{
@@ -291,6 +397,7 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		Role:     user.Role,
 		IsActive: user.IsActive,
 		Audience: args.audience,
+		Scope:    args.scope,
 	}
 
 	accessToken, err := s.issuer.Mint(claims)
@@ -316,7 +423,10 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		FamilyID:      familyID,
 		ParentTokenID: args.oldTokenID,
 		DeviceHint:    args.deviceHint,
-		Audience:      args.audience,
+		Audiences:     args.audience,
+		Scope:         args.scope,
+		ClaimCodeID:   args.claimCodeID,
+		ClientID:      args.clientID,
 		IssuedAt:      now,
 		LastUsedAt:    now,
 		ExpiresAt:     now.Add(s.refreshTokenTTL),

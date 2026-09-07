@@ -115,7 +115,8 @@ components:
           description: |
             Snake_case error code. Always check this field, not the HTTP status alone.
             Known codes: invalid_credentials, account_disabled, invalid_refresh_token,
-            token_expired, token_family_compromised, forbidden, not_found, username_taken,
+            token_expired, token_family_compromised, forbidden, invalid_audience,
+            request_too_large, not_found, username_taken,
             cannot_delete_last_admin, validation_error, user_limit_reached, weak_password,
             rate_limited, internal_error, webauthn_not_enabled, webauthn_invalid_challenge,
             webauthn_verification_failed, webauthn_credential_not_found, webauthn_credential_limit
@@ -519,6 +520,15 @@ paths:
           description: Admin role required
         "404":
           description: User not found
+        "409":
+          description: Cannot demote or deactivate the last admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: cannot_delete_last_admin
+                message: cannot demote or deactivate the last admin user
         "422":
           description: Weak password
 
@@ -759,9 +769,12 @@ paths:
       summary: Begin passkey authentication
       description: |
         Starts the WebAuthn authentication ceremony. No authentication required.
-        If `username` is provided, the server associates the challenge with that user
-        (but still uses discoverable credential flow to prevent username enumeration).
-        If `username` is omitted, uses a fully discoverable credential flow.
+        Always uses the discoverable credential flow, whether or not `username`
+        is supplied: the challenge is never associated with a user, and the
+        response never names a credential. This keeps an existing user, a user
+        with no passkeys, and an unknown username indistinguishable at both this
+        endpoint and the finish step. Whoever's passkey signs the assertion is
+        who is logged in, regardless of the name submitted.
         Returns assertion options (pass to `navigator.credentials.get()`)
         and a `challenge_id` for the finish step.
       tags: [webauthn]
@@ -774,7 +787,9 @@ paths:
               properties:
                 username:
                   type: string
-                  description: Optional username hint. Omit for fully discoverable (usernameless) login.
+                  description: |
+                    Optional UI hint only — it does not change the ceremony or the
+                    response. Omit it for a fully usernameless login.
                   example: alice
       responses:
         "200":
@@ -816,6 +831,17 @@ paths:
           in: query
           required: true
           description: Challenge ID from the begin step (also accepted via `X-Challenge-ID` header)
+          schema:
+            type: string
+        - name: device_hint
+          in: query
+          required: false
+          description: |
+            Optional human-readable device label, e.g. "iPhone 15 / iOS 18" (also
+            accepted via `X-Device-Hint` header). Recorded on the refresh token
+            and on the audit event. The password login takes this in its JSON
+            body; here the body is the WebAuthn assertion, so it travels as a
+            header or query parameter instead.
           schema:
             type: string
       requestBody:
@@ -979,7 +1005,10 @@ paths:
       description: |
         Supports four grant types:
         - `authorization_code` — exchange an auth code + PKCE verifier for tokens
-        - `refresh_token` — rotate a refresh token for a new token pair
+        - `refresh_token` — rotate a refresh token for a new token pair. `client_id`
+          is required: the token is bound to the client it was issued to, and
+          presenting it with a different client (or none) returns `invalid_grant`.
+          A confidential client must also authenticate, as on `authorization_code`.
         - `client_credentials` — service authenticates with client_id + client_secret, receives an access token (no refresh token)
         - `urn:ietf:params:oauth:grant-type:device_code` — RFC 8628 device flow poll. The device polls with its device_code from `/oauth/device_authorization` or `/oauth/device/claim` and receives tokens once a user has approved.
 
@@ -1006,6 +1035,9 @@ paths:
                   description: Space-delimited scopes (client_credentials, device_code)
                 client_id:
                   type: string
+                  description: |
+                    Required for `refresh_token` (the token is bound to its
+                    issuing client) and for `client_credentials`.
                 client_secret:
                   type: string
                 code:

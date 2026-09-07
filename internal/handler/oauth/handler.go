@@ -6,12 +6,14 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/sweeney/identity/common/httputil"
 	"github.com/sweeney/identity/internal/auth"
+	"github.com/sweeney/identity/internal/domain"
 	"github.com/sweeney/identity/internal/service"
 	"github.com/sweeney/identity/internal/ui"
 )
@@ -132,8 +134,9 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 	redirectURI := r.FormValue("redirect_uri")
 	state := r.FormValue("state")
 	codeChallenge := r.FormValue("code_challenge")
-	username := r.FormValue("username")
-	password := r.FormValue("password")
+	// Body only — see the note in admin/handler.go.
+	username := r.PostFormValue("username")
+	password := r.PostFormValue("password")
 
 	// Re-validate client on POST to prevent CSRF-style attacks
 	client, err := h.svc.ValidateAuthorizeRequest(clientID, redirectURI)
@@ -165,10 +168,7 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		redirectURL := redirectURI + "?code=" + url.QueryEscape(rawCode)
-		if state != "" {
-			redirectURL += "&state=" + url.QueryEscape(state)
-		}
+		redirectURL := buildRedirect(redirectURI, rawCode, state)
 		h.clientRedirect(w, redirectURL)
 		return
 	}
@@ -201,10 +201,7 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build redirect URL with code and state
-	redirectURL := redirectURI + "?code=" + url.QueryEscape(rawCode)
-	if state != "" {
-		redirectURL += "&state=" + url.QueryEscape(state)
-	}
+	redirectURL := buildRedirect(redirectURI, rawCode, state)
 
 	// If user has no passkeys and the browser supports WebAuthn, show the prompt.
 	// redirectURL is server-built from the registered redirect_uri (validated in
@@ -265,6 +262,14 @@ func (h *oauthHandler) authorizePasskey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Only a token minted for this server may be exchanged for an
+	// authorization code; one carrying another service's audience was
+	// delegated elsewhere and must not stand in for a login here.
+	if !auth.AudienceAllowed(claims.Audience, h.tokenIssuer.Issuer()) {
+		errResp(http.StatusForbidden, "invalid_audience", "That token was not issued for this server.")
+		return
+	}
+
 	// Re-validate client
 	_, err = h.svc.ValidateAuthorizeRequest(clientID, redirectURI)
 	if err != nil {
@@ -278,10 +283,7 @@ func (h *oauthHandler) authorizePasskey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	redirectURL := redirectURI + "?code=" + url.QueryEscape(rawCode)
-	if state != "" {
-		redirectURL += "&state=" + url.QueryEscape(state)
-	}
+	redirectURL := buildRedirect(redirectURI, rawCode, state)
 
 	// If the caller accepts JSON (fetch from passkey-login.js), return the redirect URL
 	// instead of a 302 — this avoids CSP form-action issues with dynamic form submission.
@@ -372,9 +374,24 @@ func (h *oauthHandler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.svc.RefreshToken(rawRefreshToken)
+	// Confidential clients authenticate here, as they do on the
+	// authorization_code grant. Without it, knowing a client_id was enough.
+	clientID := r.FormValue("client_id")
+	if creds, ok := extractClientCredentials(r); ok && clientID == "" {
+		clientID = creds.ClientID
+	}
+	if !h.authenticateDeviceClient(w, r, clientID) {
+		return
+	}
+
+	// And the token has to belong to the client redeeming it. A refresh token
+	// that leaks could otherwise be redeemed by any other registered client,
+	// for a user who never consented to that client.
+	result, err := h.svc.RefreshTokenForClient(rawRefreshToken, clientID)
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrRefreshTokenClientMismatch):
+			oauthError(w, "invalid_grant", "That refresh token was not issued to this client.")
 		case errors.Is(err, service.ErrInvalidRefreshToken):
 			oauthError(w, "invalid_grant", "The refresh token is invalid.")
 		case errors.Is(err, service.ErrTokenFamilyCompromised):
@@ -494,7 +511,7 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 				"active":     true,
 				"sub":        sc.ClientID,
 				"client_id":  sc.ClientID,
-				"aud":        sc.Audience,
+				"aud":        introspectionAudience(sc.Audience),
 				"scope":      sc.Scope,
 				"token_type": "Bearer",
 				"jti":        sc.JTI,
@@ -517,7 +534,8 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 	// against every client — the safe default.
 	if h.tokenIssuer != nil {
 		if uc, err := h.tokenIssuer.Parse(r.Context(), token); err == nil {
-			if client.Audience == "" || uc.Audience != client.Audience {
+			// The introspecting client must be one this token was minted for.
+			if !anyAudienceMatches(uc, client.Audiences) {
 				jsonOK(w, map[string]any{"active": false})
 				return
 			}
@@ -537,6 +555,13 @@ func (h *oauthHandler) introspect(w http.ResponseWriter, r *http.Request) {
 
 // discovery serves RFC 8414 authorization server metadata.
 func (h *oauthHandler) discovery(w http.ResponseWriter, r *http.Request) {
+	// Every other call site guards this; without the guard, discovery panicked
+	// whenever the token issuer was not wired.
+	if h.tokenIssuer == nil {
+		oauthErrorWithStatus(w, http.StatusServiceUnavailable, "temporarily_unavailable",
+			"Authorization server metadata is not configured.")
+		return
+	}
 	// Use the configured issuer from the token issuer — never trust the Host header.
 	issuer := h.tokenIssuer.Issuer()
 
@@ -640,6 +665,16 @@ func (h *oauthHandler) clientRedirect(w http.ResponseWriter, redirectURL string)
 
 const oauthPromptCookie = "oauth_passkey_prompt"
 
+// secureCookies reports whether cookies should carry the Secure attribute.
+//
+// Taken from the configured issuer rather than a separate flag: production
+// config already requires JWT_ISSUER to be https://, so the two are the same
+// statement, and development over plain http correctly gets no Secure (where
+// setting it would stop the cookie working at all).
+func (h *oauthHandler) secureCookies() bool {
+	return h.tokenIssuer != nil && strings.HasPrefix(h.tokenIssuer.Issuer(), "https://")
+}
+
 // shouldPromptPasskey returns true if WebAuthn is enabled and the user has no passkeys.
 func (h *oauthHandler) shouldPromptPasskey(userID string) bool {
 	if h.webauthnSvc == nil || h.sessionKey == "" {
@@ -684,6 +719,7 @@ func (h *oauthHandler) setPromptSession(w http.ResponseWriter, userID, next stri
 		Path:     "/oauth",
 		MaxAge:   300,
 		HttpOnly: true,
+		Secure:   h.secureCookies(),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -720,6 +756,7 @@ func (h *oauthHandler) clearPromptSession(w http.ResponseWriter) {
 		Path:     "/oauth",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   h.secureCookies(),
 	})
 }
 
@@ -803,4 +840,50 @@ func (h *oauthHandler) passkeyPromptRegisterFinish(w http.ResponseWriter, r *htt
 
 	h.clearPromptSession(w)
 	w.WriteHeader(http.StatusCreated)
+}
+
+// introspectionAudience renders an aud claim for an RFC 7662 response. A single
+// audience is emitted as a bare string, matching how the JWT itself encodes it
+// (and the shape documented in docs/api.md); anything else is emitted as the
+// list it is.
+func introspectionAudience(aud []string) any {
+	if len(aud) == 1 {
+		return aud[0]
+	}
+	return aud
+}
+
+// buildRedirect appends the authorization code (and state) to the client's
+// registered redirect URI.
+//
+// It parses rather than concatenating "?code=". A redirect URI may legitimately
+// carry its own query string — RFC 6749 §3.1.2 requires the server to preserve
+// it — and concatenating turns ...?next=x into ...?next=x?code=y, a single
+// malformed parameter from which the client can never read the code. If the URI
+// will not parse it is returned unchanged; validation upstream is what rejects
+// an unusable redirect URI, and silently dropping the code here would be worse.
+func buildRedirect(redirectURI, code, state string) string {
+	u, err := url.Parse(redirectURI)
+	if err != nil {
+		return redirectURI
+	}
+	q := u.Query()
+	q.Set("code", code)
+	if state != "" {
+		q.Set("state", state)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// anyAudienceMatches reports whether the token names at least one of the
+// client's audiences. A client with no audience at all introspects nothing as
+// active — it has no claim on any token, which is the safe default.
+func anyAudienceMatches(uc *domain.TokenClaims, clientAudiences []string) bool {
+	for _, a := range clientAudiences {
+		if a != "" && uc.HasAudience(a) {
+			return true
+		}
+	}
+	return false
 }

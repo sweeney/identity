@@ -2,7 +2,7 @@
 
 The Identity service can automatically back up its SQLite database to Cloudflare R2 (S3-compatible object storage). Backups happen:
 
-- **On a schedule** (daily at 03:00 UTC by default — configurable via `BACKUP_SCHEDULE` and `BACKUP_HOUR`)
+- **On a schedule** (daily at 03:00 UTC by default — configurable via `BACKUP_SCHEDULE` and `BACKUP_HOUR`; a single upload is bounded by a 10-minute deadline so a stalled connection cannot wedge the backup goroutine)
 - **On every new login** (async, non-blocking)
 - **On demand** via the admin UI at `/admin/backup`
 
@@ -50,7 +50,7 @@ R2_BUCKET_NAME=identity-sqlite
 
 # Optional — defaults shown
 BACKUP_SCHEDULE=daily   # daily | weekly (Sundays) | monthly (1st) | off
-BACKUP_HOUR=3           # UTC hour 0–23
+BACKUP_HOUR=3           # UTC hour 0–23. 0 means midnight, not "unset".
 ```
 
 If using the systemd deployment, add these to `/etc/identity/env`:
@@ -118,7 +118,7 @@ production/backups/2026/03/17/identity-2026-03-17T14:30:00Z.sqlite3
 development/backups/2026/03/17/identity-2026-03-17T10:00:00Z.sqlite3
 ```
 
-The environment is set by `IDENTITY_ENV` (defaults to `development`).
+The environment is set by `IDENTITY_ENV` (defaults to `development`; an unrecognised value fails startup).
 
 ---
 
@@ -140,7 +140,18 @@ sudo -u identity ./identity-server --restore-backup "production/backups/2026/03/
 sudo systemctl start identity
 ```
 
-The restore command prompts for confirmation before overwriting the database, downloads the file, and sets 600 permissions.
+The restore command prompts for confirmation before overwriting the database.
+
+The download lands in a sibling `<db>.download` file created with mode `0600`,
+and is renamed over the destination only once it has arrived in full. A restore
+that fails partway — a dropped connection, a wrong key — therefore leaves the
+existing database exactly as it was, and the credential data is never briefly
+world-readable. Nothing partial is left behind on failure.
+
+An explicitly supplied key must belong to this environment *and* this service:
+the key has to start with `{IDENTITY_ENV}/backups/` and its filename with
+`identity-`. Restoring a production backup over a development database (or the
+reverse) is rejected rather than confirmed.
 
 ---
 

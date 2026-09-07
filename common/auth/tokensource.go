@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // TokenSource fetches and caches a client_credentials access token from the
@@ -23,6 +25,12 @@ type TokenSource struct {
 	mu          sync.Mutex
 	cachedToken string
 	expiresAt   time.Time
+
+	// sf coalesces concurrent fetches. Identity rate-limits its token endpoint
+	// at 5/min, so a service starting up — or recovering from Invalidate()
+	// after a 401 — would otherwise fire one request per concurrent caller and
+	// lock itself out with a 429 of its own making.
+	sf singleflight.Group
 }
 
 // expiryBuffer is how early we proactively refresh before the token expires.
@@ -44,17 +52,38 @@ func (ts *TokenSource) Token(ctx context.Context) (string, error) {
 	}
 	ts.mu.Unlock()
 
-	tok, expiresIn, err := ts.fetch(ctx)
+	// One fetch serves every caller waiting on it.
+	tok, err, _ := ts.sf.Do("token", func() (any, error) {
+		// Another flight may have refreshed the token while we queued.
+		ts.mu.Lock()
+		if ts.cachedToken != "" && time.Now().Add(expiryBuffer).Before(ts.expiresAt) {
+			cached := ts.cachedToken
+			ts.mu.Unlock()
+			return cached, nil
+		}
+		ts.mu.Unlock()
+
+		// expires_in is counted from when identity issued the token, so the
+		// deadline is measured from when the request went out. Measuring it
+		// from the response over-states the lifetime by the round-trip time,
+		// and the cache then keeps serving a token closer to expiry than it
+		// believes.
+		requestedAt := time.Now()
+		token, expiresIn, fetchErr := ts.fetch(ctx)
+		if fetchErr != nil {
+			return "", fetchErr
+		}
+
+		ts.mu.Lock()
+		ts.cachedToken = token
+		ts.expiresAt = requestedAt.Add(time.Duration(expiresIn) * time.Second)
+		ts.mu.Unlock()
+		return token, nil
+	})
 	if err != nil {
 		return "", err
 	}
-
-	ts.mu.Lock()
-	ts.cachedToken = tok
-	ts.expiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
-	ts.mu.Unlock()
-
-	return tok, nil
+	return tok.(string), nil
 }
 
 // Invalidate clears the cached token, forcing the next Token() call to fetch
@@ -89,7 +118,10 @@ func (ts *TokenSource) fetch(ctx context.Context) (token string, expiresIn int, 
 		"client_secret": {ts.ClientSecret},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ts.BaseURL+"/oauth/token", strings.NewReader(body.Encode()))
+	// A trailing slash on BaseURL is an ordinary configuration mistake and
+	// would otherwise produce //oauth/token, which identity does not route.
+	tokenURL := strings.TrimRight(ts.BaseURL, "/") + "/oauth/token"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(body.Encode()))
 	if err != nil {
 		return "", 0, fmt.Errorf("identity: build request: %w", err)
 	}

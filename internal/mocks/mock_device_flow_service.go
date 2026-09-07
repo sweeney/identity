@@ -100,17 +100,17 @@ func (mr *MockDeviceFlowServicerMockRecorder) DeleteClaimCode(id, ip any) *gomoc
 }
 
 // Deny mocks base method.
-func (m *MockDeviceFlowServicer) Deny(rawCode, ip string) error {
+func (m *MockDeviceFlowServicer) Deny(rawCode, userID, username, ip string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Deny", rawCode, ip)
+	ret := m.ctrl.Call(m, "Deny", rawCode, userID, username, ip)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Deny indicates an expected call of Deny.
-func (mr *MockDeviceFlowServicerMockRecorder) Deny(rawCode, ip any) *gomock.Call {
+func (mr *MockDeviceFlowServicerMockRecorder) Deny(rawCode, userID, username, ip any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Deny", reflect.TypeOf((*MockDeviceFlowServicer)(nil).Deny), rawCode, ip)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Deny", reflect.TypeOf((*MockDeviceFlowServicer)(nil).Deny), rawCode, userID, username, ip)
 }
 
 // IssueDeviceAuthorization mocks base method.

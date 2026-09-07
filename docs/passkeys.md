@@ -94,6 +94,10 @@ Response: `201 Created` with the credential details.
 
 ### Authentication
 
+Pass an optional `device_hint` (query parameter or `X-Device-Hint` header) to
+`login/finish` to label the device on the refresh token and in the audit log,
+the way `device_hint` does for password login.
+
 **Begin login** (no auth required):
 
 ```
@@ -103,12 +107,18 @@ Content-Type: application/json
 { "username": "alice" }
 ```
 
-Omit `username` for discoverable credential flow (username-less login). If the username doesn't exist, a fake challenge is returned to prevent user enumeration.
+`username` is optional, and it is only a UI hint — the ceremony is identical
+with or without it. Every login uses the discoverable credential flow, so the
+authenticator identifies the user from the passkey itself and the response
+never names any credential. That is what makes an existing user, a user with no
+passkeys, and an unknown username indistinguishable here; the server also does
+not resolve the name, so the same holds at `login/finish`. Whoever's passkey
+signs the assertion is who gets logged in, regardless of the name submitted.
 
-Response:
+Response (`allowCredentials` is always empty — see above):
 ```json
 {
-  "publicKey": { "challenge": "...", "allowCredentials": [...], ... },
+  "publicKey": { "challenge": "...", "allowCredentials": [], ... },
   "challenge_id": "uuid"
 }
 ```

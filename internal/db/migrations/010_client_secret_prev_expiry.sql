@@ -1,0 +1,12 @@
+-- WP13 (#27): give the rotated-out client secret an expiry.
+--
+-- oauth_clients.client_secret_hash_prev exists so a secret rotation does not
+-- break a client mid-deploy: both the new and the previous secret verify for a
+-- while. But nothing ever cleared it, so "for a while" meant forever — a secret
+-- an operator deliberately rotated away from stayed valid indefinitely, which
+-- is the opposite of what rotating it was for.
+--
+-- NULL means no expiry, which is the pre-migration behaviour for rows that
+-- already carry a previous secret: they keep working until rotated again, at
+-- which point the new expiry is set.
+ALTER TABLE oauth_clients ADD COLUMN client_secret_prev_expires_at TEXT;

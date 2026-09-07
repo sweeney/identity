@@ -27,6 +27,7 @@ Human-readable guides are in `docs/`:
 - `docs/api-walkthrough.md` — executable walkthrough showing every endpoint with real output
 - `docs/auth-flows.md` — ASCII art diagrams of all auth flows
 - `docs/passkeys.md` — passkey/WebAuthn setup, API reference, and integration guide
+- `docs/audiences.md` — what the `aud` claim is for, what to put in an OAuth client's Audience field, and how the boundary is enforced
 - `docs/verifying-tokens.md` — verifying Identity tokens in a Go resource server using the `common/auth.JWKSVerifier`
 - `docs/r2-backup.md` — R2 backup setup and restore procedures
 - `docs/deployment.md` — deployment: binary layout, systemd unit, env file
@@ -46,7 +47,7 @@ Human-readable guides are in `docs/`:
 3. User logs in on the Identity server
 4. Server redirects back with `?code=...&state=...`
 5. App exchanges code at `POST /oauth/token` with `code_verifier` → receive tokens
-6. Refresh via `POST /oauth/token` with `grant_type=refresh_token`
+6. Refresh via `POST /oauth/token` with `grant_type=refresh_token` **and `client_id`** — refresh tokens are bound to the issuing client (a token predating the binding is adopted on its next refresh), and a confidential client must authenticate here too
 
 ## Client Credentials flow (service-to-service)
 
@@ -76,6 +77,43 @@ Passkeys also work on the server-rendered login pages (admin UI and OAuth author
 
 See `docs/passkeys.md` for full API reference and integration guide.
 
+## Token audience
+
+A token's `aud` claim names the service it was minted for, and Identity enforces
+it on the way in. Tokens from a direct `/api/v1/auth/login` carry no audience and
+are usable here; tokens minted through the OAuth, device or claim-code grants
+carry the requesting client's configured audience, and Identity rejects those
+with `403 invalid_audience` (`RequireAudience` in `internal/auth/middleware.go`,
+and an explicit `auth.AudienceAllowed` check on the three public bridges that
+parse a token directly — `/admin/login/passkey`, `/oauth/authorize/passkey`,
+`/oauth/device/passkey`). This is what stops a token delegated to a sibling
+resource server being replayed against the Identity API.
+
+An OAuth client whose tokens are meant for Identity itself may register its
+audience as either the issuer URL (`https://id.swee.net`) or the bare host
+(`id.swee.net`) — Identity treats both as naming itself. Any other value is a
+different service, and such a token is refused here.
+
+`TokenClaims.Audience` and `ServiceTokenClaims.Audience` are `[]string` holding
+the claim verbatim; test membership with `HasAudience`, never by comparing or
+splitting strings.
+
+## Device grant scope and claim codes
+
+A device grant's `scope` is enforced, not just displayed. The scope the user
+approves is embedded as the `scope` claim on the issued access token and is
+carried on the refresh token, so it survives rotation rather than widening back
+to full privilege on the first refresh.
+
+Revoking a claim code at `/admin/claim-codes` stops the paired device two ways:
+its next poll fails with `claim_code_revoked`, and the refresh tokens that claim
+code already produced are revoked (`refresh_tokens.claim_code_id`, migration
+008). A claim code binds to exactly one user, compare-and-swap, on first use.
+
+Changing a user's password revokes every refresh token they hold. Logout only
+revokes tokens belonging to the caller. Refresh tokens from the OAuth, device
+and claim-code grants are all bound to the issuing client.
+
 ## Token rotation and theft detection
 
 Every refresh rotates the token: old token is revoked, new pair issued. If a **previously-used** refresh token is ever presented again, the server assumes the token was stolen. It revokes the **entire token family** and returns `token_family_compromised`. The client must clear all tokens and show the login screen.
@@ -84,8 +122,17 @@ Disabling or demoting an account takes effect **immediately** on the API, not ju
 
 ## Role model
 
-- `admin` — full access to all endpoints including user management and admin UI
+- `admin` — full access to all endpoints including user management and admin UI. The last active admin cannot be deleted, demoted, or deactivated (`cannot_delete_last_admin`) — otherwise the admin plane locks with no way back short of `--reset-admin` on the host.
 - `user` — can call `/auth/*` and `GET /users/{own-id}` only
+
+Only these two values are accepted. Anything else is a `400 validation_error`
+on create and update, rather than being coerced to `user` (which would quietly
+produce an account with the wrong privileges) or stored verbatim (producing a
+role that is neither admin nor user).
+
+Admin UI credential fields — login, the new-user form, and the "confirm your
+password" gate on destructive actions — are read from the POST body only, never
+from the URL query.
 
 ## Error envelope
 
@@ -95,7 +142,7 @@ All API errors return the same shape (`/oauth/token` uses RFC 6749 format instea
 { "error": "snake_case_code", "message": "Human readable" }
 ```
 
-Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expired`, `invalid_refresh_token`, `account_disabled`, `forbidden`, `unknown_client`, `invalid_redirect_uri`, `invalid_auth_code`, `pkce_verification_failed`, `webauthn_not_enabled`, `webauthn_invalid_challenge`, `webauthn_verification_failed`, `webauthn_no_credentials`, `webauthn_credential_not_found`, `invalid_client`, `unauthorized_client`, `invalid_scope`, `insufficient_scope`
+Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expired`, `invalid_refresh_token`, `account_disabled`, `forbidden`, `unknown_client`, `invalid_redirect_uri`, `invalid_auth_code`, `pkce_verification_failed`, `webauthn_not_enabled`, `webauthn_invalid_challenge`, `webauthn_verification_failed`, `webauthn_no_credentials`, `webauthn_credential_not_found`, `invalid_client`, `unauthorized_client`, `invalid_scope`, `insufficient_scope`, `invalid_audience`, `request_too_large`
 
 ## Running locally
 
@@ -107,9 +154,13 @@ Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expir
 ADMIN_USERNAME="admin" ADMIN_PASSWORD="<password>" ./bin/identity-server
 ```
 
-Optional env vars: `IDENTITY_ENV` (`development`|`production`), `PORT` (default 8181), `DB_PATH` (default `identity.db`), `JWT_SECRET` (overrides DB-managed secret), `CORS_ORIGINS` (comma-separated allowed origins for API CORS and WebAuthn), `TRUST_PROXY` (`cloudflare` to trust `CF-Connecting-IP` header), `RATE_LIMIT_DISABLED` (`1` to disable rate limiting in dev/test), `RATE_LIMIT_ALLOWLIST` (comma-separated IPs/CIDRs that bypass rate limiting, matched after `TRUST_PROXY` resolution), `SITE_NAME` (human-readable name shown in UI, default `Identity`), `WEBAUTHN_RP_ID` (passkey domain, e.g. `example.com`; auto-configured as `localhost` in development), `WEBAUTHN_RP_ORIGINS` (comma-separated allowed WebAuthn origins; derived from RP ID if unset, merged with `CORS_ORIGINS`), `R2_*` for Cloudflare R2 backups, `BACKUP_SCHEDULE` (`daily`|`weekly`|`monthly`|`off`, default `daily`), `BACKUP_HOUR` (UTC hour 0–23, default `3`).
+Password length is 8–72 bytes (bcrypt's own limit); anything outside that is a
+validation error rather than a 500. A rotated-out OAuth client secret keeps
+working for 7 days, then stops.
 
-On first run without `ADMIN_PASSWORD`, the generated password is written to `initial-password.txt` in the working directory (not logged to stdout). Delete the file after reading.
+Optional env vars: `IDENTITY_ENV` (`development`|`production`; unset means `development`, and any other value is a startup error rather than a silent downgrade), `PORT` (default 8181), `DB_PATH` (default `identity.db`), `JWT_SECRET` (overrides DB-managed secret), `CORS_ORIGINS` (comma-separated allowed origins for API CORS and WebAuthn), `TRUST_PROXY` (`cloudflare` to trust the `CF-Connecting-IP` header — only from a trusted source address), `TRUST_PROXY_CIDRS` (comma-separated CIDRs/IPs permitted to set that header; default is loopback plus the private ranges, which is what a Cloudflare Tunnel deployment sees, since `cloudflared` proxies to a local port), `RATE_LIMIT_DISABLED` (`1` to disable rate limiting in dev/test), `RATE_LIMIT_ALLOWLIST` (comma-separated IPs/CIDRs that bypass rate limiting, matched after `TRUST_PROXY` resolution), `SITE_NAME` (human-readable name shown in UI, default `Identity`), `WEBAUTHN_RP_ID` (passkey domain, e.g. `example.com`; auto-configured as `localhost` in development), `WEBAUTHN_RP_ORIGINS` (comma-separated allowed WebAuthn origins; derived from RP ID if unset, merged with `CORS_ORIGINS`), `R2_*` for Cloudflare R2 backups, `BACKUP_SCHEDULE` (`daily`|`weekly`|`monthly`|`off`, default `daily`), `BACKUP_HOUR` (UTC hour 0–23, default `3`; `0` means midnight, not unset).
+
+On first run without `ADMIN_PASSWORD`, the generated password is written to `initial-password.txt` in the working directory (not logged to stdout). Delete the file after reading. The file is written **before** the admin account is created, with `O_EXCL` and mode `0600`, replacing any leftover file or symlink at that path — so an account never exists whose password was never recorded, and the plaintext never lands in a world-readable file.
 
 ## Deploying
 
@@ -143,7 +194,7 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `internal/auth/jwt.go` | JWT mint/parse, supports previous-secret fallback |
 | `internal/auth/middleware.go` | `RequireAuth` and `RequireAdmin` middleware |
 | `common/ratelimit/ratelimit.go` | Per-IP rate limiting middleware |
-| `internal/httputil/clientip.go` | Shared client IP extraction with proxy trust |
+| `common/httputil/clientip.go` | Shared client IP extraction with proxy trust |
 | `internal/store/token_store.go` | Token rotation with atomic TOCTOU-safe transaction |
 | `internal/store/audit_store.go` | Audit event recording (also emits to stdout) |
 | `internal/domain/oauth.go` | OAuth types, auth event constants, repository interfaces |

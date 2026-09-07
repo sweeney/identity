@@ -208,7 +208,7 @@ func TestTokenIssuer_Mint_WithAudience(t *testing.T) {
 		Username: "alice",
 		Role:     domain.RoleUser,
 		IsActive: true,
-		Audience: "mqttproxy",
+		Audience: []string{"mqttproxy"},
 	}
 
 	token, err := issuer.Mint(claims)

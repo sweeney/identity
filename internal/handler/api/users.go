@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -74,9 +75,18 @@ func (h *userHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An unrecognised role is a mistake worth reporting, not one to coerce:
+	// silently turning "Admin" into "user" creates an account with the wrong
+	// privileges and tells the caller it worked.
 	role := domain.RoleUser
-	if req.Role == string(domain.RoleAdmin) {
-		role = domain.RoleAdmin
+	if req.Role != "" {
+		parsed, ok := domain.ParseRole(req.Role)
+		if !ok {
+			jsonError(w, http.StatusBadRequest, "validation_error",
+				`role must be "admin" or "user"`)
+			return
+		}
+		role = parsed
 	}
 
 	claims := auth.ClaimsFromContext(r.Context())
@@ -89,7 +99,8 @@ func (h *userHandler) create(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, domain.ErrUserLimitReached):
 			jsonError(w, http.StatusUnprocessableEntity, "user_limit_reached", "the maximum number of users has been reached")
 		case errors.Is(err, service.ErrWeakPassword):
-			jsonError(w, http.StatusUnprocessableEntity, "weak_password", "password must be at least 8 characters")
+			jsonError(w, http.StatusUnprocessableEntity, "weak_password",
+				fmt.Sprintf("password must be between %d and %d bytes", auth.MinPasswordLength, auth.MaxPasswordLength))
 		default:
 			jsonError(w, http.StatusInternalServerError, "internal_error", "failed to create user")
 		}
@@ -148,8 +159,13 @@ func (h *userHandler) update(w http.ResponseWriter, r *http.Request) {
 		IsActive:    req.IsActive,
 	}
 	if req.Role != nil {
-		r := domain.Role(*req.Role)
-		input.Role = &r
+		parsed, ok := domain.ParseRole(*req.Role)
+		if !ok {
+			jsonError(w, http.StatusBadRequest, "validation_error",
+				`role must be "admin" or "user"`)
+			return
+		}
+		input.Role = &parsed
 	}
 
 	claims := auth.ClaimsFromContext(r.Context())
@@ -162,7 +178,11 @@ func (h *userHandler) update(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, domain.ErrConflict):
 			jsonError(w, http.StatusConflict, "username_taken", "a user with that username already exists")
 		case errors.Is(err, service.ErrWeakPassword):
-			jsonError(w, http.StatusUnprocessableEntity, "weak_password", "password must be at least 8 characters")
+			jsonError(w, http.StatusUnprocessableEntity, "weak_password",
+				fmt.Sprintf("password must be between %d and %d bytes", auth.MinPasswordLength, auth.MaxPasswordLength))
+		case errors.Is(err, service.ErrCannotDeleteLastAdmin):
+			jsonError(w, http.StatusConflict, "cannot_delete_last_admin",
+				"cannot demote or deactivate the last admin user")
 		default:
 			jsonError(w, http.StatusInternalServerError, "internal_error", "failed to update user")
 		}

@@ -33,7 +33,7 @@ func mintServiceToken(t *testing.T, issuer *auth.TokenIssuer, audience string) s
 	t.Helper()
 	tok, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
 		ClientID: "some-service",
-		Audience: audience,
+		Audience: []string{audience},
 		Scope:    "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sweeney/identity/common/httputil"
 )
 
 // Environment represents the deployment environment.
@@ -49,6 +51,10 @@ type Config struct {
 
 	// Proxy trust: "cloudflare" trusts CF-Connecting-IP header, "" trusts nothing
 	TrustProxy string
+	// TrustProxyCIDRs limits which source addresses may set CF-Connecting-IP.
+	// Empty means the default set (loopback and private ranges), which is what
+	// a Cloudflare Tunnel deployment sees — cloudflared proxies to a local port.
+	TrustProxyCIDRs string
 
 	// CORS
 	CORSOrigins []string
@@ -90,15 +96,22 @@ func Load() (*Config, error) {
 		BCryptCost:      12,
 	}
 
-	// Environment: defaults to development
-	switch Environment(os.Getenv("IDENTITY_ENV")) {
+	var errs []error
+
+	// Environment: unset defaults to development, but anything unrecognised is
+	// an error rather than a silent downgrade. Development mode is what relaxes
+	// the production controls — the https:// issuer requirement, secure cookies,
+	// the localhost WebAuthn RP ID — so a typo like IDENTITY_ENV=prod must not
+	// quietly turn them off.
+	switch env := Environment(os.Getenv("IDENTITY_ENV")); env {
 	case EnvProduction:
 		cfg.Env = EnvProduction
-	default:
+	case EnvDevelopment, "":
 		cfg.Env = EnvDevelopment
+	default:
+		errs = append(errs, fmt.Errorf("IDENTITY_ENV: unknown environment %q (want %q or %q)",
+			string(env), EnvDevelopment, EnvProduction))
 	}
-
-	var errs []error
 
 	// Optional: initial admin credentials (only used for first-run seed)
 	cfg.AdminUsername = os.Getenv("ADMIN_USERNAME")
@@ -137,6 +150,17 @@ func Load() (*Config, error) {
 	}
 	if cfg.Env == EnvProduction && !strings.HasPrefix(cfg.JWTIssuer, "https://") {
 		errs = append(errs, fmt.Errorf("JWT_ISSUER must be an https:// URL in production (got %q); set JWT_ISSUER=https://yourdomain.com", cfg.JWTIssuer))
+	}
+
+	// TRUST_PROXY_CIDRS: which source addresses may set CF-Connecting-IP.
+	// Only meaningful with TRUST_PROXY=cloudflare. Validated here so a typo
+	// fails startup rather than silently trusting nothing (which would key
+	// every request on the proxy's own address).
+	cfg.TrustProxyCIDRs = strings.TrimSpace(os.Getenv("TRUST_PROXY_CIDRS"))
+	if cfg.TrustProxyCIDRs != "" {
+		if _, err := httputil.ParseTrustedProxies(cfg.TrustProxyCIDRs); err != nil {
+			errs = append(errs, fmt.Errorf("TRUST_PROXY_CIDRS: %w", err))
+		}
 	}
 
 	// TRUST_PROXY: "cloudflare" trusts CF-Connecting-IP, anything else means use RemoteAddr

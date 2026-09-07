@@ -20,6 +20,15 @@ type AuthServicer interface {
 	// audience is the aud claim to embed in the access token; pass "" to omit it.
 	// Used by OAuthService at the code exchange step.
 	IssueTokensForUser(userID, audience string) (*LoginResult, error)
+
+	// IssueTokensForGrant issues a token pair carrying the full grant context —
+	// audience, consented scope, and originating claim code. Used by the device
+	// grant, where scope is consented by the user and must reach the token.
+	IssueTokensForGrant(userID string, grant GrantContext) (*LoginResult, error)
+
+	// RefreshForClient refreshes only if the token was issued to clientID.
+	// An empty clientID means the direct API login, which has no client.
+	RefreshForClient(rawRefreshToken, clientID string) (*LoginResult, error)
 }
 
 // UserServicer is the interface the API handler uses for user CRUD.
@@ -43,6 +52,10 @@ type OAuthServicer interface {
 	AuthorizeByUserID(clientID, redirectURI, userID, username, codeChallenge, ip string) (rawCode string, err error)
 	ExchangeCode(clientID, code, redirectURI, codeVerifier string) (*LoginResult, error)
 	RefreshToken(rawRefreshToken string) (*LoginResult, error)
+
+	// RefreshTokenForClient refreshes only if the token was issued to clientID,
+	// so a leaked refresh token cannot be redeemed by a different client.
+	RefreshTokenForClient(rawRefreshToken, clientID string) (*LoginResult, error)
 	GetClient(clientID string) (*domain.OAuthClient, error)
 	IssueClientCredentials(client *domain.OAuthClient, requestedScope, ip string) (*ClientCredentialsResult, error)
 }
@@ -60,7 +73,7 @@ type DeviceFlowServicer interface {
 	// User-facing (verification page)
 	LookupForVerification(rawCode string) (*DeviceApprovalView, error)
 	Approve(rawCode, userID, username, ip string) error
-	Deny(rawCode, ip string) error
+	Deny(rawCode, userID, username, ip string) error
 
 	// Admin-facing
 	CreateClaimCodes(clientID string, labels []string, ip string) ([]*ClaimCodeResult, error)

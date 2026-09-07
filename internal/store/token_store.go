@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -24,15 +25,18 @@ func (s *TokenStore) Create(token *domain.RefreshToken) error {
 	_, err := s.db.DB().Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  audience, issued_at, last_used_at, expires_at, is_revoked)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  audiences, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		token.ID,
 		token.UserID,
 		token.TokenHash,
 		token.FamilyID,
 		nullableString(token.ParentTokenID),
 		token.DeviceHint,
-		token.Audience,
+		mustJSONStrings(token.Audiences),
+		token.Scope,
+		nullableString(token.ClaimCodeID),
+		nullableString(token.ClientID),
 		formatTime(token.IssuedAt),
 		formatTime(token.LastUsedAt),
 		formatTime(token.ExpiresAt),
@@ -47,7 +51,8 @@ func (s *TokenStore) Create(token *domain.RefreshToken) error {
 func (s *TokenStore) GetByHash(tokenHash string) (*domain.RefreshToken, error) {
 	row := s.db.DB().QueryRow(
 		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
-		        device_hint, audience, issued_at, last_used_at, expires_at, is_revoked
+		        device_hint, audiences, scope, COALESCE(claim_code_id,''), COALESCE(client_id,''),
+		        issued_at, last_used_at, expires_at, is_revoked
 		 FROM refresh_tokens WHERE token_hash = ?`, tokenHash,
 	)
 	return scanToken(row)
@@ -73,15 +78,18 @@ func (s *TokenStore) Rotate(oldTokenID string, newToken *domain.RefreshToken) er
 	if _, err := tx.Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  audience, issued_at, last_used_at, expires_at, is_revoked)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		  audiences, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		newToken.ID,
 		newToken.UserID,
 		newToken.TokenHash,
 		newToken.FamilyID,
 		nullableString(newToken.ParentTokenID),
 		newToken.DeviceHint,
-		newToken.Audience,
+		mustJSONStrings(newToken.Audiences),
+		newToken.Scope,
+		nullableString(newToken.ClaimCodeID),
+		nullableString(newToken.ClientID),
 		formatTime(newToken.IssuedAt),
 		formatTime(newToken.LastUsedAt),
 		formatTime(newToken.ExpiresAt),
@@ -116,23 +124,29 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	// Read old token within the transaction
 	row := tx.QueryRow(
 		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
-		        device_hint, audience, issued_at, last_used_at, expires_at, is_revoked
+		        device_hint, audiences, scope, COALESCE(claim_code_id,''), COALESCE(client_id,''),
+		        issued_at, last_used_at, expires_at, is_revoked
 		 FROM refresh_tokens WHERE token_hash = ?`, oldTokenHash,
 	)
 
 	var t domain.RefreshToken
 	var isRevoked int
+	var audsJSON string
 	var issuedAt, lastUsedAt, expiresAt string
 
 	scanErr := row.Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
-		&t.DeviceHint, &t.Audience, &issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
+		&t.DeviceHint, &audsJSON, &t.Scope, &t.ClaimCodeID, &t.ClientID,
+		&issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
 	)
 	if scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("scan token: %w", scanErr)
+	}
+	if err := json.Unmarshal([]byte(audsJSON), &t.Audiences); err != nil {
+		return nil, fmt.Errorf("unmarshal audiences: %w", err)
 	}
 
 	t.IsRevoked = isRevoked == 1
@@ -152,7 +166,18 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	newToken.FamilyID = t.FamilyID
 	newToken.ParentTokenID = t.ID
 	newToken.DeviceHint = t.DeviceHint
-	newToken.Audience = t.Audience
+	newToken.Audiences = t.Audiences
+	// Scope and claim-code binding travel with the family. Dropping the scope
+	// on rotation would silently widen the grant back to full privilege; losing
+	// the claim code would put the family beyond the reach of its revocation.
+	newToken.Scope = t.Scope
+	newToken.ClaimCodeID = t.ClaimCodeID
+	// Carry the client binding forward, unless the caller supplied one to adopt
+	// — a token issued before the binding existed has none, and the presenting
+	// client claims it on this rotation.
+	if newToken.ClientID == "" {
+		newToken.ClientID = t.ClientID
+	}
 	if newToken.ExpiresAt.IsZero() {
 		newToken.ExpiresAt = t.ExpiresAt
 	}
@@ -168,15 +193,18 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	if _, err := tx.Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  audience, issued_at, last_used_at, expires_at, is_revoked)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		  audiences, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		newToken.ID,
 		newToken.UserID,
 		newToken.TokenHash,
 		newToken.FamilyID,
 		nullableString(newToken.ParentTokenID),
 		newToken.DeviceHint,
-		newToken.Audience,
+		mustJSONStrings(newToken.Audiences),
+		newToken.Scope,
+		nullableString(newToken.ClaimCodeID),
+		nullableString(newToken.ClientID),
 		formatTime(newToken.IssuedAt),
 		formatTime(newToken.LastUsedAt),
 		formatTime(newToken.ExpiresAt),
@@ -215,6 +243,24 @@ func (s *TokenStore) RevokeAllForUser(userID string) error {
 	return err
 }
 
+// RevokeByClaimCodeID revokes every refresh token issued from the given claim
+// code, including rotated descendants — the binding is carried forward on
+// rotation, so this reaches the whole chain.
+func (s *TokenStore) RevokeByClaimCodeID(claimCodeID string) error {
+	if claimCodeID == "" {
+		return nil
+	}
+	_, err := s.db.DB().Exec(
+		`UPDATE refresh_tokens SET is_revoked = 1
+		 WHERE claim_code_id = ? AND is_revoked = 0`,
+		claimCodeID,
+	)
+	if err != nil {
+		return fmt.Errorf("revoke tokens for claim code: %w", err)
+	}
+	return nil
+}
+
 // DeleteExpiredAndOldRevoked purges refresh tokens that are no longer needed.
 //
 // A revoked token is retained until it has expired, even if it has been idle
@@ -242,17 +288,22 @@ func (s *TokenStore) DeleteExpiredAndOldRevoked(retentionDays int) error {
 func scanToken(row *sql.Row) (*domain.RefreshToken, error) {
 	var t domain.RefreshToken
 	var isRevoked int
+	var audsJSON string
 	var issuedAt, lastUsedAt, expiresAt string
 
 	err := row.Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
-		&t.DeviceHint, &t.Audience, &issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
+		&t.DeviceHint, &audsJSON, &t.Scope, &t.ClaimCodeID, &t.ClientID,
+		&issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("scan token: %w", err)
+	}
+	if err := json.Unmarshal([]byte(audsJSON), &t.Audiences); err != nil {
+		return nil, fmt.Errorf("unmarshal audiences: %w", err)
 	}
 
 	t.IsRevoked = isRevoked == 1
@@ -267,4 +318,14 @@ func nullableString(s string) any {
 		return nil
 	}
 	return s
+}
+
+// mustJSONStrings renders a string list for storage, as an empty array when nil.
+// Marshalling []string cannot fail, so the error is discarded deliberately.
+func mustJSONStrings(v []string) string {
+	if v == nil {
+		v = []string{}
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
 }

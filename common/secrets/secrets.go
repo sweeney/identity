@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 
 	commondb "github.com/sweeney/identity/common/db"
 )
@@ -41,6 +42,18 @@ func Resolve(database *commondb.Database) (*Secrets, error) {
 	if currentPEM != "" {
 		s.JWTCurrent, err = parseECKey(currentPEM)
 		if err != nil {
+			// Only a value that is not PEM at all is the legacy HMAC secret this
+			// migration exists for. A value that *is* a PEM block but will not
+			// parse is corruption — a truncated or partially written row, a
+			// format from a future version, a bad restore — and generating a
+			// replacement would destroy the only copy of the production signing
+			// key along with the rotation fallback that would have kept existing
+			// tokens verifying. Fail closed and let an operator look at it.
+			if !isLegacySecret(currentPEM) {
+				return nil, fmt.Errorf("stored %s is not a usable EC private key: %w — "+
+					"refusing to overwrite it; restore the key or clear the row deliberately",
+					metaJWTKey, err)
+			}
 			log.Println("Migrating JWT signing key from HMAC secret to EC keypair")
 			s.JWTCurrent, err = generateAndStoreKey(database)
 			if err != nil {
@@ -174,12 +187,41 @@ func encodeECKey(key *ecdsa.PrivateKey) (string, error) {
 	return string(pem.EncodeToMemory(block)), nil
 }
 
+// isLegacySecret reports whether value is the pre-EC HMAC secret rather than a
+// key in PEM form. The distinction decides whether an unparseable jwt_secret row
+// is migrated or treated as corruption, so it is deliberately narrow: anything
+// that even looks like PEM is a key, however broken.
+//
+// Testing for a decodable block is not enough — a half-written key has a BEGIN
+// line and no END line, so it decodes to nothing while very much being a key.
+func isLegacySecret(value string) bool {
+	if strings.Contains(value, "-----BEGIN") {
+		return false
+	}
+	block, _ := pem.Decode([]byte(value))
+	return block == nil
+}
+
+// parseECKey accepts an EC private key in either SEC1 ("EC PRIVATE KEY") or
+// PKCS#8 ("PRIVATE KEY") form. We only ever write SEC1, but a key that arrived
+// by another route is a valid key and must not be mistaken for corruption.
 func parseECKey(pemStr string) (*ecdsa.PrivateKey, error) {
 	block, _ := pem.Decode([]byte(pemStr))
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}
-	return x509.ParseECPrivateKey(block.Bytes)
+	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse EC private key: %w", err)
+	}
+	key, ok := parsed.(*ecdsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("stored key is %T, want *ecdsa.PrivateKey", parsed)
+	}
+	return key, nil
 }
 
 func generateSecret(length int) (string, error) {

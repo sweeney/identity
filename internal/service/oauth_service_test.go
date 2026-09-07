@@ -148,7 +148,7 @@ func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 	}
 
 	client := testClient()
-	client.Audience = "myapp"
+	client.Audiences = []string{"myapp"}
 
 	loginResult := &service.LoginResult{
 		AccessToken:  "access.token",
@@ -160,7 +160,9 @@ func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 	codes.EXPECT().MarkUsed("code-1", gomock.Any()).Return(nil)
 	clients.EXPECT().GetByID("client-1").Return(client, nil)
-	authSvc.EXPECT().IssueTokensForUser("user-123", "myapp").Return(loginResult, nil)
+	authSvc.EXPECT().IssueTokensForGrant("user-123", service.GrantContext{
+		Audience: []string{"myapp"}, ClientID: "client-1",
+	}).Return(loginResult, nil)
 
 	result, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
 	require.NoError(t, err)
@@ -196,7 +198,9 @@ func TestOAuthService_ExchangeCode_NoAudience(t *testing.T) {
 	codes.EXPECT().MarkUsed("code-noaud", gomock.Any()).Return(nil)
 	clients.EXPECT().GetByID("client-1").Return(client, nil)
 	// Audience must be empty string when client has no audience
-	authSvc.EXPECT().IssueTokensForUser("user-123", "").Return(loginResult, nil)
+	authSvc.EXPECT().IssueTokensForGrant("user-123", service.GrantContext{
+		ClientID: "client-1",
+	}).Return(loginResult, nil)
 
 	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
 	require.NoError(t, err)
@@ -405,7 +409,7 @@ func TestIssueClientCredentials_Success(t *testing.T) {
 		ID:         "svc-1",
 		GrantTypes: []string{"client_credentials"},
 		Scopes:     []string{"read:users", "write:users"},
-		Audience:   "https://api.example.com",
+		Audiences:  []string{"https://api.example.com"},
 	}
 
 	result, err := svc.IssueClientCredentials(client, "read:users", "1.2.3.4")
@@ -424,7 +428,7 @@ func TestIssueClientCredentials_DefaultScopes(t *testing.T) {
 		ID:         "svc-1",
 		GrantTypes: []string{"client_credentials"},
 		Scopes:     []string{"read:users", "write:users"},
-		Audience:   "https://api.example.com",
+		Audiences:  []string{"https://api.example.com"},
 	}
 
 	result, err := svc.IssueClientCredentials(client, "", "1.2.3.4")
@@ -440,7 +444,7 @@ func TestIssueClientCredentials_WrongGrantType(t *testing.T) {
 		ID:         "svc-1",
 		GrantTypes: []string{"authorization_code"},
 		Scopes:     []string{"read:users"},
-		Audience:   "https://api.example.com",
+		Audiences:  []string{"https://api.example.com"},
 	}
 
 	_, err := svc.IssueClientCredentials(client, "", "1.2.3.4")
@@ -455,7 +459,7 @@ func TestIssueClientCredentials_InvalidScope(t *testing.T) {
 		ID:         "svc-1",
 		GrantTypes: []string{"client_credentials"},
 		Scopes:     []string{"read:users"},
-		Audience:   "https://api.example.com",
+		Audiences:  []string{"https://api.example.com"},
 	}
 
 	_, err := svc.IssueClientCredentials(client, "write:users", "1.2.3.4")
@@ -470,7 +474,7 @@ func TestIssueClientCredentials_SubsetOfScopes(t *testing.T) {
 		ID:         "svc-1",
 		GrantTypes: []string{"client_credentials"},
 		Scopes:     []string{"read:users", "write:users", "delete:users"},
-		Audience:   "https://api.example.com",
+		Audiences:  []string{"https://api.example.com"},
 	}
 
 	result, err := svc.IssueClientCredentials(client, "read:users write:users", "1.2.3.4")
@@ -524,7 +528,7 @@ func TestIssueClientCredentials_AuditEvent(t *testing.T) {
 		ID:         "svc-1",
 		GrantTypes: []string{"client_credentials"},
 		Scopes:     []string{"read:users"},
-		Audience:   "https://api.example.com",
+		Audiences:  []string{"https://api.example.com"},
 	}
 
 	_, err := svc.IssueClientCredentials(client, "read:users", "1.2.3.4")
@@ -547,7 +551,7 @@ func TestIssueClientCredentials_EmptyAudience(t *testing.T) {
 		ID:         "svc-1",
 		GrantTypes: []string{"client_credentials"},
 		Scopes:     []string{"read:users"},
-		Audience:   "", // empty
+		Audiences:  []string{}, // empty
 	}
 
 	_, err := svc.IssueClientCredentials(client, "read:users", "1.2.3.4")

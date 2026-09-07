@@ -15,3 +15,17 @@ coverage.out
 .env.*
 env.txt
 *.swp
+
+# Generated admin credential — written to the working directory on first run
+# when ADMIN_PASSWORD is unset. Never commit.
+initial-password.txt
+
+# deepsec scanning workspace — local security-scan output.
+# Kept out of the repo entirely: data/*/INFO.md is a written threat model of
+# this service (attack surfaces, auth primitives, known-weak spots) and this
+# repo is public.
+.deepsec/
+
+# Security remediation working notes. Contains unpublished advisory detail
+# (attack narratives for draft GHSAs) and this repo is public.
+security/

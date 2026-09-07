@@ -284,7 +284,7 @@ func TestJWKSVerifier_ParseServiceToken_Valid(t *testing.T) {
 
 	tok, err := ti.MintServiceToken(domain.ServiceTokenClaims{
 		ClientID: "svc-1",
-		Audience: "config",
+		Audience: []string{"config"},
 		Scope:    "read:config",
 	}, 5*time.Minute)
 	require.NoError(t, err)
@@ -292,7 +292,7 @@ func TestJWKSVerifier_ParseServiceToken_Valid(t *testing.T) {
 	got, err := v.ParseServiceToken(context.Background(), tok)
 	require.NoError(t, err)
 	assert.Equal(t, "svc-1", got.ClientID)
-	assert.Equal(t, "config", got.Audience)
+	assert.Equal(t, []string{"config"}, got.Audience)
 	assert.Equal(t, "read:config", got.Scope)
 }
 
@@ -310,7 +310,7 @@ func TestJWKSVerifier_Parse_RejectsServiceToken(t *testing.T) {
 	require.NoError(t, err)
 
 	svcTok, err := ti.MintServiceToken(domain.ServiceTokenClaims{
-		ClientID: "svc-1", Audience: "config",
+		ClientID: "svc-1", Audience: []string{"config"},
 	}, 5*time.Minute)
 	require.NoError(t, err)
 
@@ -412,7 +412,16 @@ func TestJWKSVerifier_RefetchDeduplicated(t *testing.T) {
 		"singleflight must collapse concurrent refetches to one outbound request; got %d", fetches.Load())
 }
 
-func TestJWKSVerifier_NetworkFailure_ReturnsTokenInvalid(t *testing.T) {
+// TestJWKSVerifier_NetworkFailure_ReturnsKeysUnavailable replaces an earlier
+// test that asserted the opposite — that a network failure surfaces as
+// ErrTokenInvalid.
+//
+// That was the WP8 defect, not the intended contract. Callers sign the user out
+// on an invalid token, so reporting an identity outage that way makes every
+// service in the ecosystem sign every user out at the same moment, over tokens
+// that were never examined. It is a statement about our infrastructure, and it
+// now has its own error.
+func TestJWKSVerifier_NetworkFailure_ReturnsKeysUnavailable(t *testing.T) {
 	// Point the verifier at an unreachable URL so fetch fails.
 	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: "http://127.0.0.1:1", // invalid port → immediate connection failure
@@ -426,8 +435,10 @@ func TestJWKSVerifier_NetworkFailure_ReturnsTokenInvalid(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = v.Parse(context.Background(), tok)
-	assert.ErrorIs(t, err, commonauth.ErrTokenInvalid,
-		"network failure during JWKS fetch should surface as ErrTokenInvalid")
+	assert.ErrorIs(t, err, commonauth.ErrKeysUnavailable,
+		"an unreachable JWKS endpoint is an infrastructure failure, not a bad token")
+	assert.NotErrorIs(t, err, commonauth.ErrTokenInvalid,
+		"clients sign the user out on ErrTokenInvalid — an outage must not trigger that")
 }
 
 func TestJWKSVerifier_Construction_ValidatesInputs(t *testing.T) {
@@ -436,4 +447,36 @@ func TestJWKSVerifier_Construction_ValidatesInputs(t *testing.T) {
 
 	_, err = commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{IssuerURL: "http://x"})
 	assert.Error(t, err, "missing Issuer must fail")
+}
+
+// TestJWKSVerifier_Parse_PopulatesAudience covers WP1 (GHSA-65pj-9cmp-rvf6):
+// JWKSVerifier.Parse dropped the aud claim that TokenIssuer.Parse populates,
+// even though the two are documented as interchangeable implementations of the
+// same TokenParser contract. A sibling service copying identity's own audience
+// check got the zero value for every token — and the idiomatic defensive form
+// `if claims.Audience != "" && claims.Audience != mine { deny }` fails OPEN.
+func TestJWKSVerifier_Parse_PopulatesAudience(t *testing.T) {
+	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
+	srv, _ := newJWKSServer(t, ti)
+
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
+		IssuerURL: srv.URL,
+		Issuer:    "https://id.example.com",
+	})
+	require.NoError(t, err)
+
+	tok, err := ti.Mint(domain.TokenClaims{
+		UserID:   "u1",
+		Username: "alice",
+		Role:     domain.RoleUser,
+		IsActive: true,
+		Audience: []string{"config"},
+	})
+	require.NoError(t, err)
+
+	got, err := v.Parse(context.Background(), tok)
+	require.NoError(t, err)
+	assert.Equal(t, "u1", got.UserID)
+	assert.Equal(t, []string{"config"}, got.Audience,
+		"Parse must surface the aud claim, matching TokenIssuer.Parse")
 }

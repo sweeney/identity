@@ -235,35 +235,21 @@ func (s *WebAuthnService) BeginLogin(username string) (*protocol.CredentialAsser
 		return nil, "", ErrWebAuthnNotEnabled
 	}
 
-	var assertion *protocol.CredentialAssertion
-	var sessionData *webauthn.SessionData
-	var userID string
-	var err error
-
-	if username == "" {
-		// Discoverable credential flow — no allowCredentials
-		assertion, sessionData, err = s.wa.BeginDiscoverableLogin()
-		if err != nil {
-			return nil, "", fmt.Errorf("begin discoverable login: %w", err)
-		}
-	} else {
-		// Always use discoverable flow to prevent username enumeration.
-		// All three cases (unknown user, user with no passkeys, user with passkeys)
-		// return an identical-looking 200 response with empty allowCredentials.
-		// The authenticator knows which credentials it has, so allowCredentials
-		// is not needed — the discoverable flow works for all cases.
-		user, userErr := s.users.GetByUsername(username)
-		if userErr != nil && !errors.Is(userErr, domain.ErrNotFound) {
-			return nil, "", fmt.Errorf("get user: %w", userErr)
-		}
-		if userErr == nil {
-			userID = user.ID
-		}
-
-		assertion, sessionData, err = s.wa.BeginDiscoverableLogin()
-		if err != nil {
-			return nil, "", fmt.Errorf("begin login: %w", err)
-		}
+	// Every login runs the discoverable ceremony, whether or not a username was
+	// supplied. That keeps the three cases an attacker wants to tell apart —
+	// unknown user, user without passkeys, user with passkeys — identical here,
+	// and the authenticator already knows which credentials it holds, so
+	// allowCredentials is not needed.
+	//
+	// The username is therefore only ever a UI hint. It is deliberately NOT
+	// resolved to a user and NOT recorded on the challenge: the ceremony is not
+	// bound to it, so binding the challenge to it would both break validation
+	// (a discoverable session carries a nil UserID, which can never match a
+	// resolved user) and leak, at login/finish, exactly the existence bit that
+	// this function withholds at login/begin.
+	assertion, sessionData, err := s.wa.BeginDiscoverableLogin()
+	if err != nil {
+		return nil, "", fmt.Errorf("begin discoverable login: %w", err)
 	}
 
 	sessionJSON, err := json.Marshal(sessionData)
@@ -275,7 +261,6 @@ func (s *WebAuthnService) BeginLogin(username string) (*protocol.CredentialAsser
 	challengeID := uuid.New().String()
 	ch := &domain.WebAuthnChallenge{
 		ID:          challengeID,
-		UserID:      userID,
 		Challenge:   []byte(sessionData.Challenge),
 		Type:        "authentication",
 		SessionData: string(sessionJSON),
@@ -316,52 +301,41 @@ func (s *WebAuthnService) FinishLogin(challengeID string, r *http.Request, devic
 		return nil, fmt.Errorf("unmarshal session: %w", err)
 	}
 
+	// BeginLogin always begins a discoverable ceremony, so validation always
+	// resolves the user from the credential's user handle — never from anything
+	// the caller claimed at login/begin. A second, "known user" path here used
+	// to branch on the challenge's UserID and call wa.FinishLogin; because a
+	// discoverable session carries a nil UserID, that path could never pass
+	// go-webauthn's opening bytes.Equal(user.WebAuthnID(), session.UserID)
+	// check, so supplying a username made login fail outright — and the 200 vs
+	// 401 split between the two paths was a username-existence oracle.
 	var credential *webauthn.Credential
 	var authenticatedUserID string
 
-	if ch.UserID == "" {
-		// Discoverable credential flow — resolve user from the credential's user handle
-		credential, err = s.wa.FinishDiscoverableLogin(
-			func(rawID, userHandle []byte) (webauthn.User, error) {
-				userID := string(userHandle)
-				user, uErr := s.users.GetByID(userID)
-				if uErr != nil {
-					return nil, fmt.Errorf("user not found: %w", uErr)
-				}
-				creds, cErr := s.credentials.ListByUserID(userID)
-				if cErr != nil {
-					return nil, fmt.Errorf("list credentials: %w", cErr)
-				}
-				authenticatedUserID = userID
-				return &auth.WebAuthnUser{
-					User:        user,
-					Credentials: auth.DomainCredentialsToWebAuthn(creds),
-				}, nil
-			},
-			sessionData,
-			r,
-		)
-	} else {
-		// Known user flow
-		authenticatedUserID = ch.UserID
-		user, uErr := s.users.GetByID(ch.UserID)
-		if uErr != nil {
-			return nil, fmt.Errorf("get user: %w", uErr)
-		}
-		creds, cErr := s.credentials.ListByUserID(ch.UserID)
-		if cErr != nil {
-			return nil, fmt.Errorf("list credentials: %w", cErr)
-		}
-		waUser := &auth.WebAuthnUser{
-			User:        user,
-			Credentials: auth.DomainCredentialsToWebAuthn(creds),
-		}
-		credential, err = s.wa.FinishLogin(waUser, sessionData, r)
-	}
+	credential, err = s.wa.FinishDiscoverableLogin(
+		func(rawID, userHandle []byte) (webauthn.User, error) {
+			userID := string(userHandle)
+			user, uErr := s.users.GetByID(userID)
+			if uErr != nil {
+				return nil, fmt.Errorf("user not found: %w", uErr)
+			}
+			creds, cErr := s.credentials.ListByUserID(userID)
+			if cErr != nil {
+				return nil, fmt.Errorf("list credentials: %w", cErr)
+			}
+			authenticatedUserID = userID
+			return &auth.WebAuthnUser{
+				User:        user,
+				Credentials: auth.DomainCredentialsToWebAuthn(creds),
+			}, nil
+		},
+		sessionData,
+		r,
+	)
 
 	if err != nil {
 		username := s.lookupUsername(authenticatedUserID)
-		s.recordEvent(domain.EventPasskeyLoginFailure, authenticatedUserID, username, err.Error())
+		s.recordLoginEvent(domain.EventPasskeyLoginFailure, authenticatedUserID, username, err.Error(), deviceHint, clientIP)
 		return nil, ErrWebAuthnVerificationFailed
 	}
 
@@ -382,7 +356,7 @@ func (s *WebAuthnService) FinishLogin(challengeID string, r *http.Request, devic
 		username := s.lookupUsername(authenticatedUserID)
 		detail := fmt.Sprintf("credential_id=%s stored_sign_count=%d presented_sign_count=%d",
 			storedCred.ID, storedCred.SignCount, credential.Authenticator.SignCount)
-		s.recordEvent(domain.EventPasskeyCloneWarning, authenticatedUserID, username, detail)
+		s.recordLoginEvent(domain.EventPasskeyCloneWarning, authenticatedUserID, username, detail, deviceHint, clientIP)
 	}
 
 	now := time.Now().UTC()
@@ -404,7 +378,7 @@ func (s *WebAuthnService) FinishLogin(challengeID string, r *http.Request, devic
 		return nil, err
 	}
 
-	s.recordEvent(domain.EventPasskeyLoginSuccess, user.ID, user.Username, "")
+	s.recordLoginEvent(domain.EventPasskeyLoginSuccess, user.ID, user.Username, "", deviceHint, clientIP)
 	return result, nil
 }
 
@@ -481,6 +455,15 @@ func ShouldWarnPasskeyClone(cloneWarning bool, storedSignCount, presentedSignCou
 
 // recordEvent writes an audit event, ignoring errors (best-effort).
 func (s *WebAuthnService) recordEvent(eventType, userID, username, detail string) {
+	s.recordLoginEvent(eventType, userID, username, detail, "", "")
+}
+
+// recordLoginEvent writes an audit event including the client IP and device
+// hint. Passkey login events used to drop both, so every passkey sign-in and
+// every failed attempt landed in the audit log with no address attached —
+// leaving the one class of login the dashboard could not attribute, and no way
+// to spot a run of failures from a single source.
+func (s *WebAuthnService) recordLoginEvent(eventType, userID, username, detail, deviceHint, clientIP string) {
 	if s.audit == nil {
 		return
 	}
@@ -489,6 +472,8 @@ func (s *WebAuthnService) recordEvent(eventType, userID, username, detail string
 		EventType:  eventType,
 		UserID:     userID,
 		Username:   username,
+		DeviceHint: deviceHint,
+		IPAddress:  clientIP,
 		Detail:     detail,
 		OccurredAt: time.Now().UTC(),
 	})

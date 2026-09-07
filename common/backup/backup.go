@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -38,6 +39,12 @@ type Config struct {
 	// ServiceName is used as the per-service key segment and filename prefix.
 	// Defaults to "identity" for backward compatibility when unset.
 	ServiceName string
+	// UploadTimeout bounds a single upload. Zero means DefaultUploadTimeout.
+	// Without a deadline a hung connection wedges the backup goroutine, and
+	// because the loop runs backups synchronously that stops every later
+	// trigger and every scheduled backup too.
+	UploadTimeout time.Duration
+
 	// MinInterval is the minimum time between consecutive triggered backups.
 	// Scheduled daily backups are unaffected. Zero disables throttling.
 	MinInterval time.Duration
@@ -46,7 +53,8 @@ type Config struct {
 	// Empty string defaults to "daily".
 	Schedule string
 	// ScheduleHour is the UTC hour (0–23) at which scheduled backups run.
-	// Defaults to 3 (03:00 UTC) when zero.
+	// Zero means midnight, not "unset" — pass 3 for the usual 03:00 UTC.
+	// A value outside 0–23 is clamped to 3.
 	ScheduleHour int
 }
 
@@ -62,16 +70,30 @@ type Manager struct {
 	pendingT *time.Timer
 }
 
+// DefaultUploadTimeout bounds a single backup upload when Config.UploadTimeout
+// is not set. Generous enough for a large database over a slow link, short
+// enough that a wedged connection does not disable backups indefinitely.
+const DefaultUploadTimeout = 10 * time.Minute
+
 // NewManager creates a Manager. ServiceName defaults to "identity" if unset.
 // record may be nil to disable event recording.
 func NewManager(cfg Config, uploader Uploader, record EventRecorder) *Manager {
+	if cfg.UploadTimeout <= 0 {
+		cfg.UploadTimeout = DefaultUploadTimeout
+	}
 	if cfg.ServiceName == "" {
 		cfg.ServiceName = "identity"
 	}
 	if cfg.Schedule == "" {
 		cfg.Schedule = "daily"
 	}
-	if cfg.ScheduleHour == 0 {
+	// No default is applied to ScheduleHour: 0 is midnight UTC, a documented
+	// and validated setting, and a zero-means-unset rule would silently
+	// override an operator who asked for it. Callers that want 03:00 pass 3 —
+	// internal/config already defaults BACKUP_HOUR that way. An out-of-range
+	// value is clamped rather than left to never fire.
+	if cfg.ScheduleHour < 0 || cfg.ScheduleHour > 23 {
+		log.Printf("backup: ScheduleHour %d out of range 0-23, using 3", cfg.ScheduleHour)
 		cfg.ScheduleHour = 3
 	}
 	return &Manager{
@@ -81,6 +103,9 @@ func NewManager(cfg Config, uploader Uploader, record EventRecorder) *Manager {
 		trigger:  make(chan struct{}, 1),
 	}
 }
+
+// ScheduleHour returns the UTC hour at which scheduled backups run.
+func (m *Manager) ScheduleHour() int { return m.cfg.ScheduleHour }
 
 // Start launches the background goroutine that processes backup triggers.
 // It runs until ctx is cancelled.
@@ -108,7 +133,7 @@ func (m *Manager) TriggerAsync() {
 
 // RunNow executes a backup synchronously.
 func (m *Manager) RunNow() error {
-	return m.run()
+	return m.run(context.Background())
 }
 
 func (m *Manager) loop(ctx context.Context) {
@@ -119,10 +144,10 @@ func (m *Manager) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-m.trigger:
-			m.handleTrigger()
+			m.handleTrigger(ctx)
 		case <-scheduled:
 			scheduled = m.nextScheduledTick()
-			if err := m.run(); err != nil {
+			if err := m.run(ctx); err != nil {
 				log.Printf("scheduled backup failed: %v", err)
 			}
 			m.markRan()
@@ -133,7 +158,7 @@ func (m *Manager) loop(ctx context.Context) {
 // handleTrigger runs a backup unless we are still inside the cooldown window
 // from the last one. In that case the trigger is deferred via a single timer
 // so bursts collapse to one upload at the end of the window.
-func (m *Manager) handleTrigger() {
+func (m *Manager) handleTrigger(ctx context.Context) {
 	m.mu.Lock()
 	if m.cfg.MinInterval > 0 && !m.lastRun.IsZero() {
 		sinceLast := time.Since(m.lastRun)
@@ -153,7 +178,7 @@ func (m *Manager) handleTrigger() {
 	}
 	m.mu.Unlock()
 
-	if err := m.run(); err != nil {
+	if err := m.run(ctx); err != nil {
 		log.Printf("backup failed: %v", err)
 	}
 	m.markRan()
@@ -165,7 +190,12 @@ func (m *Manager) markRan() {
 	m.mu.Unlock()
 }
 
-func (m *Manager) run() error {
+func (m *Manager) run(ctx context.Context) error {
+	// Bound the upload and honour cancellation of the caller's context, so a
+	// stalled connection cannot hold the backup goroutine forever.
+	ctx, cancel := context.WithTimeout(ctx, m.cfg.UploadTimeout)
+	defer cancel()
+
 	start := time.Now()
 	key := backupKey(m.cfg.Env, m.cfg.ServiceName, start.UTC())
 
@@ -173,7 +203,7 @@ func (m *Manager) run() error {
 
 	// For :memory: databases (used in tests), skip file creation.
 	if m.cfg.DBPath == ":memory:" {
-		return m.uploader.Upload(context.Background(), key, "")
+		return m.uploader.Upload(ctx, key, "")
 	}
 
 	tmpFile, err := os.CreateTemp("", fmt.Sprintf("%s-backup-*.sqlite3", m.cfg.ServiceName))
@@ -190,7 +220,7 @@ func (m *Manager) run() error {
 		return fmt.Errorf("copy db: %w", err)
 	}
 
-	if err := m.uploader.Upload(context.Background(), key, tmpPath); err != nil {
+	if err := m.uploader.Upload(ctx, key, tmpPath); err != nil {
 		m.recordBackup(false, fmt.Sprintf("upload: %v", err))
 		return fmt.Errorf("upload backup: %w", err)
 	}
@@ -233,14 +263,36 @@ func backupKey(env, service string, t time.Time) string {
 	))
 }
 
-// copyDB copies a SQLite database file safely using a direct file copy.
-// For a production-grade hot backup, replace with the SQLite Online Backup API.
+// copyDB writes a consistent snapshot of the SQLite database at src to dst.
+//
+// It uses VACUUM INTO rather than copying the file. These databases run in WAL
+// mode, where committed transactions live in the -wal sidecar until a
+// checkpoint, so reading the main file alone omits recent commits — silently,
+// and reported as a successful backup. VACUUM INTO goes through SQLite, sees
+// the whole committed state, and writes a compacted standalone database.
 func copyDB(src, dst string) error {
-	data, err := os.ReadFile(src)
+	db, err := sql.Open("sqlite", src)
 	if err != nil {
-		return err
+		return fmt.Errorf("open source db: %w", err)
 	}
-	return os.WriteFile(dst, data, 0600)
+	defer db.Close()
+
+	// VACUUM INTO refuses to write to a path that already exists, and the
+	// caller creates the temp file to reserve the name.
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clear destination: %w", err)
+	}
+
+	if _, err := db.Exec("VACUUM INTO ?", dst); err != nil {
+		return fmt.Errorf("vacuum into %s: %w", dst, err)
+	}
+
+	// VACUUM INTO creates the file under the process umask; this is a full
+	// copy of the credential database.
+	if err := os.Chmod(dst, 0600); err != nil {
+		return fmt.Errorf("chmod backup: %w", err)
+	}
+	return nil
 }
 
 // nextScheduledTick returns a channel that fires at the next scheduled backup

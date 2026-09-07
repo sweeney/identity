@@ -20,6 +20,14 @@ import (
 )
 
 func newDeviceRouter(svc service.OAuthServicer, deviceSvc service.DeviceFlowServicer, authSvc service.AuthServicer) http.Handler {
+	// The device endpoints look the client up to decide whether it is
+	// confidential and must authenticate. Tests that do not care about that
+	// get a permissive default: an unknown client is treated as public, so the
+	// handler's own unknown-client path still runs. Declared last, so a test
+	// that sets its own GetClient expectation wins.
+	if m, ok := svc.(*mocks.MockOAuthServicer); ok {
+		m.EXPECT().GetClient(gomock.Any()).Return(nil, domain.ErrNotFound).AnyTimes()
+	}
 	return oauth.NewRouter(svc, "", nil, authSvc, nil, deviceSvc, "", "Test")
 }
 
@@ -378,15 +386,40 @@ func TestDeviceVerifyPost_Deny(t *testing.T) {
 	svc := mocks.NewMockOAuthServicer(ctrl)
 	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
 	authSvc := mocks.NewMockAuthServicer(ctrl)
-	deviceSvc.EXPECT().Deny("ABCD-1234", gomock.Any()).Return(nil)
+	// Denial now requires the same credentials as approval — it is the same
+	// decision with the opposite sign.
+	authSvc.EXPECT().AuthorizeUser("alice", "hunter2", gomock.Any()).Return("user-99", nil)
+	deviceSvc.EXPECT().Deny("ABCD-1234", "user-99", "alice", gomock.Any()).Return(nil)
+
+	h := newDeviceRouter(svc, deviceSvc, authSvc)
+	rr := postForm(t, h, "/oauth/device", url.Values{
+		"user_code": {"ABCD-1234"},
+		"username":  {"alice"},
+		"password":  {"hunter2"},
+		"action":    {"deny"},
+	})
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Device denied")
+}
+
+// Denial without credentials must not go through.
+func TestDeviceVerifyPost_Deny_RequiresAuthentication(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	deviceSvc := mocks.NewMockDeviceFlowServicer(ctrl)
+	authSvc := mocks.NewMockAuthServicer(ctrl)
+
+	authSvc.EXPECT().AuthorizeUser("", "", gomock.Any()).
+		Return("", service.ErrInvalidCredentials)
+	// No Deny expectation: reaching it means an unauthenticated caller denied
+	// somebody else's device.
 
 	h := newDeviceRouter(svc, deviceSvc, authSvc)
 	rr := postForm(t, h, "/oauth/device", url.Values{
 		"user_code": {"ABCD-1234"},
 		"action":    {"deny"},
 	})
-	require.Equal(t, http.StatusOK, rr.Code)
-	assert.Contains(t, rr.Body.String(), "Device denied")
+	assert.Contains(t, rr.Body.String(), "Invalid username or password")
 }
 
 // --- Post-approval passkey registration prompt ---
@@ -511,8 +544,11 @@ func postDevicePasskey(t *testing.T, h http.Handler, form url.Values) *httptest.
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", "https://id.example.com")
+	// A real browser form POST puts these in the body, and the handlers read
+	// them with PostFormValue — so the test request must too (WP10).
 	req.Body = http.NoBody
 	req.Form = form
+	req.PostForm = form
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr
@@ -525,7 +561,7 @@ func mintUserToken(t *testing.T, issuer *auth.TokenIssuer, userID, username stri
 		Username: username,
 		Role:     "user",
 		IsActive: true,
-		Audience: "https://id.example.com",
+		Audience: []string{"https://id.example.com"},
 	})
 	require.NoError(t, err)
 	return tok
@@ -590,7 +626,7 @@ func TestDeviceVerifyPasskey_ServiceTokenRejected(t *testing.T) {
 
 	serviceToken, err := issuer.MintServiceToken(domain.ServiceTokenClaims{
 		ClientID: "some-service",
-		Audience: "https://id.example.com",
+		Audience: []string{"https://id.example.com"},
 		Scope:    "read:users",
 	}, 15*time.Minute)
 	require.NoError(t, err)
@@ -638,7 +674,9 @@ func TestDeviceVerifyPasskey_CrossOriginRejected(t *testing.T) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", "https://evil.example.com")
 	req.Body = http.NoBody
-	req.Form = url.Values{"access_token": {token}, "user_code": {"ABCD-1234"}}
+	form := url.Values{"access_token": {token}, "user_code": {"ABCD-1234"}}
+	req.Form = form
+	req.PostForm = form
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	assert.Equal(t, http.StatusForbidden, rr.Code)

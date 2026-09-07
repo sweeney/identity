@@ -214,10 +214,14 @@ func runIdentityServer() error {
 			BucketName:  cfg.R2BucketName,
 			Env:         string(cfg.Env),
 			ServiceName: "identity",
-			// Identity keeps its pre-existing behavior: no per-write trigger
-			// throttling. Triggers are rare (seeded during user/admin
-			// mutations) and the existing coalescing channel is enough.
-			MinInterval:  0,
+			// Throttle triggered backups. The comment this replaces claimed
+			// triggers only come from user/admin mutations, but WebAuthnService
+			// fires them from FinishRegistration and DeleteCredential too, and
+			// both routes sit behind requireUserAuth rather than RequireAdmin.
+			// A plain user could therefore loop register/delete-passkey and
+			// force a full-database upload on every iteration — the coalescing
+			// channel caps concurrency at one, not the sustained rate.
+			MinInterval:  5 * time.Minute,
 			Schedule:     cfg.BackupSchedule,
 			ScheduleHour: cfg.BackupHour,
 		}, uploader, backupAuditRecorder(auditStore))
@@ -231,7 +235,7 @@ func runIdentityServer() error {
 	authSvc := service.NewAuthService(issuer, userStore, tokenStore, backupMgr, auditStore, cfg.RefreshTokenTTL)
 	userSvc := service.NewUserService(userStore, tokenStore, backupMgr, auditStore, 10)
 	oauthSvc := service.NewOAuthService(authSvc, issuer, oauthClientStore, oauthCodeStore, auditStore, 60*time.Second)
-	deviceSvc := service.NewDeviceFlowService(authSvc, oauthClientStore, deviceAuthStore, claimCodeStore, auditStore, service.DeviceFlowConfig{
+	deviceSvc := service.NewDeviceFlowService(authSvc, oauthClientStore, deviceAuthStore, claimCodeStore, tokenStore, auditStore, service.DeviceFlowConfig{
 		DeviceCodeTTL:   10 * time.Minute,
 		PollInterval:    5,
 		VerificationURI: cfg.JWTIssuer + "/oauth/device",
@@ -271,8 +275,33 @@ func runIdentityServer() error {
 		waChallengeStore = store.NewWebAuthnChallengeStore(database)
 	}
 
-	// Cleanup goroutine: prune expired/old-revoked tokens, auth codes, and challenges every 24h
+	prune := func() {
+		if err := tokenStore.DeleteExpiredAndOldRevoked(7); err != nil {
+			log.Printf("token cleanup error: %v", err)
+		}
+		if err := oauthCodeStore.DeleteExpiredAndUsed(); err != nil {
+			log.Printf("oauth code cleanup error: %v", err)
+		}
+		if err := deviceAuthStore.DeleteExpired(); err != nil {
+			log.Printf("device authorization cleanup error: %v", err)
+		}
+		if waChallengeStore != nil {
+			if err := waChallengeStore.DeleteExpired(); err != nil {
+				log.Printf("webauthn challenge cleanup error: %v", err)
+			}
+		}
+	}
+
+	// Cleanup goroutine: prune expired/old-revoked tokens, auth codes, and
+	// challenges every 24h — and once at startup.
+	//
+	// The ticker alone meant a service that restarts more often than once a day
+	// never pruned at all: deploys, config changes and crashes all reset it, so
+	// on a frequently-deployed host expired tokens, used auth codes and spent
+	// WebAuthn challenges accumulated indefinitely.
 	go func() {
+		prune()
+
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -280,20 +309,7 @@ func runIdentityServer() error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := tokenStore.DeleteExpiredAndOldRevoked(7); err != nil {
-					log.Printf("token cleanup error: %v", err)
-				}
-				if err := oauthCodeStore.DeleteExpiredAndUsed(); err != nil {
-					log.Printf("oauth code cleanup error: %v", err)
-				}
-				if err := deviceAuthStore.DeleteExpired(); err != nil {
-					log.Printf("device authorization cleanup error: %v", err)
-				}
-				if waChallengeStore != nil {
-					if err := waChallengeStore.DeleteExpired(); err != nil {
-						log.Printf("webauthn challenge cleanup error: %v", err)
-					}
-				}
+				prune()
 			}
 		}
 	}()
@@ -312,6 +328,17 @@ func runIdentityServer() error {
 	if !cfg.RateLimitDisabled {
 		authRateLimiter = ratelimit.NewLimiter(5.0/60.0, 5, cfg.TrustProxy)
 		generalRateLimiter = ratelimit.NewLimiter(120.0/60.0, 30, cfg.TrustProxy)
+		if cfg.TrustProxyCIDRs != "" {
+			// Replace the default trust set (loopback + private ranges) before
+			// any request is served. CF-Connecting-IP is honoured only from
+			// these addresses; everything else is keyed on its peer address.
+			trusted, err := httputil.ParseTrustedProxies(cfg.TrustProxyCIDRs)
+			if err != nil {
+				return fmt.Errorf("trusted proxies: %w", err)
+			}
+			httputil.DefaultTrustedProxies = trusted
+			log.Printf("trusting CF-Connecting-IP only from: %s", cfg.TrustProxyCIDRs)
+		}
 		if len(cfg.RateLimitAllowlist) > 0 {
 			log.Printf("rate limiting enabled (%d allowlisted IP/CIDR entries)", len(cfg.RateLimitAllowlist))
 		} else {

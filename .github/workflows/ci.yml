@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: ["**"]
 
+# Least privilege for GITHUB_TOKEN. Neither job writes to the repository; the
+# artifact uploads do not use the token. Any step that needs more must ask for
+# it explicitly at the job level.
+permissions:
+  contents: read
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -14,10 +20,10 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache: true
@@ -27,7 +33,7 @@ jobs:
 
       - name: Verify mocks are up to date
         run: |
-          go install go.uber.org/mock/mockgen@latest
+          go install go.uber.org/mock/mockgen@v0.6.0
           go generate ./...
           git diff --exit-code -- internal/mocks/
 
@@ -46,7 +52,7 @@ jobs:
           fi
 
       - name: Lint OpenAPI spec
-        run: npx --yes @stoplight/spectral-cli@latest lint internal/spec/openapi.yaml
+        run: npx --yes @stoplight/spectral-cli@6.16.3 lint internal/spec/openapi.yaml
 
       - name: Unit tests (with race detector)
         run: |
@@ -153,7 +159,7 @@ jobs:
           go tool cover -func=coverage.out > coverage.txt
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-report
           path: |
@@ -174,10 +180,10 @@ jobs:
             goarch: arm64
             suffix: linux-arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache: true
@@ -202,7 +208,7 @@ jobs:
           echo "| Size | **$SIZE** ($SIZE_BYTES bytes) |" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload binary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: identity-server-${{ matrix.suffix }}
           path: identity-server-${{ matrix.suffix }}

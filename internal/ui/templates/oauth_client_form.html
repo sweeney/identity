@@ -60,7 +60,21 @@
     </label>
     <label>
         Audience <small>(aud claim in issued tokens)</small>
-        <input type="text" name="audience" value="{{if .Client}}{{.Client.Audience}}{{else}}{{.FormAudience}}{{end}}" placeholder="e.g. https://api.example.com">
+        {{$selected := .FormAudiences}}{{if .Client}}{{$selected = .Client.Audiences}}{{end}}
+        {{if .KnownAudiences}}
+        <select name="audience" multiple size="{{len .KnownAudiences | minInt 6}}" class="audience-select">
+            {{range .KnownAudiences}}
+            <option value="{{.}}"{{$name := .}}{{range $selected}}{{if eq . $name}} selected{{end}}{{end}}>{{.}}</option>
+            {{end}}
+        </select>
+        {{end}}
+        <input type="text" name="audience" value="{{range $selected}}{{if not (has $.KnownAudiences .)}}{{.}} {{end}}{{end}}"
+            placeholder="add a service not listed above">
+        <small class="field-help">
+            The services these tokens are for — a token is only accepted by the
+            services it names. Select several if this client talks to several.
+            Required for <code>client_credentials</code>.
+        </small>
     </label>
     {{if .Client}}
     <label>

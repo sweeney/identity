@@ -45,6 +45,11 @@ p  { margin-bottom: 1rem; }
 a  { color: var(--brand); text-decoration: none; }
 a:hover { color: var(--brand-hover); text-decoration: underline; }
 small { color: var(--text-muted); font-size: 0.85em; }
+/* Explanatory text under a form field: a paragraph, not an inline aside. */
+.field-help { display: block; margin-top: 0.35rem; line-height: 1.45; font-weight: normal; }
+/* Audience picker: a multiple-choice select of known service names, above a
+   free-text field for anything not yet registered. */
+.audience-select { margin-bottom: 0.4rem; }
 code { background: var(--bg-surface); padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
 
 /* Nav */

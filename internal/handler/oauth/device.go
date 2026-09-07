@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sweeney/identity/common/httputil"
+	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/service"
 )
 
@@ -41,6 +42,16 @@ func (h *oauthHandler) deviceAuthorize(w http.ResponseWriter, r *http.Request) {
 
 	if clientID == "" {
 		oauthError(w, "invalid_request", "client_id is required.")
+		return
+	}
+
+	// Confidential-client authentication (RFC 6749 §3.2.1), matching
+	// /oauth/token: a client with a registered secret MUST authenticate.
+	// Without this, knowing a confidential client's ID was enough to open
+	// device sessions in its name. Public clients — the screenless devices this
+	// grant exists for, which cannot keep a secret — continue with client_id
+	// alone.
+	if !h.authenticateDeviceClient(w, r, clientID) {
 		return
 	}
 
@@ -89,6 +100,16 @@ func (h *oauthHandler) deviceClaim(w http.ResponseWriter, r *http.Request) {
 
 	if clientID == "" || claimCode == "" {
 		oauthError(w, "invalid_request", "client_id and claim_code are required.")
+		return
+	}
+
+	// Confidential-client authentication (RFC 6749 §3.2.1), matching
+	// /oauth/token: a client with a registered secret MUST authenticate.
+	// Without this, knowing a confidential client's ID was enough to open
+	// device sessions in its name. Public clients — the screenless devices this
+	// grant exists for, which cannot keep a secret — continue with client_id
+	// alone.
+	if !h.authenticateDeviceClient(w, r, clientID) {
 		return
 	}
 
@@ -224,8 +245,9 @@ func (h *oauthHandler) deviceVerifyPost(w http.ResponseWriter, r *http.Request) 
 	}
 
 	userCode := strings.TrimSpace(r.FormValue("user_code"))
-	username := r.FormValue("username")
-	password := r.FormValue("password")
+	// Body only — see the note in admin/handler.go.
+	username := r.PostFormValue("username")
+	password := r.PostFormValue("password")
 	action := r.FormValue("action") // "approve" or "deny"
 
 	if userCode == "" {
@@ -235,18 +257,10 @@ func (h *oauthHandler) deviceVerifyPost(w http.ResponseWriter, r *http.Request) 
 
 	ip := httputil.ExtractClientIP(r, h.trustProxy)
 
-	if action == "deny" {
-		if err := h.deviceSvc.Deny(userCode, ip); err != nil {
-			h.renderDeviceFailure(w, userCode, "Could not record denial.")
-			return
-		}
-		h.render(w, "device_verify_done.html", map[string]any{
-			"HideNav": true,
-			"Denied":  true,
-		})
-		return
-	}
-
+	// Both approve and deny decide the fate of someone's device session, so
+	// both require the same proof of who is deciding. Denial used to need
+	// none, which let anyone who could read the code off the device's screen
+	// block its owner from signing it in.
 	userID, authErr := h.authSvc.AuthorizeUser(username, password, ip)
 	if authErr != nil {
 		errMsg := "Invalid username or password."
@@ -254,6 +268,18 @@ func (h *oauthHandler) deviceVerifyPost(w http.ResponseWriter, r *http.Request) 
 			errMsg = "Account is disabled."
 		}
 		h.renderDeviceFailure(w, userCode, errMsg)
+		return
+	}
+
+	if action == "deny" {
+		if err := h.deviceSvc.Deny(userCode, userID, username, ip); err != nil {
+			h.renderDeviceFailure(w, userCode, "Could not record denial.")
+			return
+		}
+		h.render(w, "device_verify_done.html", map[string]any{
+			"HideNav": true,
+			"Denied":  true,
+		})
 		return
 	}
 
@@ -332,7 +358,7 @@ func (h *oauthHandler) deviceVerifyPasskey(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	accessToken := r.FormValue("access_token")
+	accessToken := r.PostFormValue("access_token")
 	userCode := strings.TrimSpace(r.FormValue("user_code"))
 	if accessToken == "" || userCode == "" {
 		errResp(http.StatusBadRequest, "missing_parameters", "access_token and user_code are required.")
@@ -349,6 +375,16 @@ func (h *oauthHandler) deviceVerifyPasskey(w http.ResponseWriter, r *http.Reques
 	claims, err := h.tokenIssuer.Parse(r.Context(), accessToken)
 	if err != nil {
 		errResp(http.StatusUnauthorized, "invalid_token", "Invalid or expired token.")
+		return
+	}
+
+	// Approving a device grants it a 30-day refresh token, with no consent
+	// screen on this path. Only a token minted for this server may do that —
+	// otherwise anyone holding the victim's OAuth-delegated token (a sibling
+	// resource server, a third-party client) could approve a device of their
+	// own choosing on the victim's behalf.
+	if !auth.AudienceAllowed(claims.Audience, h.tokenIssuer.Issuer()) {
+		errResp(http.StatusForbidden, "invalid_audience", "That token was not issued for this server.")
 		return
 	}
 
@@ -382,3 +418,24 @@ func (h *oauthHandler) renderDeviceFailure(w http.ResponseWriter, userCode, msg 
 
 // Unused but referenced in handler.go — keep this package's json encoder happy.
 var _ = json.Marshal
+
+// authenticateDeviceClient enforces confidential-client authentication on the
+// device endpoints. It writes the error response and returns false when the
+// client has a registered secret and did not present it.
+//
+// A client we cannot look up is left to the handler's own unknown-client
+// handling, so the failure mode stays a single consistent invalid_client
+// rather than two different ones.
+func (h *oauthHandler) authenticateDeviceClient(w http.ResponseWriter, r *http.Request, clientID string) bool {
+	client, err := h.svc.GetClient(clientID)
+	if err != nil || client.SecretHash == "" {
+		return true
+	}
+	creds, ok := extractClientCredentials(r)
+	if !ok || creds.ClientID != clientID || !verifyClientSecret(client, creds.ClientSecret) {
+		w.Header().Set("WWW-Authenticate", "Basic")
+		oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Client authentication failed.")
+		return false
+	}
+	return true
+}

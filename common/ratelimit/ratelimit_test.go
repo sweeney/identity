@@ -187,8 +187,15 @@ func TestVisitorCountTracksMultipleIPs(t *testing.T) {
 	assert.Equal(t, 3, limiter.VisitorCount())
 }
 
-func TestMaxVisitors_DeniesWhenFull(t *testing.T) {
-	// Create a limiter with a very small max visitors cap for testing.
+// TestMaxVisitors_EvictsWhenFull replaces an earlier test that asserted the
+// opposite: that a full visitor map denies every unseen IP with a 429.
+//
+// That was the WP6 defect, not the intended contract. The map is keyed by
+// client IP, so whoever can produce distinct keys can fill it — and once full,
+// the cap stopped protecting the service and started denying it. The cap now
+// bounds memory by evicting the least recently seen visitor, which is what a
+// cap is for.
+func TestMaxVisitors_EvictsWhenFull(t *testing.T) {
 	limiter := ratelimit.NewLimiterWithMaxVisitors(10, 10, "", 3)
 	handler := limiter.Middleware(okHandler())
 
@@ -202,15 +209,16 @@ func TestMaxVisitors_DeniesWhenFull(t *testing.T) {
 	}
 	assert.Equal(t, 3, limiter.VisitorCount())
 
-	// 4th unique IP should be denied (map is full, no stale entries to clean)
+	// A 4th unique IP is served, not denied.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "10.0.0.99:12345"
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusTooManyRequests, w.Code, "should deny when visitor map is full")
+	assert.Equal(t, http.StatusOK, w.Code,
+		"a full visitor map must not deny traffic — that is a self-inflicted outage")
 
-	// The deny-all visitor should NOT be stored
-	assert.Equal(t, 3, limiter.VisitorCount(), "deny-all visitor should not be stored")
+	// And the cap still holds.
+	assert.LessOrEqual(t, limiter.VisitorCount(), 3, "the visitor cap must still bound memory")
 }
 
 func TestMaxVisitors_EmergencyCleanupFreesSlotsForNewVisitors(t *testing.T) {

@@ -323,11 +323,16 @@ func (s *ClaimCodeStore) ListByClient(clientID string) ([]*domain.ClaimCode, err
 	return out, rows.Err()
 }
 
+// Bind ties an unbound claim code to a user. It is compare-and-swap: the update
+// requires the code to still be unbound, so two concurrent approvals cannot both
+// succeed with the second silently reassigning the device to a different owner.
+// Mirrors OAuthCodeStore.MarkUsed. Returns domain.ErrNotFound when the code is
+// already bound, revoked, or absent.
 func (s *ClaimCodeStore) Bind(id, userID string, boundAt time.Time) error {
 	res, err := s.db.DB().Exec(
 		`UPDATE oauth_claim_codes
 		 SET bound_user_id = ?, bound_at = ?
-		 WHERE id = ? AND revoked_at IS NULL`,
+		 WHERE id = ? AND revoked_at IS NULL AND bound_user_id IS NULL`,
 		userID, formatTime(boundAt), id,
 	)
 	if err != nil {

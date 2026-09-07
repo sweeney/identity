@@ -203,9 +203,13 @@ func TestE2E_OAuthFlow(t *testing.T) {
 
 	// Step 5: Refresh using /oauth/token with refresh_token grant
 	refreshToken, _ := tokenResp["refresh_token"].(string)
+	// client_id is required on the refresh grant: the token is bound to the
+	// client it was issued to, so a leaked one cannot be redeemed elsewhere
+	// (WP4). RFC 6749 §6 requires it of public clients regardless.
 	refreshForm := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
+		"client_id":     {"myapp"},
 	}
 	req = httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(refreshForm.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

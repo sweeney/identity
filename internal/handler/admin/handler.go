@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -204,6 +205,15 @@ func (h *adminHandler) render(w http.ResponseWriter, r *http.Request, page strin
 	data["CSRFToken"] = h.csrfToken(r)
 	data["SiteName"] = h.cfg.SiteName
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// A page carrying a freshly generated client secret must not be written to
+	// the browser's disk cache or held by any intermediary: it is shown exactly
+	// once and cannot be recovered, so a cached copy is the only other place it
+	// exists.
+	if _, hasSecret := data["GeneratedSecret"]; hasSecret {
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+	}
 	if err := h.tmpl.render(w, page, data); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
@@ -230,8 +240,11 @@ func (h *adminHandler) loginGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *adminHandler) loginPost(w http.ResponseWriter, r *http.Request) {
-	username := r.FormValue("username")
-	password := r.FormValue("password")
+	// PostFormValue, not FormValue: FormValue consults the URL query first, so
+	// credentials could arrive in a link — logged by the server, kept in browser
+	// history, and leaked in the Referer of anything the page then loads.
+	username := r.PostFormValue("username")
+	password := r.PostFormValue("password")
 
 	ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
 
@@ -285,7 +298,7 @@ func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken := r.FormValue("access_token")
+	accessToken := r.PostFormValue("access_token")
 	if accessToken == "" {
 		writeJSONError(w, http.StatusBadRequest, "Passkey authentication failed")
 		return
@@ -297,8 +310,20 @@ func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The token must have been minted for this server. Tokens from the OAuth,
+	// device and claim-code grants carry the requesting client's audience, and
+	// anyone holding one of those — the client itself, a sibling resource
+	// server that received it as a bearer, a paired device — could otherwise
+	// trade a 15-minute scoped token for a 2-hour admin session.
+	if !auth.AudienceAllowed(claims.Audience, h.tokenIssuer.Issuer()) {
+		ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
+		h.recordAuditWithDetail(domain.EventLoginFailure, claims.UserID, claims.Username, ip, "passkey: token audience is not this server")
+		writeJSONError(w, http.StatusForbidden, "Admin access required")
+		return
+	}
+
 	user, err := h.userSvc.GetByID(claims.UserID)
-	if err != nil || user.Role != domain.RoleAdmin {
+	if err != nil || user.Role != domain.RoleAdmin || !user.IsActive {
 		ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
 		h.recordAuditWithDetail(domain.EventLoginFailure, claims.UserID, claims.Username, ip, "passkey: insufficient role")
 		writeJSONError(w, http.StatusForbidden, "Admin access required")
@@ -521,10 +546,11 @@ func (h *adminHandler) usersNewGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *adminHandler) usersNewPost(w http.ResponseWriter, r *http.Request) {
-	username := r.FormValue("username")
-	displayName := r.FormValue("display_name")
-	password := r.FormValue("password")
-	roleStr := r.FormValue("role")
+	username := r.PostFormValue("username")
+	displayName := r.PostFormValue("display_name")
+	// Body only — a new user's password must not travel in a URL.
+	password := r.PostFormValue("password")
+	roleStr := r.PostFormValue("role")
 
 	if username == "" || password == "" {
 		h.render(w, r, "user_form.html", map[string]any{
@@ -593,17 +619,24 @@ func (h *adminHandler) usersEditPost(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	input := service.UpdateUserInput{}
-	if dn := r.FormValue("display_name"); dn != "" {
+	if dn := r.PostFormValue("display_name"); dn != "" {
 		input.DisplayName = &dn
 	}
-	if pw := r.FormValue("password"); pw != "" {
+	if pw := r.PostFormValue("password"); pw != "" {
 		input.Password = &pw
 	}
-	if roleStr := r.FormValue("role"); roleStr != "" {
-		role := domain.Role(roleStr)
+	if roleStr := r.PostFormValue("role"); roleStr != "" {
+		role, ok := domain.ParseRole(roleStr)
+		if !ok {
+			h.render(w, r, "user_form.html", map[string]any{
+				"Error":  "Role must be admin or user.",
+				"IsEdit": true,
+			})
+			return
+		}
 		input.Role = &role
 	}
-	isActive := r.FormValue("is_active") == "1"
+	isActive := r.PostFormValue("is_active") == "1"
 	input.IsActive = &isActive
 
 	user, err := h.userSvc.GetByID(id)
@@ -704,9 +737,53 @@ func (h *adminHandler) oauthList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// knownAudiences returns the service names offerable as audiences: every
+// audience already in use, plus this server.
+//
+// Deliberately *not* client ids. The clients table registers OAuth clients, and
+// a resource server is a different thing that merely overlaps: services making
+// outbound calls appear here because they need client_credentials, but a
+// service that only receives tokens — the config service, say — never registers
+// at all, while browser apps like an admin SPA register and should never be
+// named as an audience by anyone.
+//
+// Audiences in use are the honest source. A client_credentials client is
+// required to have one, so every service that registers still appears via its
+// own audience; and a resource server that is not a client appears as soon as
+// anything names it, typed once into the free-text box.
+func (h *adminHandler) knownAudiences(excludeClientID string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(v string) {
+		if v == "" || seen[v] || v == excludeClientID {
+			return
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+
+	if h.tokenIssuer != nil {
+		if u, err := url.Parse(h.tokenIssuer.Issuer()); err == nil && u.Host != "" {
+			add(u.Host)
+		}
+	}
+	clients, err := h.oauthClients.List()
+	if err != nil {
+		return out
+	}
+	for _, c := range clients {
+		for _, a := range c.Audiences {
+			add(a)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (h *adminHandler) oauthNewGet(w http.ResponseWriter, r *http.Request) {
 	h.render(w, r, "oauth_client_form.html", map[string]any{
-		"FormAction": "/admin/oauth/new",
+		"FormAction":     "/admin/oauth/new",
+		"KnownAudiences": h.knownAudiences(""),
 	})
 }
 
@@ -717,7 +794,9 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 	grantTypes := r.Form["grant_types"]
 	authMethod := r.FormValue("token_endpoint_auth_method")
 	rawScopes := r.FormValue("scopes")
-	audience := strings.TrimSpace(r.FormValue("audience"))
+	// The form posts one `audience` value per selected service, plus any typed
+	// into the free-text box, so a client can name several.
+	audiences := splitAudiences(r.PostForm["audience"])
 
 	if id == "" || name == "" {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
@@ -727,7 +806,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -740,7 +819,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -752,7 +831,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 		authMethod = "none"
 	}
 
-	if sliceContains(grantTypes, "client_credentials") && audience == "" {
+	if sliceContains(grantTypes, "client_credentials") && len(audiences) == 0 {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction":       "/admin/oauth/new",
 			"Error":            "Audience is required for client_credentials grant type.",
@@ -760,7 +839,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -773,7 +852,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -786,7 +865,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -801,7 +880,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 		GrantTypes:              grantTypes,
 		Scopes:                  scopes,
 		TokenEndpointAuthMethod: authMethod,
-		Audience:                audience,
+		Audiences:               audiences,
 		CreatedAt:               now,
 		UpdatedAt:               now,
 	}
@@ -814,7 +893,7 @@ func (h *adminHandler) oauthNewPost(w http.ResponseWriter, r *http.Request) {
 			"FormName":         name,
 			"FormRedirectURIs": rawURIs,
 			"FormScopes":       rawScopes,
-			"FormAudience":     audience,
+			"FormAudiences":    audiences,
 		})
 		return
 	}
@@ -834,8 +913,9 @@ func (h *adminHandler) oauthEditGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.render(w, r, "oauth_client_form.html", map[string]any{
-		"FormAction": "/admin/oauth/" + id + "/edit",
-		"Client":     client,
+		"FormAction":     "/admin/oauth/" + id + "/edit",
+		"Client":         client,
+		"KnownAudiences": h.knownAudiences(client.ID),
 	})
 }
 
@@ -861,7 +941,9 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 	grantTypes := r.Form["grant_types"]
 	authMethod := r.FormValue("token_endpoint_auth_method")
 	rawScopes := r.FormValue("scopes")
-	audience := strings.TrimSpace(r.FormValue("audience"))
+	// The form posts one `audience` value per selected service, plus any typed
+	// into the free-text box, so a client can name several.
+	audiences := splitAudiences(r.PostForm["audience"])
 
 	if name == "" {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
@@ -879,7 +961,7 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 		authMethod = "none"
 	}
 
-	if sliceContains(grantTypes, "client_credentials") && audience == "" {
+	if sliceContains(grantTypes, "client_credentials") && len(audiences) == 0 {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction": "/admin/oauth/" + id + "/edit",
 			"Client":     client,
@@ -911,7 +993,7 @@ func (h *adminHandler) oauthEditPost(w http.ResponseWriter, r *http.Request) {
 	client.GrantTypes = grantTypes
 	client.Scopes = splitLines(rawScopes)
 	client.TokenEndpointAuthMethod = authMethod
-	client.Audience = audience
+	client.Audiences = audiences
 	if err := h.oauthClients.Update(client); err != nil {
 		h.render(w, r, "oauth_client_form.html", map[string]any{
 			"FormAction": "/admin/oauth/" + id + "/edit",
@@ -1001,6 +1083,7 @@ func (h *adminHandler) oauthGenerateSecret(w http.ResponseWriter, r *http.Reques
 
 	client.SecretHash = hash
 	client.SecretHashPrev = ""
+	client.SecretPrevExpiresAt = nil
 	if err := h.oauthClients.Update(client); err != nil {
 		http.Error(w, "failed to save secret", http.StatusInternalServerError)
 		return
@@ -1041,7 +1124,12 @@ func (h *adminHandler) oauthRotateSecret(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Give the outgoing secret a deadline. Keeping it alive is what stops a
+	// rotation breaking a client mid-deploy; keeping it alive forever is the
+	// opposite of rotating.
 	client.SecretHashPrev = client.SecretHash
+	prevExpiry := time.Now().UTC().Add(domain.ClientSecretRotationWindow)
+	client.SecretPrevExpiresAt = &prevExpiry
 	client.SecretHash = hash
 	if err := h.oauthClients.Update(client); err != nil {
 		http.Error(w, "failed to save secret", http.StatusInternalServerError)
@@ -1078,6 +1166,7 @@ func (h *adminHandler) oauthClearPrevSecret(w http.ResponseWriter, r *http.Reque
 	}
 
 	client.SecretHashPrev = ""
+	client.SecretPrevExpiresAt = nil
 	if err := h.oauthClients.Update(client); err != nil {
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return
@@ -1216,7 +1305,7 @@ func userFacingError(err error) string {
 	case errors.Is(err, service.ErrWeakPassword):
 		return "Password is too weak. Please use a longer password."
 	case errors.Is(err, service.ErrCannotDeleteLastAdmin):
-		return "Cannot delete the last admin user."
+		return "This is the last admin account — promote another user to admin before demoting, deactivating or deleting it."
 	default:
 		log.Printf("admin ui error: %v", err)
 		return "An unexpected error occurred."
@@ -1295,7 +1384,9 @@ func (h *adminHandler) auditMeta(r *http.Request) service.AuditMeta {
 // verifyAdminPassword validates the current admin's password from the request form field "admin_password".
 // It returns nil on success or an error if the password is missing or incorrect.
 func (h *adminHandler) verifyAdminPassword(r *http.Request) error {
-	password := r.FormValue("admin_password")
+	// Body only. A re-authentication gate satisfiable from the URL is one a
+	// crafted link can satisfy on the admin's behalf.
+	password := r.PostFormValue("admin_password")
 	if password == "" {
 		return errors.New("password confirmation required")
 	}
@@ -1330,3 +1421,25 @@ func validClientID(id string) bool {
 var _ = (*adminHandler)(nil)
 var _ = time.Now
 var _ = uuid.New
+
+// splitAudiences normalises the audience values posted by the client form.
+// Each checkbox posts its own value and the free-text box may hold several
+// separated by whitespace or commas; blanks and duplicates are dropped so the
+// stored list is exactly what was meant.
+func splitAudiences(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range values {
+		for _, field := range strings.FieldsFunc(v, func(r rune) bool {
+			return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+		}) {
+			field = strings.TrimSpace(field)
+			if field == "" || seen[field] {
+				continue
+			}
+			seen[field] = true
+			out = append(out, field)
+		}
+	}
+	return out
+}

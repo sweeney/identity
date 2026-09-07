@@ -29,7 +29,7 @@ lint:
 # Structurally validate the OpenAPI spec (errors fail; warnings are advisory).
 # The path-coverage test (go test ./internal/spec/) guards spec/route drift.
 lint-spec:
-	npx --yes @stoplight/spectral-cli@latest lint internal/spec/openapi.yaml
+	npx --yes @stoplight/spectral-cli@6.16.3 lint internal/spec/openapi.yaml
 
 coverage:
 	go test -race -count=1 -coverprofile=coverage.out ./...

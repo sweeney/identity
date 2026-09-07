@@ -66,7 +66,7 @@ case errors.Is(err, commonauth.ErrTokenInvalid):
 case err != nil:
     // unexpected
 default:
-    // claims.UserID, claims.Username, claims.Role, claims.IsActive
+    // claims.UserID, claims.Username, claims.Role, claims.IsActive, claims.Audience
 }
 ```
 
@@ -161,9 +161,40 @@ token verification.
   behind a reverse proxy that rewrites the host.
 - **Audience.** Set `RequiredAudience` to reject tokens not minted for your
   service. Service tokens always carry an `aud`; user tokens carry one only when
-  the login/authorize request specified it.
-- **Errors.** Only `ErrTokenExpired` and `ErrTokenInvalid` are returned from the
-  parse calls — map both to `401`, and map a failed `HasScope` check to `403`.
+  they were minted through the OAuth, device or claim-code grants, in which case
+  it is the requesting client's configured audience. A token from a direct
+  `/api/v1/auth/login` carries none.
+
+  Both `TokenClaims.Audience` and `ServiceTokenClaims.Audience` are `[]string`,
+  holding the `aud` claim verbatim, and both types have a `HasAudience(aud)`
+  helper. Test membership with it rather than comparing or splitting strings: a
+  space is legal inside a single `aud` value, so joining the list and
+  re-splitting it is lossy in both directions. `Parse` and `ParseServiceToken`
+  both populate the field.
+
+  Setting `RequiredAudience` is the belt to `HasAudience`'s braces — it makes
+  the JWT parser itself reject a non-matching `aud`, and (because it requires
+  the claim to be present) also rejects tokens that carry no audience at all.
+- **Errors.** Three errors come back from the parse calls, and the distinction
+  matters:
+
+  | Error | Meaning | Map to |
+  |---|---|---|
+  | `ErrTokenExpired` | The token was valid and has aged out | `401` — the client should refresh |
+  | `ErrTokenInvalid` | Bad signature, wrong issuer, malformed | `401` — the client should sign in again |
+  | `ErrKeysUnavailable` | **We could not check it.** JWKS unreachable, erroring, or cached keys too stale to trust | `503` — the client should retry |
+
+  Do not fold `ErrKeysUnavailable` into a `401`. It is a statement about
+  identity's availability, not a verdict on the caller's token: treating it as
+  "invalid" makes every service sign every user out simultaneously during an
+  identity outage, over tokens that were never examined. A failed `HasScope`
+  check is a `403`.
+
+  Cached keys are served through a brief JWKS outage, but only up to
+  `MaxStaleAge` (default 30 minutes) — past that the verifier reports
+  `ErrKeysUnavailable` rather than continuing to honour keys it can no longer
+  confirm are published, which would otherwise make key revocation ineffective
+  for as long as the endpoint stayed down.
 - **Versioning.** The `common` module is pinned to an exact version by consumers;
   see the release flow in the repo root `CLAUDE.md`. Bump with
   `go get github.com/sweeney/identity/common@vX.Y.Z`.

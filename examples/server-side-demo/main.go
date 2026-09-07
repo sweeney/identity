@@ -272,6 +272,8 @@ func doRefresh(refreshToken string) (*tokenResponse, error) {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
+		// Required: the refresh token is bound to the client it was issued to.
+		"client_id": {clientID},
 	}
 
 	resp, err := http.Post(identityBase+"/oauth/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))

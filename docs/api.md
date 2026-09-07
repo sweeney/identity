@@ -245,7 +245,20 @@ Content-Type: application/x-www-form-urlencoded
 
 grant_type=refresh_token
 &refresh_token=<refresh-token>
+&client_id=<client-id>
 ```
+
+**`client_id` is required.** A refresh token is bound to the client it was
+issued to, so presenting it with a *different* `client_id` returns
+`invalid_grant`. A token issued before client binding existed carries no
+client; it is accepted and adopted by the presenting client, so the binding
+takes effect after one refresh rather than invalidating the session. This is what stops a leaked refresh token being redeemed by
+another registered client for a user who never consented to it. A confidential
+client (one with a registered secret) must also authenticate here, exactly as
+it does on the `authorization_code` grant.
+
+Refresh tokens from the direct API login (`POST /api/v1/auth/login`) carry no
+client and are refreshed through `POST /api/v1/auth/refresh`, not this endpoint.
 
 **Response 200**: Same token response shape.
 
@@ -524,7 +537,12 @@ client_id=my-sensor
 | Field | Required | Description |
 |---|---|---|
 | `client_id` | Yes | Registered client ID |
-| `scope` | No | Space-delimited scopes; defaults to all client scopes |
+| `scope` | No | Space-delimited scopes; defaults to all client scopes. The scope shown to the user on the approval page is the scope embedded in the issued access token (`scope` claim) and carried across every refresh. |
+
+A client registered **with** a secret must authenticate on this endpoint
+(HTTP Basic or `client_secret_post`), the same rule `/oauth/token` applies.
+Screenless devices that cannot keep a secret should be registered as public
+clients and continue to send `client_id` alone.
 
 **Response 200**:
 
@@ -641,7 +659,7 @@ client_id=my-sensor
 |---|---|---|
 | `client_id` | Yes | Registered client ID (baked in firmware) |
 | `claim_code` | Yes | 12-char claim code (baked in firmware or NVS) |
-| `scope` | No | Space-delimited scopes |
+| `scope` | No | Space-delimited scopes. Enforced: it appears as the `scope` claim on the issued access token and survives rotation. |
 
 **Response 200**:
 
@@ -1057,11 +1075,14 @@ All errors follow this envelope:
 | `401` | `token_family_compromised` | Clear all tokens, alert user, show login |
 | `403` | `account_disabled` | Show "account disabled" message |
 | `403` | `forbidden` | Show permission error |
+| `403` | `invalid_audience` | Token was minted for another service — use a token issued for Identity |
+| `413` | `request_too_large` | Request body exceeds 256 KiB — do not retry unchanged |
 | `404` | `not_found` | Show not found UI |
 | `409` | `username_taken` | Show inline field error |
-| `409` | `cannot_delete_last_admin` | Show error message |
+| `409` | `cannot_delete_last_admin` | Show error message. Returned by both `DELETE` and `PUT /users/{id}` — the last admin cannot be deleted, demoted, or deactivated. |
 | `422` | `validation_error` | Show field errors |
-| `422` | `weak_password` | Show password strength requirement |
+| `400` | `validation_error` | Malformed input, e.g. a `role` other than `admin` or `user` |
+| `422` | `weak_password` | Show password strength requirement (8–72 bytes; the upper bound is bcrypt's) |
 | `500` | `internal_error` | Show generic error |
 
 ### OAuth Errors (`/oauth/token`)

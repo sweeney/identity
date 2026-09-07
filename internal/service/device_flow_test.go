@@ -21,19 +21,35 @@ func newDeviceFlowService(t *testing.T, ctrl *gomock.Controller) (
 	*mocks.MockClaimCodeRepository,
 ) {
 	t.Helper()
+	svc, auth, clients, devices, claimCodes, _ := newDeviceFlowServiceWithTokens(t, ctrl)
+	return svc, auth, clients, devices, claimCodes
+}
+
+// newDeviceFlowServiceWithTokens also exposes the token repository, which the
+// service uses to revoke tokens issued from a claim code when it is revoked.
+func newDeviceFlowServiceWithTokens(t *testing.T, ctrl *gomock.Controller) (
+	*service.DeviceFlowService,
+	*mocks.MockAuthServicer,
+	*mocks.MockOAuthClientRepository,
+	*mocks.MockDeviceAuthorizationRepository,
+	*mocks.MockClaimCodeRepository,
+	*mocks.MockTokenRepository,
+) {
+	t.Helper()
 	auth := mocks.NewMockAuthServicer(ctrl)
 	clients := mocks.NewMockOAuthClientRepository(ctrl)
 	devices := mocks.NewMockDeviceAuthorizationRepository(ctrl)
 	claimCodes := mocks.NewMockClaimCodeRepository(ctrl)
+	tokens := mocks.NewMockTokenRepository(ctrl)
 	audit := mocks.NewMockAuditRepository(ctrl)
 	audit.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
 
-	svc := service.NewDeviceFlowService(auth, clients, devices, claimCodes, audit, service.DeviceFlowConfig{
+	svc := service.NewDeviceFlowService(auth, clients, devices, claimCodes, tokens, audit, service.DeviceFlowConfig{
 		DeviceCodeTTL:   10 * time.Minute,
 		PollInterval:    5,
 		VerificationURI: "https://id.example.com/device",
 	})
-	return svc, auth, clients, devices, claimCodes
+	return svc, auth, clients, devices, claimCodes, tokens
 }
 
 func deviceClient() *domain.OAuthClient {
@@ -42,7 +58,7 @@ func deviceClient() *domain.OAuthClient {
 		Name:       "Home IoT",
 		GrantTypes: []string{domain.GrantTypeDeviceCode},
 		Scopes:     []string{"read:sensors", "write:sensors"},
-		Audience:   "https://api.example.com",
+		Audiences:  []string{"https://api.example.com"},
 	}
 }
 
@@ -311,7 +327,10 @@ func TestDeviceFlowService_PollForToken_Approved_IssuesTokens(t *testing.T) {
 		ExpiresIn:    900,
 		RefreshToken: "refresh.xyz",
 	}
-	auth.EXPECT().IssueTokensForUser("user-99", "https://api.example.com").Return(tokens, nil)
+	auth.EXPECT().IssueTokensForGrant("user-99", service.GrantContext{
+		Audience: []string{"https://api.example.com"},
+		ClientID: "device-client",
+	}).Return(tokens, nil)
 
 	got, err := svc.PollForToken("device-client", "raw-appr-1", "1.2.3.4")
 	require.NoError(t, err)
@@ -455,7 +474,7 @@ func TestDeviceFlowService_Deny(t *testing.T) {
 	devices.EXPECT().GetByUserCode("DENY-MEEE").Return(da, nil)
 	devices.EXPECT().Deny("deny-me", gomock.Any()).Return(nil)
 
-	err := svc.Deny("DENY-MEEE", "1.2.3.4")
+	err := svc.Deny("DENY-MEEE", "user-99", "alice", "1.2.3.4")
 	require.NoError(t, err)
 }
 
@@ -499,11 +518,12 @@ func TestDeviceFlowService_CreateClaimCodes_ClientMissingGrant(t *testing.T) {
 
 func TestDeviceFlowService_RevokeClaimCode(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, _, _, _, claimCodes := newDeviceFlowService(t, ctrl)
+	svc, _, _, _, claimCodes, tokens := newDeviceFlowServiceWithTokens(t, ctrl)
 
 	cc := &domain.ClaimCode{ID: "cc-rev", ClientID: "device-client"}
 	claimCodes.EXPECT().GetByID("cc-rev").Return(cc, nil)
 	claimCodes.EXPECT().Revoke("cc-rev", gomock.Any()).Return(nil)
+	tokens.EXPECT().RevokeByClaimCodeID("cc-rev").Return(nil)
 
 	require.NoError(t, svc.RevokeClaimCode("cc-rev", "1.2.3.4"))
 }

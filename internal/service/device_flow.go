@@ -71,6 +71,7 @@ type DeviceFlowService struct {
 	clients    domain.OAuthClientRepository
 	devices    domain.DeviceAuthorizationRepository
 	claimCodes domain.ClaimCodeRepository
+	tokens     domain.TokenRepository
 	audit      domain.AuditRepository
 	cfg        DeviceFlowConfig
 }
@@ -81,6 +82,7 @@ func NewDeviceFlowService(
 	clients domain.OAuthClientRepository,
 	devices domain.DeviceAuthorizationRepository,
 	claimCodes domain.ClaimCodeRepository,
+	tokens domain.TokenRepository,
 	audit domain.AuditRepository,
 	cfg DeviceFlowConfig,
 ) *DeviceFlowService {
@@ -95,6 +97,7 @@ func NewDeviceFlowService(
 		clients:    clients,
 		devices:    devices,
 		claimCodes: claimCodes,
+		tokens:     tokens,
 		audit:      audit,
 		cfg:        cfg,
 	}
@@ -219,6 +222,21 @@ func (s *DeviceFlowService) PollForToken(clientID, rawDeviceCode, ip string) (*L
 		return nil, ErrInvalidDeviceCode
 	}
 
+	// A session that came from a claim code lives or dies with it. Revoking a
+	// sticker code is how an operator retires a lost or compromised device, and
+	// the admin UI promises "the device will stop working" — but the device has
+	// long since traded the sticker for a device_code, so the check has to
+	// happen here, on every poll, not only at claim time.
+	if da.ClaimCodeID != "" {
+		cc, ccErr := s.claimCodes.GetByID(da.ClaimCodeID)
+		switch {
+		case ccErr == nil && cc.IsRevoked():
+			return nil, ErrClaimCodeRevoked
+		case ccErr != nil && !errors.Is(ccErr, domain.ErrNotFound):
+			return nil, fmt.Errorf("lookup claim code: %w", ccErr)
+		}
+	}
+
 	// Atomic single-consume. If a second poll sneaks in after approval and
 	// before this call, only one wins.
 	if err := s.devices.MarkConsumed(da.ID, now); err != nil {
@@ -229,12 +247,25 @@ func (s *DeviceFlowService) PollForToken(clientID, rawDeviceCode, ip string) (*L
 	}
 
 	client, err := s.clients.GetByID(da.ClientID)
-	audience := ""
+	var audience []string
 	if err == nil {
-		audience = client.Audience
+		audience = client.Audiences
 	}
 
-	result, err := s.auth.IssueTokensForUser(da.UserID, audience)
+	// The scope the user consented to on the approval page is the scope the
+	// device gets. It was validated at authorization time, persisted, and shown
+	// to the user — and then dropped here, so every device received a token
+	// with the user's full privileges regardless of what it asked for.
+	result, err := s.auth.IssueTokensForGrant(da.UserID, GrantContext{
+		Audience: audience,
+		Scope:    da.Scope,
+		// The device grant issues refresh tokens like any other flow, so they
+		// carry the client they were issued to. Without this, a leaked device
+		// refresh token was redeemable by any other registered client — the
+		// hole WP4 closed on the PKCE path.
+		ClientID:    da.ClientID,
+		ClaimCodeID: da.ClaimCodeID,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -387,28 +418,72 @@ func (s *DeviceFlowService) Approve(rawCode, userID, username, ip string) error 
 
 // Deny marks a pending session as denied. The device's next poll will receive
 // ErrDeviceAuthorizationDenied.
-func (s *DeviceFlowService) Deny(rawCode, ip string) error {
+// Deny marks the session identified by rawCode as denied on behalf of the
+// authenticated userID. rawCode may be a user_code (standard flow) or a
+// claim_code (sticker flow), matching Approve.
+//
+// Denial requires an authenticated caller for the same reason approval does:
+// it is the same decision with the opposite sign. Without it, anyone who could
+// read the code off the device's screen could deny the session and stop its
+// owner from ever signing it in.
+func (s *DeviceFlowService) Deny(rawCode, userID, username, ip string) error {
 	normalized := normalizeCode(rawCode)
 	if normalized == "" {
 		return ErrInvalidUserCode
 	}
 
+	// Standard flow: a per-session user_code.
 	da, err := s.devices.GetByUserCode(normalized)
+	if err == nil {
+		if err := s.devices.Deny(da.ID, time.Now().UTC()); err != nil {
+			return fmt.Errorf("deny: %w", err)
+		}
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventDeviceAuthorizeDenied,
+			UserID:    userID,
+			Username:  username,
+			ClientID:  da.ClientID,
+			IPAddress: ip,
+		})
+		return nil
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		return fmt.Errorf("lookup by user_code: %w", err)
+	}
+
+	// Sticker flow: the user typed the claim code printed on the device.
+	// Approve resolves this; without the same fallback here, "Deny this device"
+	// on that page could only ever fail.
+	cc, err := s.claimCodes.GetByHash(HashToken(normalized))
 	if errors.Is(err, domain.ErrNotFound) {
 		return ErrInvalidUserCode
 	}
 	if err != nil {
-		return fmt.Errorf("lookup by user_code: %w", err)
+		return fmt.Errorf("lookup claim code: %w", err)
+	}
+	if cc.IsBound() && cc.BoundUserID != userID {
+		// Bound to someone else — denying their device is not this user's call.
+		return ErrInvalidUserCode
 	}
 
-	if err := s.devices.Deny(da.ID, time.Now().UTC()); err != nil {
-		return fmt.Errorf("deny: %w", err)
+	pending, err := s.devices.ListPendingByClaimID(cc.ID)
+	if err != nil {
+		return fmt.Errorf("list pending sessions: %w", err)
 	}
-	s.record(&domain.AuthEvent{
-		EventType: domain.EventDeviceAuthorizeDenied,
-		ClientID:  da.ClientID,
-		IPAddress: ip,
-	})
+	now := time.Now().UTC()
+	for _, p := range pending {
+		if err := s.devices.Deny(p.ID, now); err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return fmt.Errorf("deny pending session: %w", err)
+		}
+		s.record(&domain.AuthEvent{
+			EventType: domain.EventDeviceAuthorizeDenied,
+			UserID:    userID,
+			Username:  username,
+			ClientID:  p.ClientID,
+			IPAddress: ip,
+			Detail:    "claim_code_id=" + cc.ID,
+		})
+	}
 	return nil
 }
 
@@ -479,6 +554,15 @@ func (s *DeviceFlowService) RevokeClaimCode(id, ip string) error {
 
 	if err := s.claimCodes.Revoke(id, time.Now().UTC()); err != nil {
 		return fmt.Errorf("revoke: %w", err)
+	}
+
+	// Stopping the device's next poll is not enough on its own: it is already
+	// holding a refresh token good for 30 days. The admin UI says "the device
+	// will stop working", so the tokens the claim code produced go too.
+	if s.tokens != nil {
+		if err := s.tokens.RevokeByClaimCodeID(id); err != nil {
+			return fmt.Errorf("revoke tokens for claim code: %w", err)
+		}
 	}
 	s.record(&domain.AuthEvent{
 		EventType: domain.EventClaimCodeRevoked,

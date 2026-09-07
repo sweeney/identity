@@ -233,12 +233,20 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 		return nil, fmt.Errorf("mark code used: %w", err)
 	}
 
-	return s.auth.IssueTokensForUser(code.UserID, client.Audience)
+	return s.auth.IssueTokensForGrant(code.UserID, GrantContext{
+		Audience: client.Audiences,
+		ClientID: client.ID,
+	})
 }
 
 // RefreshToken delegates to the underlying auth service refresh.
 func (s *OAuthService) RefreshToken(rawRefreshToken string) (*LoginResult, error) {
 	return s.auth.Refresh(rawRefreshToken)
+}
+
+// RefreshTokenForClient refreshes only if the token was issued to clientID.
+func (s *OAuthService) RefreshTokenForClient(rawRefreshToken, clientID string) (*LoginResult, error) {
+	return s.auth.RefreshForClient(rawRefreshToken, clientID)
 }
 
 const serviceTokenTTL = 15 * time.Minute
@@ -272,7 +280,7 @@ func (s *OAuthService) IssueClientCredentials(client *domain.OAuthClient, reques
 
 	claims := domain.ServiceTokenClaims{
 		ClientID: client.ID,
-		Audience: client.Audience,
+		Audience: client.Audiences,
 		Scope:    scope,
 	}
 

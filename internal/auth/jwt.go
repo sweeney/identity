@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -25,6 +24,7 @@ type identityClaims struct {
 	Username string      `json:"usr"`
 	Role     domain.Role `json:"rol"`
 	IsActive bool        `json:"act"`
+	Scope    string      `json:"scope,omitempty"`
 }
 
 // serviceClaims is the JWT claim set for client_credentials tokens (RFC 9068).
@@ -95,14 +95,15 @@ func (ti *TokenIssuer) Mint(claims domain.TokenClaims) (string, error) {
 		ExpiresAt: jwt.NewNumericDate(now.Add(ti.ttl)),
 		ID:        uuid.New().String(),
 	}
-	if claims.Audience != "" {
-		registered.Audience = jwt.ClaimStrings{claims.Audience}
+	if len(claims.Audience) > 0 {
+		registered.Audience = jwt.ClaimStrings(claims.Audience)
 	}
 	jwtClaims := identityClaims{
 		RegisteredClaims: registered,
 		Username:         claims.Username,
 		Role:             claims.Role,
 		IsActive:         claims.IsActive,
+		Scope:            claims.Scope,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwtClaims)
@@ -116,15 +117,23 @@ func (ti *TokenIssuer) Mint(claims domain.TokenClaims) (string, error) {
 
 // MintServiceToken creates a signed JWT for a client_credentials grant (RFC 9068).
 func (ti *TokenIssuer) MintServiceToken(claims domain.ServiceTokenClaims, ttl time.Duration) (string, error) {
-	if claims.Audience == "" {
+	// Service tokens must always name a real audience — that claim is the only
+	// thing stopping a token minted for service A being replayed against
+	// service B. An empty entry is not one.
+	if len(claims.Audience) == 0 {
 		return "", errors.New("audience is required for service tokens")
+	}
+	for _, a := range claims.Audience {
+		if a == "" {
+			return "", errors.New("audience entries must not be empty for service tokens")
+		}
 	}
 	now := time.Now()
 	jwtClaims := serviceClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    ti.issuer,
 			Subject:   claims.ClientID,
-			Audience:  jwt.ClaimStrings{claims.Audience},
+			Audience:  jwt.ClaimStrings(claims.Audience),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
@@ -193,7 +202,7 @@ func (ti *TokenIssuer) ParseServiceToken(_ context.Context, tokenStr string) (*d
 		}
 		return &domain.ServiceTokenClaims{
 			ClientID:  c.ClientID,
-			Audience:  strings.Join(c.Audience, " "),
+			Audience:  []string(c.Audience),
 			Scope:     c.Scope,
 			JTI:       c.ID,
 			ExpiresAt: exp,
@@ -285,7 +294,8 @@ func (ti *TokenIssuer) parseWithKey(tokenStr string, key *ecdsa.PrivateKey) (*do
 		Username: c.Username,
 		Role:     c.Role,
 		IsActive: c.IsActive,
-		Audience: strings.Join(c.Audience, " "),
+		Audience: []string(c.Audience),
+		Scope:    c.Scope,
 	}, nil
 }
 
