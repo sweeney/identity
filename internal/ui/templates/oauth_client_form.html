@@ -60,7 +60,16 @@
     </label>
     <label>
         Audience <small>(aud claim in issued tokens)</small>
-        <input type="text" name="audience" value="{{if .Client}}{{.Client.Audience}}{{else}}{{.FormAudience}}{{end}}" placeholder="e.g. https://api.example.com">
+        <input type="text" name="audience" value="{{if .Client}}{{.Client.Audience}}{{else}}{{.FormAudience}}{{end}}" placeholder="e.g. statehouse, or id.swee.net">
+        <small class="field-help">
+            The service these tokens are <em>for</em>. A token naming a different
+            service is refused here with <code>invalid_audience</code> — that is
+            what stops a token leaked from one service being replayed against
+            another. Use <code>id.swee.net</code> for tokens meant for this
+            server, or the target service's name. Required for
+            <code>client_credentials</code>; leave empty only if the tokens are
+            used solely against this server.
+        </small>
     </label>
     {{if .Client}}
     <label>
