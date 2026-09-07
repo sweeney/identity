@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,6 +116,54 @@ func TestRequireAudience_UserToken(t *testing.T) {
 			if tc.wantError != "" {
 				assert.Equal(t, tc.wantError, audienceErrorCode(t, rr))
 			}
+		})
+	}
+}
+
+// A token's audience names the service it is for. Identity had no explicit
+// identifier of its own, so RequireAudience was wired with the issuer URL and
+// compared against that exactly — meaning a client registered with the bare
+// hostname, which is a perfectly legitimate audience value under RFC 9068 §3
+// (an audience need not be a URL), was rejected for a missing scheme.
+//
+// Identity gets to decide which names refer to itself, and its issuer URL and
+// that URL's host are the same service. Treating them as equivalent does not
+// widen the boundary: a token for another service still matches neither.
+func TestRequireAudience_AcceptsIssuerHostAsSelf(t *testing.T) {
+	const issuerURL = "https://id.example.com"
+
+	tests := []struct {
+		name       string
+		audience   []string
+		wantStatus int
+	}{
+		{name: "issuer URL", audience: []string{"https://id.example.com"}, wantStatus: http.StatusOK},
+		{name: "bare host", audience: []string{"id.example.com"}, wantStatus: http.StatusOK},
+		{name: "no audience", audience: nil, wantStatus: http.StatusOK},
+
+		{name: "another service", audience: []string{"https://photo-api.example"}, wantStatus: http.StatusForbidden},
+		{name: "another host", audience: []string{"photo-api.example"}, wantStatus: http.StatusForbidden},
+		{
+			// A lookalike must not pass: it is a different host.
+			name: "suffix lookalike", audience: []string{"evil-id.example.com"}, wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			key, err := auth.GenerateKey()
+			require.NoError(t, err)
+			issuer, err := auth.NewTokenIssuer(key, nil, issuerURL, 15*time.Minute)
+			require.NoError(t, err)
+
+			token, err := issuer.Mint(domain.TokenClaims{
+				UserID: "u1", Username: "alice", Role: domain.RoleUser,
+				IsActive: true, Audience: tc.audience,
+			})
+			require.NoError(t, err)
+
+			rr := serveWithAudience(t, issuer, issuerURL, token)
+			assert.Equal(t, tc.wantStatus, rr.Code)
 		})
 	}
 }

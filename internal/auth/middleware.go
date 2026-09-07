@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	commonauth "github.com/sweeney/identity/common/auth"
@@ -210,12 +211,29 @@ func AudienceAllowed(aud []string, self string) bool {
 	if len(aud) == 0 {
 		return true
 	}
-	for _, a := range aud {
-		if a == self {
-			return true
+	for _, name := range selfAudiences(self) {
+		for _, a := range aud {
+			if a == name {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// selfAudiences returns the names that refer to this server.
+//
+// self is the configured issuer, a URL. An audience need not be a URL — RFC
+// 9068 §3 only requires it to identify the resource server — so a client
+// registered against the bare hostname is naming this same service and must be
+// accepted. Identity is the authority on which names mean itself, and this
+// widens nothing: a token for another service matches neither form.
+func selfAudiences(self string) []string {
+	names := []string{self}
+	if u, err := url.Parse(self); err == nil && u.Host != "" && u.Host != self {
+		names = append(names, u.Host)
+	}
+	return names
 }
 
 // RequireAudience is middleware that checks a token's aud claim against the

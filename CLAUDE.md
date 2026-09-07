@@ -88,6 +88,11 @@ parse a token directly — `/admin/login/passkey`, `/oauth/authorize/passkey`,
 `/oauth/device/passkey`). This is what stops a token delegated to a sibling
 resource server being replayed against the Identity API.
 
+An OAuth client whose tokens are meant for Identity itself may register its
+audience as either the issuer URL (`https://id.swee.net`) or the bare host
+(`id.swee.net`) — Identity treats both as naming itself. Any other value is a
+different service, and such a token is refused here.
+
 `TokenClaims.Audience` and `ServiceTokenClaims.Audience` are `[]string` holding
 the claim verbatim; test membership with `HasAudience`, never by comparing or
 splitting strings.
