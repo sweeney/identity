@@ -214,10 +214,14 @@ func runIdentityServer() error {
 			BucketName:  cfg.R2BucketName,
 			Env:         string(cfg.Env),
 			ServiceName: "identity",
-			// Identity keeps its pre-existing behavior: no per-write trigger
-			// throttling. Triggers are rare (seeded during user/admin
-			// mutations) and the existing coalescing channel is enough.
-			MinInterval:  0,
+			// Throttle triggered backups. The comment this replaces claimed
+			// triggers only come from user/admin mutations, but WebAuthnService
+			// fires them from FinishRegistration and DeleteCredential too, and
+			// both routes sit behind requireUserAuth rather than RequireAdmin.
+			// A plain user could therefore loop register/delete-passkey and
+			// force a full-database upload on every iteration — the coalescing
+			// channel caps concurrency at one, not the sustained rate.
+			MinInterval:  5 * time.Minute,
 			Schedule:     cfg.BackupSchedule,
 			ScheduleHour: cfg.BackupHour,
 		}, uploader, backupAuditRecorder(auditStore))

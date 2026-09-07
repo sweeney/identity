@@ -99,16 +99,48 @@ func (u *R2Uploader) Download(ctx context.Context, key, localPath string) error 
 	}
 	defer out.Body.Close()
 
-	f, err := os.Create(localPath)
-	if err != nil {
-		return fmt.Errorf("create file: %w", err)
-	}
-	defer f.Close()
+	return streamToFile(out.Body, localPath)
+}
 
-	if _, err := io.Copy(f, out.Body); err != nil {
+// streamToFile writes src to localPath without destroying what is already
+// there until the transfer has completed.
+//
+// On a restore localPath IS the live database, so writing into it directly —
+// as os.Create does, truncating first — means a connection that drops mid-body
+// leaves no database at all: the original gone, the replacement partial. The
+// download therefore lands in a sibling temp file, created 0600 so the
+// credential data is never briefly world-readable, and is renamed over the
+// destination only once it has arrived in full.
+func streamToFile(src io.Reader, localPath string) error {
+	tmpPath := localPath + ".download"
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+
+	cleanup := func() {
+		f.Close()
+		os.Remove(tmpPath)
+	}
+
+	if _, err := io.Copy(f, src); err != nil {
+		cleanup()
 		return fmt.Errorf("write file: %w", err)
 	}
-	return f.Chmod(0600)
+	if err := f.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("sync file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, localPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("replace %s: %w", localPath, err)
+	}
+	return nil
 }
 
 // Upload uploads the file at localPath to R2 at the given key.

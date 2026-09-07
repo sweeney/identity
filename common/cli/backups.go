@@ -91,9 +91,10 @@ func RestoreBackup(cfg BackupConfig, key string) error {
 		return err
 	}
 
-	if key != "" && !strings.HasPrefix(path.Base(key), cfg.ServiceName+"-") {
-		return fmt.Errorf("key %q does not belong to service %q (filename must start with %q-)",
-			key, cfg.ServiceName, cfg.ServiceName)
+	if key != "" {
+		if err := validateRestoreKey(key, cfg.Env, cfg.ServiceName); err != nil {
+			return err
+		}
 	}
 
 	dbPath := cfg.DBPath
@@ -166,5 +167,36 @@ func RestoreBackup(cfg BackupConfig, key string) error {
 
 	fmt.Printf("Restored %s from %s\n", dbPath, key)
 	fmt.Println("Start the server to use the restored database.")
+	return nil
+}
+
+// validateRestoreKey checks that an explicitly supplied backup key belongs to
+// this environment and this service.
+//
+// Backup keys are laid out as {env}/backups/{service}/{date}/{service}-{ts}.sqlite3,
+// and both the environment and the service are part of "is this the right
+// database". Checking only the filename let a production backup be restored
+// over a development database, or the reverse — a mistake that is easy to make
+// from a shell history and impossible to undo.
+func validateRestoreKey(key, env, service string) error {
+	// Clean first: a key containing ".." could otherwise satisfy the prefix
+	// check while naming an object outside it.
+	cleaned := path.Clean(key)
+	if cleaned != key {
+		return fmt.Errorf("key %q is not a clean path (environment prefix cannot be verified)", key)
+	}
+
+	if env == "" {
+		env = "development"
+	}
+	if !strings.HasPrefix(cleaned, env+"/backups/") {
+		return fmt.Errorf("key %q does not belong to environment %q (must start with %q)",
+			key, env, env+"/backups/")
+	}
+
+	if !strings.HasPrefix(path.Base(cleaned), service+"-") {
+		return fmt.Errorf("key %q does not belong to service %q (filename must start with %q-)",
+			key, service, service)
+	}
 	return nil
 }
