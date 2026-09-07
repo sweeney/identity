@@ -59,42 +59,136 @@ def redact(text, secret):
     return text
 
 
-def load_env_file(path):
-    """Read KEY=VALUE lines. Deliberately not a shell parser: no expansion, no
-    command substitution, nothing executed."""
+def _stat_and_warn(path):
+    """Common checks for any file we are about to read a secret out of."""
     if not os.path.exists(path):
-        die(f"no such env file: {path}")
+        die(f"no such file: {path}")
     if not os.path.isfile(path):
         die(f"not a regular file: {path}")
+    if not os.access(path, os.R_OK):
+        die(f"cannot read {path}\n"
+            f"       it likely belongs to the service user — try:\n"
+            f"       sudo {' '.join(sys.argv)}")
     try:
         st = os.stat(path)
     except OSError as e:
         die(f"cannot stat {path}: {e}")
     if st.st_mode & (stat.S_IRGRP | stat.S_IROTH):
-        print(f"warning: {path} is readable by group or others (mode "
-              f"{stat.filemode(st.st_mode)}) — it holds a client secret",
+        print(f"warning: {path} is readable by group or others "
+              f"(mode {stat.filemode(st.st_mode)}) — it holds a client secret",
               file=sys.stderr)
-    values = {}
+
+
+def read_config(path):
+    """Read scalar values out of a simple config file, keyed by dotted path.
+
+    This is NOT a YAML parser. It understands `key: value` and `KEY=VALUE`,
+    nested by indentation, which is what service config files in this estate
+    actually contain. It deliberately refuses anything it cannot read plainly
+    rather than guessing — a misread secret is a confusing 401, and a misread
+    *key* could send the wrong value somewhere.
+
+    Unsupported, and rejected rather than mangled: multi-line scalars (| and >),
+    anchors and aliases (& and *), and flow mappings ({a: b}).
+    """
+    _stat_and_warn(path)
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, val = line.partition("=")
-                key = key.strip()
-                val = val.strip().strip('"').strip("'")
-                if key:
-                    values[key] = val
+            lines = fh.read().splitlines()
     except OSError as e:
         die(f"cannot read {path}: {e}")
+
+    values, stack = {}, []
+    for lineno, raw in enumerate(lines, 1):
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if raw.lstrip().startswith("- "):
+            continue  # list item: not a scalar mapping, skip
+        indent = len(raw) - len(raw.lstrip())
+        line = raw.strip()
+
+        if ":" in line:
+            key, _, val = line.partition(":")
+        elif "=" in line:
+            key, _, val = line.partition("=")
+        else:
+            continue
+        key, val = key.strip(), val.strip()
+        if not key:
+            continue
+
+        # Strip a trailing comment from an unquoted value.
+        if val and val[0] not in "\"'":
+            val = val.split(" #", 1)[0].strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+
+        if val in ("|", ">", "|-", ">-"):
+            die(f"{path}:{lineno}: multi-line values are not supported by this "
+                f"reader.\n       Pass the secret via the environment instead.")
+        if val.startswith("&") or val.startswith("*"):
+            die(f"{path}:{lineno}: YAML anchors/aliases are not supported by "
+                f"this reader.\n       Pass the secret via the environment instead.")
+        if val.startswith("{"):
+            die(f"{path}:{lineno}: inline mappings are not supported by this "
+                f"reader.\n       Pass the secret via the environment instead.")
+
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        path_parts = [k for _, k in stack] + [key]
+
+        if val == "":
+            stack.append((indent, key))
+            continue
+
+        dotted = ".".join(path_parts)
+        if dotted in values and values[dotted] != val:
+            die(f"{path}: {dotted} appears more than once with different "
+                f"values — refusing to guess which is meant")
+        values[dotted] = val
     return values
 
 
-LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
+def find_value(values, explicit, candidates, what, path):
+    """Resolve one setting: an explicit key path, else the first candidate that
+    matches exactly one entry. Ambiguity is an error, never a guess."""
+    # Key names vary in case between YAML (client_secret) and env-style files
+    # (OAUTH_CLIENT_SECRET), so match case-insensitively throughout.
+    def norm(k):
+        return k.lower().replace("-", "_")
+
+    if explicit:
+        for k in values:
+            if norm(k) == norm(explicit):
+                return values[k], k
+        tail = {k: v for k, v in values.items()
+                if norm(k.split(".")[-1]) == norm(explicit)}
+        if len(tail) == 1:
+            k, v = next(iter(tail.items()))
+            return v, k
+        if not tail:
+            die(f"{path}: no key {explicit!r} found. Run --print-keys to see "
+                f"what this file contains.")
+        die(f"{path}: {explicit!r} is ambiguous — matches {', '.join(sorted(tail))}.\n"
+            f"       Give the full dotted path.")
+
+    for cand in candidates:
+        hits = {k: v for k, v in values.items()
+                if norm(k) == norm(cand) or norm(k.split(".")[-1]) == norm(cand)}
+        if len(hits) == 1:
+            k, v = next(iter(hits.items()))
+            return v, k
+        if len(hits) > 1:
+            die(f"{path}: {cand!r} is ambiguous — matches {', '.join(sorted(hits))}.\n"
+                f"       Pass --{what}-key with the full dotted path.")
+    die(f"{path}: could not find the {what}. Looked for: "
+        f"{', '.join(candidates)}.\n"
+        f"       Run --print-keys to see the file's structure, then pass "
+        f"--{what}-key.")
 
 
 def is_loopback(host):
+    """Loopback is the one place an unencrypted token is not a disclosure."""
     return (host or "").lower().strip("[]") in ("localhost", "127.0.0.1", "::1")
 
 
@@ -204,15 +298,22 @@ def probe(url, token):
 def main():
     p = argparse.ArgumentParser(
         description="Check what a service's OAuth token contains and who accepts it.",
-        epilog="The secret is never accepted as an argument. Set CLIENT_SECRET "
-               "in the environment or use --env-file.")
+        epilog="The secret is never accepted as a command-line argument. Point "
+               "--config at the service's own config file, or set CLIENT_SECRET "
+               "in the environment.")
     p.add_argument("urls", nargs="*", metavar="URL",
                    help="https endpoints to probe with the token (GET only)")
-    p.add_argument("--client", dest="client_id", default=os.environ.get("CLIENT_ID"),
-                   help="client id (or set CLIENT_ID)")
-    p.add_argument("--env-file", help="read CLIENT_ID/CLIENT_SECRET from a KEY=VALUE file")
-    p.add_argument("--secret-var", default="CLIENT_SECRET",
-                   help="env/file variable holding the secret (default CLIENT_SECRET)")
+    p.add_argument("--config", metavar="FILE",
+                   help="the service's config file, e.g. /etc/countinghouse/config.yaml")
+    p.add_argument("--print-keys", action="store_true",
+                   help="list the settings found in --config (names only, no values) "
+                        "and exit")
+    p.add_argument("--client", dest="client_id", default=None,
+                   help="client id (else read from --config, else CLIENT_ID)")
+    p.add_argument("--client-key", metavar="PATH",
+                   help="dotted path to the client id in --config")
+    p.add_argument("--secret-key", metavar="PATH",
+                   help="dotted path to the client secret in --config")
     p.add_argument("--issuer", default=os.environ.get("ISSUER", DEFAULT_ISSUER))
     p.add_argument("--allow-host", action="append", default=[],
                    metavar="SUFFIX", help="additional permitted host suffix")
@@ -224,20 +325,47 @@ def main():
 
     allowed = tuple(DEFAULT_ALLOWED_SUFFIXES) + tuple(args.allow_host)
 
-    env = dict(os.environ)
-    if args.env_file:
-        env.update(load_env_file(args.env_file))
+    CLIENT_ID_KEYS = ("client_id", "oauth_client_id", "identity_client_id")
+    SECRET_KEYS = ("client_secret", "oauth_client_secret", "identity_client_secret")
 
-    client_id = args.client_id or env.get("CLIENT_ID")
-    secret = env.get(args.secret_var)
+    client_id = args.client_id
+    secret = None
+    source = "the environment"
+
+    if args.config:
+        values = read_config(args.config)
+        if args.print_keys:
+            print(f"Settings found in {args.config}")
+            print("(names only — values are never shown)\n")
+            for k in sorted(values):
+                looks_secret = any(w in k.lower() for w in ("secret", "password", "token", "key"))
+                print(f"  {k}{'   <- looks like a secret' if looks_secret else ''}")
+            print(f"\nPass --secret-key and, if needed, --client-key with the "
+                  f"path you want.")
+            return EXIT_OK
+        secret, skey = find_value(values, args.secret_key, SECRET_KEYS, "secret", args.config)
+        if not client_id:
+            try:
+                client_id, ckey = find_value(values, args.client_key, CLIENT_ID_KEYS,
+                                             "client", args.config)
+            except SystemExit:
+                raise
+        source = f"{args.config} ({skey})"
+    else:
+        if args.print_keys:
+            die("--print-keys needs --config")
+        client_id = client_id or os.environ.get("CLIENT_ID")
+        secret = os.environ.get("CLIENT_SECRET")
 
     if not client_id:
-        die("no client id — pass --client or set CLIENT_ID")
+        die("no client id — pass --client, or provide it in --config")
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", client_id):
         die(f"implausible client id: {client_id!r}")
     if not secret:
-        die(f"no secret — set {args.secret_var} in the environment, or use "
-            f"--env-file.\n       Never pass a secret as a command-line argument.")
+        die("no client secret found.\n"
+            "       Point --config at the service's config file, or set "
+            "CLIENT_SECRET in the environment.\n"
+            "       Never pass a secret as a command-line argument.")
 
     # A secret on the command line would already be in the shell history and
     # the process list; refuse rather than pretend it is safe.
@@ -250,7 +378,7 @@ def main():
         if secret and len(secret) >= MIN_MATCHABLE_SECRET and secret in a:
             die("the secret appears in this command's arguments. It is now in "
                 "your shell history and was visible in `ps`.\n"
-                "       Rotate it, then use --env-file or the environment.")
+                "       Rotate it, then use --config or the environment.")
 
     issuer_host = (urllib.parse.urlparse(args.issuer).hostname or "").lower()
     if not args.issuer.startswith("https://"):
@@ -261,6 +389,7 @@ def main():
     urls = [check_url(u, allowed, args.allow_http_loopback) for u in args.urls]
 
     print(f"Client:  {client_id}")
+    print(f"Secret:  from {source}")
     print(f"Issuer:  {args.issuer}")
     print(f"Probing: {len(urls)} endpoint(s)" if urls else "Probing: none given")
     print()
