@@ -47,7 +47,8 @@ func extractClientCredentials(r *http.Request) (*clientCredentials, bool) {
 
 	// Fall back to form body (client_secret_post)
 	clientID := r.FormValue("client_id")
-	clientSecret := r.FormValue("client_secret")
+	// RFC 6749 §2.3.1 puts client_secret_post credentials in the body.
+	clientSecret := r.PostFormValue("client_secret")
 	if clientID != "" && clientSecret != "" {
 		return &clientCredentials{
 			ClientID:     clientID,

@@ -74,9 +74,18 @@ func (h *userHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An unrecognised role is a mistake worth reporting, not one to coerce:
+	// silently turning "Admin" into "user" creates an account with the wrong
+	// privileges and tells the caller it worked.
 	role := domain.RoleUser
-	if req.Role == string(domain.RoleAdmin) {
-		role = domain.RoleAdmin
+	if req.Role != "" {
+		parsed, ok := domain.ParseRole(req.Role)
+		if !ok {
+			jsonError(w, http.StatusBadRequest, "validation_error",
+				`role must be "admin" or "user"`)
+			return
+		}
+		role = parsed
 	}
 
 	claims := auth.ClaimsFromContext(r.Context())
@@ -148,8 +157,13 @@ func (h *userHandler) update(w http.ResponseWriter, r *http.Request) {
 		IsActive:    req.IsActive,
 	}
 	if req.Role != nil {
-		r := domain.Role(*req.Role)
-		input.Role = &r
+		parsed, ok := domain.ParseRole(*req.Role)
+		if !ok {
+			jsonError(w, http.StatusBadRequest, "validation_error",
+				`role must be "admin" or "user"`)
+			return
+		}
+		input.Role = &parsed
 	}
 
 	claims := auth.ClaimsFromContext(r.Context())

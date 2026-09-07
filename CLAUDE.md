@@ -118,6 +118,15 @@ Disabling or demoting an account takes effect **immediately** on the API, not ju
 - `admin` — full access to all endpoints including user management and admin UI. The last active admin cannot be deleted, demoted, or deactivated (`cannot_delete_last_admin`) — otherwise the admin plane locks with no way back short of `--reset-admin` on the host.
 - `user` — can call `/auth/*` and `GET /users/{own-id}` only
 
+Only these two values are accepted. Anything else is a `400 validation_error`
+on create and update, rather than being coerced to `user` (which would quietly
+produce an account with the wrong privileges) or stored verbatim (producing a
+role that is neither admin nor user).
+
+Admin UI credential fields — login, the new-user form, and the "confirm your
+password" gate on destructive actions — are read from the POST body only, never
+from the URL query.
+
 ## Error envelope
 
 All API errors return the same shape (`/oauth/token` uses RFC 6749 format instead):

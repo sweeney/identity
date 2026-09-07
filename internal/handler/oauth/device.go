@@ -245,8 +245,9 @@ func (h *oauthHandler) deviceVerifyPost(w http.ResponseWriter, r *http.Request) 
 	}
 
 	userCode := strings.TrimSpace(r.FormValue("user_code"))
-	username := r.FormValue("username")
-	password := r.FormValue("password")
+	// Body only — see the note in admin/handler.go.
+	username := r.PostFormValue("username")
+	password := r.PostFormValue("password")
 	action := r.FormValue("action") // "approve" or "deny"
 
 	if userCode == "" {
@@ -357,7 +358,7 @@ func (h *oauthHandler) deviceVerifyPasskey(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	accessToken := r.FormValue("access_token")
+	accessToken := r.PostFormValue("access_token")
 	userCode := strings.TrimSpace(r.FormValue("user_code"))
 	if accessToken == "" || userCode == "" {
 		errResp(http.StatusBadRequest, "missing_parameters", "access_token and user_code are required.")

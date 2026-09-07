@@ -544,8 +544,11 @@ func postDevicePasskey(t *testing.T, h http.Handler, form url.Values) *httptest.
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", "https://id.example.com")
+	// A real browser form POST puts these in the body, and the handlers read
+	// them with PostFormValue — so the test request must too (WP10).
 	req.Body = http.NoBody
 	req.Form = form
+	req.PostForm = form
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr
@@ -671,7 +674,9 @@ func TestDeviceVerifyPasskey_CrossOriginRejected(t *testing.T) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", "https://evil.example.com")
 	req.Body = http.NoBody
-	req.Form = url.Values{"access_token": {token}, "user_code": {"ABCD-1234"}}
+	form := url.Values{"access_token": {token}, "user_code": {"ABCD-1234"}}
+	req.Form = form
+	req.PostForm = form
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	assert.Equal(t, http.StatusForbidden, rr.Code)

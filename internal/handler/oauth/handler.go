@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -132,8 +133,9 @@ func (h *oauthHandler) authorizePost(w http.ResponseWriter, r *http.Request) {
 	redirectURI := r.FormValue("redirect_uri")
 	state := r.FormValue("state")
 	codeChallenge := r.FormValue("code_challenge")
-	username := r.FormValue("username")
-	password := r.FormValue("password")
+	// Body only — see the note in admin/handler.go.
+	username := r.PostFormValue("username")
+	password := r.PostFormValue("password")
 
 	// Re-validate client on POST to prevent CSRF-style attacks
 	client, err := h.svc.ValidateAuthorizeRequest(clientID, redirectURI)
@@ -663,6 +665,16 @@ func (h *oauthHandler) clientRedirect(w http.ResponseWriter, redirectURL string)
 
 const oauthPromptCookie = "oauth_passkey_prompt"
 
+// secureCookies reports whether cookies should carry the Secure attribute.
+//
+// Taken from the configured issuer rather than a separate flag: production
+// config already requires JWT_ISSUER to be https://, so the two are the same
+// statement, and development over plain http correctly gets no Secure (where
+// setting it would stop the cookie working at all).
+func (h *oauthHandler) secureCookies() bool {
+	return h.tokenIssuer != nil && strings.HasPrefix(h.tokenIssuer.Issuer(), "https://")
+}
+
 // shouldPromptPasskey returns true if WebAuthn is enabled and the user has no passkeys.
 func (h *oauthHandler) shouldPromptPasskey(userID string) bool {
 	if h.webauthnSvc == nil || h.sessionKey == "" {
@@ -707,6 +719,7 @@ func (h *oauthHandler) setPromptSession(w http.ResponseWriter, userID, next stri
 		Path:     "/oauth",
 		MaxAge:   300,
 		HttpOnly: true,
+		Secure:   h.secureCookies(),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -743,6 +756,7 @@ func (h *oauthHandler) clearPromptSession(w http.ResponseWriter) {
 		Path:     "/oauth",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   h.secureCookies(),
 	})
 }
 

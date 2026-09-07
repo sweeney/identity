@@ -105,12 +105,14 @@ func TestAuthorizePasskey_ForeignAudience_Rejected(t *testing.T) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", "https://id.example.com")
 	req.Body = http.NoBody
-	req.Form = url.Values{
+	form := url.Values{
 		"access_token":   {token},
 		"client_id":      {"testapp"},
 		"redirect_uri":   {"https://app.example.com/callback"},
 		"code_challenge": {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"},
 	}
+	req.Form = form
+	req.PostForm = form
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

@@ -93,6 +93,7 @@ func TestAuthorizePasskey_ServiceToken_Rejected(t *testing.T) {
 	req.Header.Set("Origin", "https://id.example.com")
 	req.Body = http.NoBody
 	req.Form = form
+	req.PostForm = form
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

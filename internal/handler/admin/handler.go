@@ -204,6 +204,15 @@ func (h *adminHandler) render(w http.ResponseWriter, r *http.Request, page strin
 	data["CSRFToken"] = h.csrfToken(r)
 	data["SiteName"] = h.cfg.SiteName
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// A page carrying a freshly generated client secret must not be written to
+	// the browser's disk cache or held by any intermediary: it is shown exactly
+	// once and cannot be recovered, so a cached copy is the only other place it
+	// exists.
+	if _, hasSecret := data["GeneratedSecret"]; hasSecret {
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+	}
 	if err := h.tmpl.render(w, page, data); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
@@ -230,8 +239,11 @@ func (h *adminHandler) loginGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *adminHandler) loginPost(w http.ResponseWriter, r *http.Request) {
-	username := r.FormValue("username")
-	password := r.FormValue("password")
+	// PostFormValue, not FormValue: FormValue consults the URL query first, so
+	// credentials could arrive in a link — logged by the server, kept in browser
+	// history, and leaked in the Referer of anything the page then loads.
+	username := r.PostFormValue("username")
+	password := r.PostFormValue("password")
 
 	ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
 
@@ -285,7 +297,7 @@ func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken := r.FormValue("access_token")
+	accessToken := r.PostFormValue("access_token")
 	if accessToken == "" {
 		writeJSONError(w, http.StatusBadRequest, "Passkey authentication failed")
 		return
@@ -533,10 +545,11 @@ func (h *adminHandler) usersNewGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *adminHandler) usersNewPost(w http.ResponseWriter, r *http.Request) {
-	username := r.FormValue("username")
-	displayName := r.FormValue("display_name")
-	password := r.FormValue("password")
-	roleStr := r.FormValue("role")
+	username := r.PostFormValue("username")
+	displayName := r.PostFormValue("display_name")
+	// Body only — a new user's password must not travel in a URL.
+	password := r.PostFormValue("password")
+	roleStr := r.PostFormValue("role")
 
 	if username == "" || password == "" {
 		h.render(w, r, "user_form.html", map[string]any{
@@ -605,17 +618,24 @@ func (h *adminHandler) usersEditPost(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	input := service.UpdateUserInput{}
-	if dn := r.FormValue("display_name"); dn != "" {
+	if dn := r.PostFormValue("display_name"); dn != "" {
 		input.DisplayName = &dn
 	}
-	if pw := r.FormValue("password"); pw != "" {
+	if pw := r.PostFormValue("password"); pw != "" {
 		input.Password = &pw
 	}
-	if roleStr := r.FormValue("role"); roleStr != "" {
-		role := domain.Role(roleStr)
+	if roleStr := r.PostFormValue("role"); roleStr != "" {
+		role, ok := domain.ParseRole(roleStr)
+		if !ok {
+			h.render(w, r, "user_form.html", map[string]any{
+				"Error":  "Role must be admin or user.",
+				"IsEdit": true,
+			})
+			return
+		}
 		input.Role = &role
 	}
-	isActive := r.FormValue("is_active") == "1"
+	isActive := r.PostFormValue("is_active") == "1"
 	input.IsActive = &isActive
 
 	user, err := h.userSvc.GetByID(id)
@@ -1307,7 +1327,9 @@ func (h *adminHandler) auditMeta(r *http.Request) service.AuditMeta {
 // verifyAdminPassword validates the current admin's password from the request form field "admin_password".
 // It returns nil on success or an error if the password is missing or incorrect.
 func (h *adminHandler) verifyAdminPassword(r *http.Request) error {
-	password := r.FormValue("admin_password")
+	// Body only. A re-authentication gate satisfiable from the URL is one a
+	// crafted link can satisfy on the admin's behalf.
+	password := r.PostFormValue("admin_password")
 	if password == "" {
 		return errors.New("password confirmation required")
 	}
