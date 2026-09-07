@@ -112,7 +112,7 @@ Disabling or demoting an account takes effect **immediately** on the API, not ju
 
 ## Role model
 
-- `admin` — full access to all endpoints including user management and admin UI
+- `admin` — full access to all endpoints including user management and admin UI. The last active admin cannot be deleted, demoted, or deactivated (`cannot_delete_last_admin`) — otherwise the admin plane locks with no way back short of `--reset-admin` on the host.
 - `user` — can call `/auth/*` and `GET /users/{own-id}` only
 
 ## Error envelope

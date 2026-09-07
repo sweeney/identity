@@ -140,6 +140,23 @@ func (s *UserService) Update(id string, input UpdateUserInput, meta ...AuditMeta
 		user.PasswordHash = hash
 	}
 
+	// Guard the admin plane. Demoting or deactivating the only remaining admin
+	// locks everyone out of /admin/ with no way back through the product —
+	// nobody is left who can promote a replacement, and recovery means shell
+	// access on the host to run --reset-admin. Delete has always refused this;
+	// Update is the same loss by another route.
+	losingAdmin := (input.Role != nil && *input.Role != domain.RoleAdmin) ||
+		(input.IsActive != nil && !*input.IsActive)
+	if losingAdmin && user.Role == domain.RoleAdmin && user.IsActive {
+		lastAdmin, err := s.isLastActiveAdmin(user.ID)
+		if err != nil {
+			return nil, err
+		}
+		if lastAdmin {
+			return nil, ErrCannotDeleteLastAdmin
+		}
+	}
+
 	if input.Role != nil {
 		user.Role = *input.Role
 	}
@@ -167,6 +184,22 @@ func (s *UserService) Update(id string, input UpdateUserInput, meta ...AuditMeta
 
 	s.backup.TriggerAsync()
 	return user, nil
+}
+
+// isLastActiveAdmin reports whether id is the only active admin left. An
+// inactive admin cannot log in, so it is not a way back into the admin plane
+// and does not count.
+func (s *UserService) isLastActiveAdmin(id string) (bool, error) {
+	users, err := s.users.List()
+	if err != nil {
+		return false, fmt.Errorf("list users: %w", err)
+	}
+	for _, u := range users {
+		if u.ID != id && u.Role == domain.RoleAdmin && u.IsActive {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // Delete permanently removes a user. Returns ErrCannotDeleteLastAdmin if the

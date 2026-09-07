@@ -1065,7 +1065,7 @@ All errors follow this envelope:
 | `403` | `invalid_audience` | Token was minted for another service — use a token issued for Identity |
 | `404` | `not_found` | Show not found UI |
 | `409` | `username_taken` | Show inline field error |
-| `409` | `cannot_delete_last_admin` | Show error message |
+| `409` | `cannot_delete_last_admin` | Show error message. Returned by both `DELETE` and `PUT /users/{id}` — the last admin cannot be deleted, demoted, or deactivated. |
 | `422` | `validation_error` | Show field errors |
 | `422` | `weak_password` | Show password strength requirement |
 | `500` | `internal_error` | Show generic error |

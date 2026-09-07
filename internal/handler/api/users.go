@@ -163,6 +163,9 @@ func (h *userHandler) update(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusConflict, "username_taken", "a user with that username already exists")
 		case errors.Is(err, service.ErrWeakPassword):
 			jsonError(w, http.StatusUnprocessableEntity, "weak_password", "password must be at least 8 characters")
+		case errors.Is(err, service.ErrCannotDeleteLastAdmin):
+			jsonError(w, http.StatusConflict, "cannot_delete_last_admin",
+				"cannot demote or deactivate the last admin user")
 		default:
 			jsonError(w, http.StatusInternalServerError, "internal_error", "failed to update user")
 		}

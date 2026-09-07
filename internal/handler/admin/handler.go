@@ -1228,7 +1228,7 @@ func userFacingError(err error) string {
 	case errors.Is(err, service.ErrWeakPassword):
 		return "Password is too weak. Please use a longer password."
 	case errors.Is(err, service.ErrCannotDeleteLastAdmin):
-		return "Cannot delete the last admin user."
+		return "This is the last admin account — promote another user to admin before demoting, deactivating or deleting it."
 	default:
 		log.Printf("admin ui error: %v", err)
 		return "An unexpected error occurred."

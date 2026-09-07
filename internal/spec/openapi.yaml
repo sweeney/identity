@@ -519,6 +519,15 @@ paths:
           description: Admin role required
         "404":
           description: User not found
+        "409":
+          description: Cannot demote or deactivate the last admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: cannot_delete_last_admin
+                message: cannot demote or deactivate the last admin user
         "422":
           description: Weak password
 
