@@ -73,8 +73,12 @@ def _stat_and_warn(path):
         st = os.stat(path)
     except OSError as e:
         die(f"cannot stat {path}: {e}")
-    if st.st_mode & (stat.S_IRGRP | stat.S_IROTH):
-        print(f"warning: {path} is readable by group or others "
+    # Warn only on world-readable. Group-readable is the normal shape for a
+    # service config — root owns it, the service's own group reads it — so
+    # warning about 640 fires on correct deployments and teaches people to
+    # ignore the warning that matters.
+    if st.st_mode & stat.S_IROTH:
+        print(f"warning: {path} is world-readable "
               f"(mode {stat.filemode(st.st_mode)}) — it holds a client secret",
               file=sys.stderr)
 
