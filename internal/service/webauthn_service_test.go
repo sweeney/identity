@@ -171,24 +171,29 @@ func TestWebAuthnService_BeginLogin_DiscoverableFlow(t *testing.T) {
 
 func TestWebAuthnService_BeginLogin_WithUsername(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, userRepo, _, challengeRepo := newTestWebAuthnService(t, ctrl)
+	svc, _, _, challengeRepo := newTestWebAuthnService(t, ctrl)
 
-	user := activeUser()
-	userRepo.EXPECT().GetByUsername("alice").Return(user, nil)
-	challengeRepo.EXPECT().Create(gomock.Any()).Return(nil)
+	var stored *domain.WebAuthnChallenge
+	challengeRepo.EXPECT().Create(gomock.Any()).DoAndReturn(func(ch *domain.WebAuthnChallenge) error {
+		stored = ch
+		return nil
+	})
 
 	assertion, _, err := svc.BeginLogin("alice")
 	require.NoError(t, err)
 	// Uses discoverable flow to prevent username enumeration — no allowCredentials
 	assert.Empty(t, assertion.Response.AllowedCredentials)
+	// The username is a UI hint only. Recording it on the challenge would bind
+	// validation to a user the ceremony was never bound to (WP12).
+	require.NotNil(t, stored)
+	assert.Empty(t, stored.UserID,
+		"an authentication challenge must not be bound to the submitted username")
 }
 
 func TestWebAuthnService_BeginLogin_NoCredentials(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, userRepo, _, challengeRepo := newTestWebAuthnService(t, ctrl)
+	svc, _, _, challengeRepo := newTestWebAuthnService(t, ctrl)
 
-	user := activeUser()
-	userRepo.EXPECT().GetByUsername("alice").Return(user, nil)
 	challengeRepo.EXPECT().Create(gomock.Any()).Return(nil)
 
 	// User with no passkeys should still get a discoverable challenge (not an error)
@@ -204,18 +209,15 @@ func TestWebAuthnService_BeginLogin_ResponsesIndistinguishable(t *testing.T) {
 	// Verify that existing user (with or without passkeys) and non-existing user
 	// all produce indistinguishable responses to prevent username enumeration.
 	ctrl := gomock.NewController(t)
-	svc, userRepo, _, challengeRepo := newTestWebAuthnService(t, ctrl)
+	svc, _, _, challengeRepo := newTestWebAuthnService(t, ctrl)
 
 	challengeRepo.EXPECT().Create(gomock.Any()).Return(nil).Times(3)
 
 	// Case 1: non-existing user
-	userRepo.EXPECT().GetByUsername("ghost").Return(nil, domain.ErrNotFound)
 	resp1, id1, err1 := svc.BeginLogin("ghost")
 	require.NoError(t, err1)
 
 	// Case 2: existing user, no passkeys
-	user := activeUser()
-	userRepo.EXPECT().GetByUsername("alice").Return(user, nil)
 	resp2, id2, err2 := svc.BeginLogin("alice")
 	require.NoError(t, err2)
 
@@ -238,9 +240,8 @@ func TestWebAuthnService_BeginLogin_ResponsesIndistinguishable(t *testing.T) {
 
 func TestWebAuthnService_BeginLogin_UnknownUser_FakeChallenge(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, userRepo, _, challengeRepo := newTestWebAuthnService(t, ctrl)
+	svc, _, _, challengeRepo := newTestWebAuthnService(t, ctrl)
 
-	userRepo.EXPECT().GetByUsername("ghost").Return(nil, domain.ErrNotFound)
 	challengeRepo.EXPECT().Create(gomock.Any()).Return(nil)
 
 	// Should not error — returns a fake challenge to prevent user enumeration

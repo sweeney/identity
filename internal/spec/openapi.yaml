@@ -759,9 +759,12 @@ paths:
       summary: Begin passkey authentication
       description: |
         Starts the WebAuthn authentication ceremony. No authentication required.
-        If `username` is provided, the server associates the challenge with that user
-        (but still uses discoverable credential flow to prevent username enumeration).
-        If `username` is omitted, uses a fully discoverable credential flow.
+        Always uses the discoverable credential flow, whether or not `username`
+        is supplied: the challenge is never associated with a user, and the
+        response never names a credential. This keeps an existing user, a user
+        with no passkeys, and an unknown username indistinguishable at both this
+        endpoint and the finish step. Whoever's passkey signs the assertion is
+        who is logged in, regardless of the name submitted.
         Returns assertion options (pass to `navigator.credentials.get()`)
         and a `challenge_id` for the finish step.
       tags: [webauthn]
@@ -774,7 +777,9 @@ paths:
               properties:
                 username:
                   type: string
-                  description: Optional username hint. Omit for fully discoverable (usernameless) login.
+                  description: |
+                    Optional UI hint only — it does not change the ceremony or the
+                    response. Omit it for a fully usernameless login.
                   example: alice
       responses:
         "200":
