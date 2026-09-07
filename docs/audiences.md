@@ -81,7 +81,7 @@ three:
 { "aud": ["statehouse", "countinghouse", "id.swee.net"] }
 ```
 
-Tick the services on the client form. The list offered is every registered
+Select the services on the client form. The list offered is every registered
 client id plus every audience already in use — the services in this deployment
 are themselves registered clients, since they need `client_credentials` to call
 each other, so the clients table already *is* the register of known service

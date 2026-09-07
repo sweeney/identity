@@ -25,6 +25,14 @@ func NewRouter(cfg Config, authSvc service.AuthServicer, userSvc service.UserSer
 		// has reports whether a list contains a value. Used by the audience
 		// picker to decide which selected values are already offered as
 		// checkboxes and which belong in the free-text field.
+		// minInt returns the smaller of two ints. Used to cap the visible rows
+		// of the audience select so a long list does not fill the page.
+		"minInt": func(cap, n int) int {
+			if n < cap {
+				return n
+			}
+			return cap
+		},
 		"has": func(list []string, v string) bool {
 			for _, item := range list {
 				if item == v {

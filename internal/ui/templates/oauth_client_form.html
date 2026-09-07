@@ -62,26 +62,18 @@
         Audience <small>(aud claim in issued tokens)</small>
         {{$selected := .FormAudiences}}{{if .Client}}{{$selected = .Client.Audiences}}{{end}}
         {{if .KnownAudiences}}
-        <div class="audience-picker">
+        <select name="audience" multiple size="{{len .KnownAudiences | minInt 6}}" class="audience-select">
             {{range .KnownAudiences}}
-            <label class="audience-option">
-                <input type="checkbox" name="audience" value="{{.}}"
-                    {{$name := .}}{{range $selected}}{{if eq . $name}}checked{{end}}{{end}}>
-                <span>{{.}}</span>
-            </label>
+            <option value="{{.}}"{{$name := .}}{{range $selected}}{{if eq . $name}} selected{{end}}{{end}}>{{.}}</option>
             {{end}}
-        </div>
+        </select>
         {{end}}
         <input type="text" name="audience" value="{{range $selected}}{{if not (has $.KnownAudiences .)}}{{.}} {{end}}{{end}}"
-            placeholder="another service, or several separated by spaces">
+            placeholder="add a service not listed above">
         <small class="field-help">
-            The service these tokens are <em>for</em>. A token naming a different
-            service is refused here with <code>invalid_audience</code> — that is
-            what stops a token leaked from one service being replayed against
-            another. Use <code>id.swee.net</code> for tokens meant for this
-            server, or the target service's name. Required for
-            <code>client_credentials</code>; leave empty only if the tokens are
-            used solely against this server.
+            The services these tokens are for — a token is only accepted by the
+            services it names. Select several if this client talks to several.
+            Required for <code>client_credentials</code>.
         </small>
     </label>
     {{if .Client}}
