@@ -412,7 +412,16 @@ func TestJWKSVerifier_RefetchDeduplicated(t *testing.T) {
 		"singleflight must collapse concurrent refetches to one outbound request; got %d", fetches.Load())
 }
 
-func TestJWKSVerifier_NetworkFailure_ReturnsTokenInvalid(t *testing.T) {
+// TestJWKSVerifier_NetworkFailure_ReturnsKeysUnavailable replaces an earlier
+// test that asserted the opposite — that a network failure surfaces as
+// ErrTokenInvalid.
+//
+// That was the WP8 defect, not the intended contract. Callers sign the user out
+// on an invalid token, so reporting an identity outage that way makes every
+// service in the ecosystem sign every user out at the same moment, over tokens
+// that were never examined. It is a statement about our infrastructure, and it
+// now has its own error.
+func TestJWKSVerifier_NetworkFailure_ReturnsKeysUnavailable(t *testing.T) {
 	// Point the verifier at an unreachable URL so fetch fails.
 	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
 		IssuerURL: "http://127.0.0.1:1", // invalid port → immediate connection failure
@@ -426,8 +435,10 @@ func TestJWKSVerifier_NetworkFailure_ReturnsTokenInvalid(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = v.Parse(context.Background(), tok)
-	assert.ErrorIs(t, err, commonauth.ErrTokenInvalid,
-		"network failure during JWKS fetch should surface as ErrTokenInvalid")
+	assert.ErrorIs(t, err, commonauth.ErrKeysUnavailable,
+		"an unreachable JWKS endpoint is an infrastructure failure, not a bad token")
+	assert.NotErrorIs(t, err, commonauth.ErrTokenInvalid,
+		"clients sign the user out on ErrTokenInvalid — an outage must not trigger that")
 }
 
 func TestJWKSVerifier_Construction_ValidatesInputs(t *testing.T) {

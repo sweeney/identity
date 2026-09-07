@@ -175,8 +175,26 @@ token verification.
   Setting `RequiredAudience` is the belt to `HasAudience`'s braces — it makes
   the JWT parser itself reject a non-matching `aud`, and (because it requires
   the claim to be present) also rejects tokens that carry no audience at all.
-- **Errors.** Only `ErrTokenExpired` and `ErrTokenInvalid` are returned from the
-  parse calls — map both to `401`, and map a failed `HasScope` check to `403`.
+- **Errors.** Three errors come back from the parse calls, and the distinction
+  matters:
+
+  | Error | Meaning | Map to |
+  |---|---|---|
+  | `ErrTokenExpired` | The token was valid and has aged out | `401` — the client should refresh |
+  | `ErrTokenInvalid` | Bad signature, wrong issuer, malformed | `401` — the client should sign in again |
+  | `ErrKeysUnavailable` | **We could not check it.** JWKS unreachable, erroring, or cached keys too stale to trust | `503` — the client should retry |
+
+  Do not fold `ErrKeysUnavailable` into a `401`. It is a statement about
+  identity's availability, not a verdict on the caller's token: treating it as
+  "invalid" makes every service sign every user out simultaneously during an
+  identity outage, over tokens that were never examined. A failed `HasScope`
+  check is a `403`.
+
+  Cached keys are served through a brief JWKS outage, but only up to
+  `MaxStaleAge` (default 30 minutes) — past that the verifier reports
+  `ErrKeysUnavailable` rather than continuing to honour keys it can no longer
+  confirm are published, which would otherwise make key revocation ineffective
+  for as long as the endpoint stayed down.
 - **Versioning.** The `common` module is pinned to an exact version by consumers;
   see the release flow in the repo root `CLAUDE.md`. Bump with
   `go get github.com/sweeney/identity/common@vX.Y.Z`.

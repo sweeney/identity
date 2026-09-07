@@ -64,6 +64,12 @@ const (
 	defaultJWKSCacheTTL   = 5 * time.Minute
 	defaultJWKSRefetchMin = 10 * time.Second
 	defaultJWKSTimeout    = 10 * time.Second
+
+	// defaultJWKSMaxStale bounds how long a cached key may keep being served
+	// after refetches start failing. Serving stale keys indefinitely means a
+	// revoked key stays accepted for as long as the JWKS endpoint stays down —
+	// which is precisely the window an attacker who forced that outage wants.
+	defaultJWKSMaxStale = 30 * time.Minute
 )
 
 // JWKSVerifierConfig configures a verifier that validates tokens issued by a
@@ -87,6 +93,12 @@ type JWKSVerifierConfig struct {
 	// avoid hammering the identity service if a bad token is replayed in
 	// a tight loop. Defaults to 10s.
 	RefetchMinInterval time.Duration
+
+	// MaxStaleAge bounds how long a cached key may keep being served once
+	// refetches are failing. Zero means defaultJWKSMaxStale. Past this age the
+	// verifier reports ErrKeysUnavailable rather than continuing to honour keys
+	// it can no longer confirm are still published.
+	MaxStaleAge time.Duration
 	// RequiredAudience, when non-empty, asserts that incoming tokens carry
 	// a matching `aud` claim.
 	RequiredAudience string
@@ -106,6 +118,8 @@ type JWKSVerifier struct {
 	httpClient       *http.Client
 	cacheTTL         time.Duration
 	refetchMin       time.Duration
+	fetchTimeout     time.Duration
+	maxStaleAge      time.Duration
 	logger           *slog.Logger
 
 	sf singleflight.Group
@@ -183,6 +197,14 @@ func NewJWKSVerifier(cfg JWKSVerifierConfig) (*JWKSVerifier, error) {
 	if refetch == 0 {
 		refetch = defaultJWKSRefetchMin
 	}
+	fetchTimeout := defaultJWKSTimeout
+	if client.Timeout > 0 {
+		fetchTimeout = client.Timeout
+	}
+	maxStale := cfg.MaxStaleAge
+	if maxStale == 0 {
+		maxStale = defaultJWKSMaxStale
+	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -194,6 +216,8 @@ func NewJWKSVerifier(cfg JWKSVerifierConfig) (*JWKSVerifier, error) {
 		httpClient:       client,
 		cacheTTL:         ttl,
 		refetchMin:       refetch,
+		fetchTimeout:     fetchTimeout,
+		maxStaleAge:      maxStale,
 		logger:           logger,
 		keys:             map[string]*ecdsa.PublicKey{},
 	}, nil
@@ -216,10 +240,7 @@ func (v *JWKSVerifier) Parse(ctx context.Context, tokenStr string) (*TokenClaims
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, jwt.ErrTokenExpired) {
-			return nil, ErrTokenExpired
-		}
-		return nil, ErrTokenInvalid
+		return nil, classifyParseError(err)
 	}
 	return &TokenClaims{
 		UserID:   claims.Subject,
@@ -245,10 +266,7 @@ func (v *JWKSVerifier) ParseServiceToken(ctx context.Context, tokenStr string) (
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, jwt.ErrTokenExpired) {
-			return nil, ErrTokenExpired
-		}
-		return nil, ErrTokenInvalid
+		return nil, classifyParseError(err)
 	}
 	if claims.ClientID == "" {
 		return nil, ErrTokenInvalid
@@ -312,7 +330,11 @@ func (v *JWKSVerifier) keyForKid(ctx context.Context, kid string) (*ecdsa.Public
 	v.mu.RLock()
 	key, have := v.keys[kid]
 	stale := time.Since(v.fetchedAt) > v.cacheTTL
-	throttled := !have && !v.fetchedAt.IsZero() && time.Since(v.lastMissAt) < v.refetchMin
+	// Throttle from the first miss onward. This used to require fetchedAt to be
+	// non-zero, i.e. a previous *successful* fetch — so while the JWKS endpoint
+	// was down, which is exactly when the throttle matters, it was disabled and
+	// every request hammered it.
+	throttled := !have && !v.lastMissAt.IsZero() && time.Since(v.lastMissAt) < v.refetchMin
 	v.mu.RUnlock()
 
 	if have && !stale {
@@ -322,9 +344,14 @@ func (v *JWKSVerifier) keyForKid(ctx context.Context, kid string) (*ecdsa.Public
 		v.kidMisses.Add(1)
 	}
 	if !have && throttled {
-		return nil, fmt.Errorf("unknown kid %q (refetch throttled)", kid)
+		return nil, fmt.Errorf("%w: unknown kid %q (refetch throttled)", ErrKeysUnavailable, kid)
 	}
 
+	// The fetch is shared by every caller that joins this flight, so it must
+	// not inherit the winner's request context: one client giving up — a
+	// timeout, a disconnect — would otherwise cancel the fetch for all of them
+	// and fail an authentication that was about to succeed. Detach cancellation
+	// but keep a deadline so a hung endpoint cannot pin the flight open.
 	_, err, _ := v.sf.Do("jwks", func() (any, error) {
 		v.mu.RLock()
 		_, reHave := v.keys[kid]
@@ -333,7 +360,9 @@ func (v *JWKSVerifier) keyForKid(ctx context.Context, kid string) (*ecdsa.Public
 		if reHave && !reStale {
 			return nil, nil
 		}
-		return nil, v.refetch(ctx)
+		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), v.fetchTimeout)
+		defer cancel()
+		return nil, v.refetch(fetchCtx)
 	})
 
 	v.mu.RLock()
@@ -342,6 +371,17 @@ func (v *JWKSVerifier) keyForKid(ctx context.Context, kid string) (*ecdsa.Public
 
 	if err != nil {
 		if have {
+			v.mu.RLock()
+			staleFor := time.Since(v.fetchedAt)
+			v.mu.RUnlock()
+			// Serving a cached key through a brief outage is the right trade.
+			// Serving one indefinitely is not: it means revoking a key has no
+			// effect for as long as the endpoint stays unreachable.
+			if staleFor > v.maxStaleAge {
+				v.logger.Error("jwks refetch failed and cached keys are too old to serve",
+					"kid", kid, "stale_for", staleFor, "max_stale", v.maxStaleAge, "err", err)
+				return nil, fmt.Errorf("%w: cached keys stale for %s", ErrKeysUnavailable, staleFor)
+			}
 			v.staleServed.Add(1)
 			v.logger.Error("jwks refetch failed, serving cached key", "kid", kid, "err", err)
 			return key, nil
@@ -349,13 +389,18 @@ func (v *JWKSVerifier) keyForKid(ctx context.Context, kid string) (*ecdsa.Public
 		v.mu.Lock()
 		v.lastMissAt = time.Now()
 		v.mu.Unlock()
-		return nil, err
+		// We could not check the token at all. That is our problem, not the
+		// caller's — see ErrKeysUnavailable.
+		return nil, fmt.Errorf("%w: %w", ErrKeysUnavailable, err)
 	}
 
 	if !have {
 		v.mu.Lock()
 		v.lastMissAt = time.Now()
 		v.mu.Unlock()
+		// The fetch succeeded and the kid genuinely is not in the key set, so
+		// this token was signed by a key this issuer does not publish. That is
+		// a verdict on the token.
 		return nil, fmt.Errorf("unknown kid %q after refetch", kid)
 	}
 	return key, nil
@@ -457,4 +502,19 @@ func jwkToECDSAPublic(j jwk) (*ecdsa.PublicKey, error) {
 		X:     new(big.Int).SetBytes(xBytes),
 		Y:     new(big.Int).SetBytes(yBytes),
 	}, nil
+}
+
+// classifyParseError maps a jwt parse failure onto this package's errors.
+//
+// The distinction that matters is between "this token is bad" and "we could
+// not check it". Callers sign users out on the former; flattening a JWKS
+// outage into it would sign every user out across every service at once.
+func classifyParseError(err error) error {
+	if errors.Is(err, ErrKeysUnavailable) {
+		return fmt.Errorf("%w: %w", ErrKeysUnavailable, err)
+	}
+	if errors.Is(err, jwt.ErrTokenExpired) {
+		return ErrTokenExpired
+	}
+	return ErrTokenInvalid
 }
