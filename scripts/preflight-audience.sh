@@ -6,8 +6,9 @@
 #   sudo -u identity ./preflight-audience.sh
 #   sudo -u identity ./preflight-audience.sh --strict     # exit 3 if any session loses an audience
 #
-# Also reports which live sessions belong to confidential clients, which are
-# refused at /api/v1/auth/refresh from #40 onward.
+# Also reports which live sessions belong to confidential clients (refused at
+# /api/v1/auth/refresh from #40 onward), and which admin sessions carry a
+# non-exclusive audience (refused on the management routes from #37 onward).
 #
 # WHY THIS EXISTS
 #
@@ -51,6 +52,7 @@ set -euo pipefail
 readonly DEFAULT_DB=/var/lib/identity/identity.db
 DB_PATH="${DB_PATH:-$DEFAULT_DB}"
 STRICT=0
+SELF="id.swee.net"
 
 usage() {
     cat >&2 <<USAGE
@@ -60,7 +62,10 @@ Compares each OAuth client's registered audiences against the audiences carried
 by its live (unrevoked) refresh tokens, and reports what those sessions will
 carry once the registration becomes authoritative on refresh (#39).
 
-  --strict     exit 3 if any live session would lose an audience
+  --strict     exit 3 if any live session would lose an audience, or if an
+               admin session would be refused on the management plane
+  --self NAME  this server's audience name (default: id.swee.net). Both the
+               bare host and https://HOST are treated as naming this server.
   -h, --help   this message
 
   DB_PATH      database location (default: $DEFAULT_DB)
@@ -70,6 +75,9 @@ USAGE
 while [ $# -gt 0 ]; do
     case "$1" in
         --strict) STRICT=1; shift ;;
+        --self)
+            [ $# -ge 2 ] || { echo "error: --self needs a value" >&2; exit 1; }
+            SELF="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "error: unknown argument: $1" >&2; usage; exit 1 ;;
     esac
@@ -101,13 +109,41 @@ fi
 # (the registration form rejects control characters) and is not IFS whitespace.
 readonly SEP=$'\x1f'
 
+# How the database gets opened. Resolved once, below.
+DB_URI="file:${DB_PATH}?mode=ro"
+QUIESCENT=0
+
 # Read-only helper. Every caller passes a literal SELECT.
 query() {
-    sqlite3 -readonly -noheader -separator "$SEP" "file:${DB_PATH}?mode=ro" "$1"
+    sqlite3 -readonly -noheader -separator "$SEP" "$DB_URI" "$1"
 }
 
-if ! query "SELECT 1;" >/dev/null 2>&1; then
-    echo "error: cannot read $DB_PATH — is it locked, corrupt, or not a database?" >&2
+# Probe with a statement that actually reads the file. "SELECT 1" does not
+# touch the database at all, so it can succeed against a file that is not a
+# database — which then fails later as a confusing "no oauth_clients table"
+# rather than an honest "this is not a database". Reading sqlite_master forces
+# a real read, and its behaviour does not vary between sqlite builds.
+probe() {
+    sqlite3 -readonly "$1" "SELECT count(*) FROM sqlite_master;" >/dev/null 2>&1
+}
+
+if probe "file:${DB_PATH}?mode=ro"; then
+    : # ordinary case: a live writer has left the WAL's -shm in place
+elif probe "file:${DB_PATH}?immutable=1"; then
+    # A WAL database needs a -shm file, and a read-only connection cannot
+    # create one. While the service is running that file exists and mode=ro
+    # works; with the service stopped it does not, and mode=ro fails with a
+    # bare "unable to open database file" that reads like corruption.
+    #
+    # immutable=1 tells SQLite the file will not change, so it skips WAL
+    # recovery and the -shm entirely. That is only safe when nothing is writing
+    # — which is exactly the situation that got us here, since a live writer
+    # would have left a -shm for mode=ro to use. Still worth announcing: if the
+    # service starts mid-run the read could tear.
+    DB_URI="file:${DB_PATH}?immutable=1"
+    QUIESCENT=1
+else
+    echo "error: cannot read $DB_PATH — is it corrupt, or not a database?" >&2
     exit 2
 fi
 
@@ -143,6 +179,12 @@ normalise() { echo "${NORMALISE//__COL__/$1}"; }
 
 echo "database: $DB_PATH"
 echo "read as:  $(id -un)"
+if [ "$QUIESCENT" -eq 1 ]; then
+    echo "note:     no live writer detected; read in immutable mode."
+    echo "          If the identity service is stopped this is expected. If it is"
+    echo "          supposed to be running, that is worth knowing before you trust"
+    echo "          these numbers."
+fi
 echo
 
 echo "=== Registered clients ==="
@@ -297,6 +339,72 @@ else
 fi
 
 echo
+echo "=== Management plane exclusivity (#37) ==="
+echo
+echo "  From #37 onward the management routes — GET/POST /api/v1/users,"
+echo "  PUT/DELETE /api/v1/users/{id}, and the admin passkey login bridge —"
+echo "  require a token naming this server ($SELF) and nothing else. A token"
+echo "  delegated to sibling services is a bearer credential at each of them,"
+echo "  so it must not also administer identity."
+echo
+echo "  Only ADMIN accounts can reach those routes at all, so only their"
+echo "  sessions can be affected. Ordinary routes are unchanged."
+echo
+printf '%-18s %-14s %5s  %-34s %s\n' "CLIENT" "USER" "SESS" "AUDIENCE AFTER REFRESH" "MANAGEMENT PLANE"
+
+ADMIN_ROWS=$(query "
+    SELECT
+      COALESCE(NULLIF(t.client_id, ''), '<unbound>'),
+      u.username,
+      COUNT(*),
+      CASE
+        WHEN t.client_id IS NULL OR t.client_id = '' THEN $(normalise t.audiences)
+        WHEN c.id IS NULL THEN ''
+        ELSE $(normalise c.audiences)
+      END
+    FROM refresh_tokens t
+    JOIN users u ON u.id = t.user_id AND u.role = 'admin'
+    LEFT JOIN oauth_clients c ON c.id = t.client_id
+    WHERE t.is_revoked = 0
+      AND replace(t.expires_at, 'Z', '') > strftime('%Y-%m-%dT%H:%M:%f', 'now')
+    GROUP BY 1, 2, 4
+    ORDER BY 1, 2;
+")
+
+locked=0
+if [ -z "$ADMIN_ROWS" ]; then
+    echo "  (no live sessions belong to an admin account — nothing can be affected)"
+else
+    while IFS="$SEP" read -r cid uname sess auds; do
+        [ -z "$cid" ] && continue
+        verdict="allowed"
+        if [ -n "$auds" ]; then
+            IFS=',' read -ra list <<< "$auds"
+            for a in "${list[@]}"; do
+                [ -z "$a" ] && continue
+                if [ "$a" != "$SELF" ] && [ "$a" != "https://$SELF" ]; then
+                    locked=$((locked + sess))
+                    verdict="REFUSED — delegated to '$a'"
+                    break
+                fi
+            done
+        fi
+        printf '%-18s %-14s %5s  %-34s %s\n' "$cid" "$uname" "$sess" "${auds:-<none>}" "$verdict"
+    done <<< "$ADMIN_ROWS"
+fi
+
+echo
+if [ "$locked" -gt 0 ]; then
+    echo "  $locked admin session(s) will be refused on the management routes."
+    echo "  They keep working on the ordinary routes and in the admin UI via"
+    echo "  password or passkey login. To administer via the API they need a"
+    echo "  token from a direct /api/v1/auth/login (which carries no audience)"
+    echo "  or from a client registered for this server alone."
+else
+    echo "  No admin session is affected by #37."
+fi
+
+echo
 echo "=== Summary ==="
 echo "  session groups examined: $rows"
 echo "  groups gaining an audience: $gainers   (these repair themselves on refresh)"
@@ -310,9 +418,16 @@ if [ "$losers" -gt 0 ] || [ "$orphans" -gt 0 ]; then
   enforcing it, within one access-token lifetime of the deploy. Fix the client
   registration first — that is the authoritative source after #39 — and re-run.
 WARN
-    if [ "$STRICT" -eq 1 ]; then
-        exit 3
-    fi
 else
-    echo "  No live session loses an audience. Safe to deploy #39."
+    echo "  No live session loses an audience."
+fi
+
+if [ "$locked" -gt 0 ]; then
+    echo "  $locked admin session(s) lose management-plane access — see #37 above."
+fi
+
+# One exit decision, so a new impact category cannot be added above without
+# being reflected here.
+if [ "$STRICT" -eq 1 ] && { [ "$losers" -gt 0 ] || [ "$orphans" -gt 0 ] || [ "$locked" -gt 0 ]; }; then
+    exit 3
 fi

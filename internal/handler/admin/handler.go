@@ -335,14 +335,22 @@ func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The token must have been minted for this server. Tokens from the OAuth,
-	// device and claim-code grants carry the requesting client's audience, and
-	// anyone holding one of those — the client itself, a sibling resource
-	// server that received it as a bearer, a paired device — could otherwise
-	// trade a 15-minute scoped token for a 2-hour admin session.
-	if !auth.AudienceAllowed(claims.Audience, h.tokenIssuer.Issuer()) {
+	// The token must have been minted for this server *and nothing else*.
+	//
+	// Tokens from the OAuth, device and claim-code grants carry the requesting
+	// client's audience, and anyone holding one — the client itself, a sibling
+	// resource server that received it as a bearer, a paired device — could
+	// otherwise trade a 15-minute scoped token for a 2-hour admin session that
+	// outlives it and survives refresh-family revocation.
+	//
+	// Merely naming this server is not enough (#37). A client that calls
+	// /api/v1/auth/me legitimately needs identity in its audience list, so the
+	// common shape in practice names identity alongside several siblings — and
+	// such a token is a live bearer credential at every one of them. The admin
+	// UI is the management plane, so it takes the exclusive rule.
+	if !auth.AudienceExclusive(claims.Audience, h.tokenIssuer.Issuer()) {
 		ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
-		h.recordAuditWithDetail(domain.EventLoginFailure, claims.UserID, claims.Username, ip, "passkey: token audience is not this server")
+		h.recordAuditWithDetail(domain.EventLoginFailure, claims.UserID, claims.Username, ip, "passkey: token is delegated beyond this server")
 		writeJSONError(w, http.StatusForbidden, "Admin access required")
 		return
 	}

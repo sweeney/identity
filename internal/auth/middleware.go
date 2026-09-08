@@ -243,6 +243,79 @@ func AudienceAllowed(aud []string, self string) bool {
 // registered against the bare hostname is naming this same service and must be
 // accepted. Identity is the authority on which names mean itself, and this
 // widens nothing: a token for another service matches neither form.
+// AudienceExclusive reports whether a token bearing the audience list aud names
+// this service and nothing else.
+//
+// This is the management-plane rule (#37). AudienceAllowed asks "may this token
+// be used here?", which is right for ordinary routes: a client that talks to
+// five services and also calls /auth/me is doing nothing wrong. AudienceExclusive
+// asks the stricter question "was this token delegated anywhere else?", which is
+// what the routes administering identity itself need.
+//
+// The difference matters because a multi-audience token is a bearer credential
+// at every service it names. Presented to five sibling resource servers, any one
+// of them — if compromised, or simply careless with logs — holds something that
+// creates and deletes users here, the moment the account behind it is an admin.
+// That is the residual half of GHSA-65pj-9cmp-rvf6: that advisory closed the
+// case where aud names only another service, not the case where it legitimately
+// names identity as well.
+//
+// An absent audience passes, as it does in AudienceAllowed. A token with no aud
+// came from a direct /api/v1/auth/login and was never delegated to anything —
+// the strongest position a token can be in, not the weakest.
+//
+// Both accepted spellings of this server (issuer URL and bare host) count as
+// naming it, so a token carrying both is still exclusive.
+func AudienceExclusive(aud []string, self string) bool {
+	if len(aud) == 0 {
+		return true
+	}
+	names := selfAudiences(self)
+	for _, a := range aud {
+		isSelf := false
+		for _, name := range names {
+			if a == name {
+				isSelf = true
+				break
+			}
+		}
+		if !isSelf {
+			return false
+		}
+	}
+	return true
+}
+
+// RequireExclusiveAudience guards the management plane: it refuses a token that
+// names any service other than this one, even if it also names this one.
+//
+// Apply it in addition to RequireAudience rather than instead of it. Ordering
+// is not load-bearing — exclusive implies allowed — but the two express
+// different rules and the ordinary plane keeps the looser one.
+func RequireExclusiveAudience(audience string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if sc := ServiceClaimsFromContext(r.Context()); sc != nil {
+				if len(sc.Audience) == 0 || !AudienceExclusive(sc.Audience, audience) {
+					writeError(w, http.StatusForbidden, "invalid_audience",
+						"this endpoint requires a token issued for this service alone")
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+			if uc := ClaimsFromContext(r.Context()); uc != nil {
+				if !AudienceExclusive(uc.Audience, audience) {
+					writeError(w, http.StatusForbidden, "invalid_audience",
+						"this endpoint requires a token issued for this service alone")
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func selfAudiences(self string) []string {
 	names := []string{self}
 	if u, err := url.Parse(self); err == nil && u.Host != "" && u.Host != self {
