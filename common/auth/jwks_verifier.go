@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"mime"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -108,6 +109,20 @@ type JWKSVerifierConfig struct {
 	// RequiredAudience, when non-empty, asserts that incoming tokens carry
 	// a matching `aud` claim.
 	RequiredAudience string
+	// RequiredAudienceWarnOnly turns RequiredAudience into an observation
+	// rather than a gate: a token that fails the check is still accepted, and
+	// the mismatch is logged at warn level with the subject, the audience
+	// presented and the one expected.
+	//
+	// Switching audience enforcement on is otherwise a guess. The identity
+	// clients table says which registered clients *could* satisfy a given
+	// audience; it cannot say which callers actually exist, so a caller that is
+	// not in the table, or one nobody remembers, announces itself by breaking
+	// in production. Run warn-only for a few days, read the log, then enforce
+	// on evidence.
+	//
+	// Has no effect unless RequiredAudience is set.
+	RequiredAudienceWarnOnly bool
 	// Logger receives structured output for JWKS fetch failures, key
 	// rotations, and stale-cache fallbacks. When nil, the verifier discards
 	// all log output (it does not fall back to the global logger).
@@ -118,15 +133,16 @@ type JWKSVerifierConfig struct {
 // service. Keys are cached in memory with time-based invalidation and
 // additionally refreshed on kid miss.
 type JWKSVerifier struct {
-	issuerURL        string
-	issuer           string
-	requiredAudience string
-	httpClient       *http.Client
-	cacheTTL         time.Duration
-	refetchMin       time.Duration
-	fetchTimeout     time.Duration
-	maxStaleAge      time.Duration
-	logger           *slog.Logger
+	issuerURL                string
+	issuer                   string
+	requiredAudience         string
+	requiredAudienceWarnOnly bool
+	httpClient               *http.Client
+	cacheTTL                 time.Duration
+	refetchMin               time.Duration
+	fetchTimeout             time.Duration
+	maxStaleAge              time.Duration
+	logger                   *slog.Logger
 
 	sf singleflight.Group
 
@@ -216,16 +232,17 @@ func NewJWKSVerifier(cfg JWKSVerifierConfig) (*JWKSVerifier, error) {
 		logger = slog.New(slog.DiscardHandler)
 	}
 	return &JWKSVerifier{
-		issuerURL:        strings.TrimSuffix(cfg.IssuerURL, "/"),
-		issuer:           cfg.Issuer,
-		requiredAudience: cfg.RequiredAudience,
-		httpClient:       client,
-		cacheTTL:         ttl,
-		refetchMin:       refetch,
-		fetchTimeout:     fetchTimeout,
-		maxStaleAge:      maxStale,
-		logger:           logger,
-		keys:             map[string]*ecdsa.PublicKey{},
+		issuerURL:                strings.TrimSuffix(cfg.IssuerURL, "/"),
+		issuer:                   cfg.Issuer,
+		requiredAudience:         cfg.RequiredAudience,
+		requiredAudienceWarnOnly: cfg.RequiredAudienceWarnOnly,
+		httpClient:               client,
+		cacheTTL:                 ttl,
+		refetchMin:               refetch,
+		fetchTimeout:             fetchTimeout,
+		maxStaleAge:              maxStale,
+		logger:                   logger,
+		keys:                     map[string]*ecdsa.PublicKey{},
 	}, nil
 }
 
@@ -248,6 +265,7 @@ func (v *JWKSVerifier) Parse(ctx context.Context, tokenStr string) (*TokenClaims
 	if err != nil {
 		return nil, classifyParseError(err)
 	}
+	v.reportAudience(claims.Subject, []string(claims.Audience))
 	return &TokenClaims{
 		UserID:    claims.Subject,
 		Username:  claims.Username,
@@ -279,6 +297,7 @@ func (v *JWKSVerifier) ParseServiceToken(ctx context.Context, tokenStr string) (
 	if claims.ClientID == "" {
 		return nil, ErrTokenInvalid
 	}
+	v.reportAudience(claims.ClientID, []string(claims.Audience))
 	return &ServiceTokenClaims{
 		ClientID:  claims.ClientID,
 		Audience:  []string(claims.Audience),
@@ -321,10 +340,33 @@ func (v *JWKSVerifier) parseJWT(ctx context.Context, tokenStr string, claims jwt
 }
 
 func (v *JWKSVerifier) optionalAudienceOption() []jwt.ParserOption {
-	if v.requiredAudience == "" {
+	if v.requiredAudience == "" || v.requiredAudienceWarnOnly {
+		// In warn-only mode the parser must not enforce, or there would be
+		// nothing left to observe — the token would be rejected before
+		// reportAudience ever saw it.
 		return nil
 	}
 	return []jwt.ParserOption{jwt.WithAudience(v.requiredAudience)}
+}
+
+// reportAudience logs a token that would have been rejected had
+// RequiredAudience been enforced. It is a no-op outside warn-only mode.
+//
+// subject identifies the caller for follow-up: the user id on a user token, the
+// client id on a service token. Without it the log says only that something is
+// wrong, not what to go and fix.
+func (v *JWKSVerifier) reportAudience(subject string, audience []string) {
+	if v.requiredAudience == "" || !v.requiredAudienceWarnOnly {
+		return
+	}
+	if slices.Contains(audience, v.requiredAudience) {
+		return
+	}
+	v.logger.Warn("token would be rejected by audience enforcement",
+		"subject", subject,
+		"presented_audience", audience,
+		"required_audience", v.requiredAudience,
+	)
 }
 
 func (v *JWKSVerifier) keyForKid(ctx context.Context, kid string) (*ecdsa.PublicKey, error) {
