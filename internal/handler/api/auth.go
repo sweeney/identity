@@ -82,6 +82,13 @@ func (h *authHandler) refresh(w http.ResponseWriter, r *http.Request) {
 	result, err := h.svc.Refresh(req.RefreshToken)
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrRefreshRequiresClientAuth):
+			// Actionable rather than opaque: the holder is told where the token
+			// can be redeemed. It leaks only that the token belongs to a
+			// confidential client, which does not help redeem it — the secret
+			// is still required at the endpoint they are sent to.
+			jsonError(w, http.StatusUnauthorized, "client_authentication_required",
+				"this refresh token was issued to a confidential OAuth client and must be refreshed at /oauth/token with that client's credentials")
 		case errors.Is(err, service.ErrInvalidRefreshToken):
 			jsonError(w, http.StatusUnauthorized, "invalid_refresh_token", "the refresh token is invalid")
 		case errors.Is(err, service.ErrTokenFamilyCompromised):

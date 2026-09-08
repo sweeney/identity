@@ -135,6 +135,13 @@ Changing a user's password revokes every refresh token they hold. Logout only
 revokes tokens belonging to the caller. Refresh tokens from the OAuth, device
 and claim-code grants are all bound to the issuing client.
 
+`POST /api/v1/auth/refresh` authenticates no client, so it accepts direct-login
+tokens and tokens from **public** clients (the device grant included — this is
+the endpoint firmware uses) but refuses one issued to a **confidential** client
+with `client_authentication_required`, since only `/oauth/token` can check a
+client secret (#40). The refused token is not consumed. Public-client refreshes
+here are logged, so who actually uses this path can be answered from traffic.
+
 ## Token rotation and theft detection
 
 Every refresh rotates the token: old token is revoked, new pair issued. If a **previously-used** refresh token is ever presented again, the server assumes the token was stolen. It revokes the **entire token family** and returns `token_family_compromised`. The client must clear all tokens and show the login screen.
@@ -171,7 +178,7 @@ All API errors return the same shape (`/oauth/token` uses RFC 6749 format instea
 { "error": "snake_case_code", "message": "Human readable" }
 ```
 
-Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expired`, `invalid_refresh_token`, `account_disabled`, `forbidden`, `unknown_client`, `invalid_redirect_uri`, `invalid_auth_code`, `pkce_verification_failed`, `webauthn_not_enabled`, `webauthn_invalid_challenge`, `webauthn_verification_failed`, `webauthn_no_credentials`, `webauthn_credential_not_found`, `invalid_client`, `unauthorized_client`, `invalid_scope`, `insufficient_scope`, `invalid_audience`, `request_too_large`
+Key error codes: `invalid_credentials`, `token_family_compromised`, `token_expired`, `invalid_refresh_token`, `account_disabled`, `forbidden`, `unknown_client`, `invalid_redirect_uri`, `invalid_auth_code`, `pkce_verification_failed`, `webauthn_not_enabled`, `webauthn_invalid_challenge`, `webauthn_verification_failed`, `webauthn_no_credentials`, `webauthn_credential_not_found`, `invalid_client`, `unauthorized_client`, `invalid_scope`, `insufficient_scope`, `invalid_audience`, `client_authentication_required`, `request_too_large`
 
 ## Running locally
 

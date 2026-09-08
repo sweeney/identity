@@ -12,6 +12,12 @@ var (
 	// is simply not this client's to redeem.
 	ErrRefreshTokenClientMismatch = errors.New("refresh token belongs to another client")
 
+	// ErrRefreshRequiresClientAuth is returned when a refresh token bound to a
+	// confidential OAuth client is presented at the unauthenticated refresh
+	// endpoint. Such a client must authenticate with its registered secret,
+	// which only /oauth/token can do (#40).
+	ErrRefreshRequiresClientAuth = errors.New("refresh token requires client authentication")
+
 	ErrRefreshTokenExpired    = errors.New("refresh token expired")
 	ErrTokenFamilyCompromised = errors.New("token family compromised")
 	ErrWeakPassword           = errors.New("password too weak")

@@ -6,6 +6,9 @@
 #   sudo -u identity ./preflight-audience.sh
 #   sudo -u identity ./preflight-audience.sh --strict     # exit 3 if any session loses an audience
 #
+# Also reports which live sessions belong to confidential clients, which are
+# refused at /api/v1/auth/refresh from #40 onward.
+#
 # WHY THIS EXISTS
 #
 # Before #39, a refresh token carried the aud set frozen when the grant was
@@ -202,8 +205,16 @@ else
                 verdict="unchanged — direct login, no registration to consult"
                 ;;
             no-registration)
-                orphans=$((orphans + 1))
-                verdict="LOSES ALL — client '$client' is not registered"
+                if [ -z "$carried" ]; then
+                    # Orphaned, but carrying nothing, so nothing is lost. Worth
+                    # showing — the client is gone and these sessions will never
+                    # be repaired — but it is not an impact, and counting it as
+                    # one fires the warning below on a false alarm.
+                    verdict="unchanged — client '$client' is not registered, but carried nothing"
+                else
+                    orphans=$((orphans + 1))
+                    verdict="LOSES ALL — client '$client' is not registered"
+                fi
                 ;;
             bound)
                 if [ "$carried" = "$after" ]; then
@@ -234,6 +245,55 @@ else
         printf '%-18s %5s  %-34s %-34s %s\n' \
             "$client" "$sessions" "${carried:-<none>}" "${after:-<none>}" "$verdict"
     done <<< "$REPORT"
+fi
+
+echo
+echo "=== Client authentication on /api/v1/auth/refresh (#40) ==="
+echo
+echo "  That endpoint authenticates no client. From #40 onward a session"
+echo "  belonging to a CONFIDENTIAL client (one with a registered secret) is"
+echo "  refused there and must refresh at /oauth/token instead. Public and"
+echo "  device-grant clients are unaffected — that is the endpoint firmware uses."
+echo
+printf '%-18s %-14s %5s  %s\n' "CLIENT" "KIND" "SESS" "EFFECT"
+
+CONFIDENTIAL=$(query "
+    SELECT
+      c.id,
+      CASE WHEN c.client_secret_hash IS NOT NULL AND c.client_secret_hash != ''
+           THEN 'confidential' ELSE 'public' END,
+      COUNT(t.id)
+    FROM oauth_clients c
+    LEFT JOIN refresh_tokens t
+      ON t.client_id = c.id
+     AND t.is_revoked = 0
+     AND replace(t.expires_at, 'Z', '') > strftime('%Y-%m-%dT%H:%M:%f', 'now')
+    GROUP BY c.id
+    ORDER BY c.id;
+")
+
+affected=0
+while IFS="$SEP" read -r cid kind sess; do
+    [ -z "$cid" ] && continue
+    effect="none"
+    if [ "$kind" = "confidential" ] && [ "${sess:-0}" -gt 0 ]; then
+        affected=$((affected + sess))
+        effect="REFUSED at /api/v1/auth/refresh — must use /oauth/token"
+    elif [ "$kind" = "confidential" ]; then
+        effect="none (no live sessions)"
+    fi
+    printf '%-18s %-14s %5s  %s\n' "$cid" "$kind" "${sess:-0}" "$effect"
+done <<< "$CONFIDENTIAL"
+
+echo
+if [ "$affected" -gt 0 ]; then
+    echo "  $affected live session(s) belong to confidential clients."
+    echo "  If any of them refresh at /api/v1/auth/refresh they will now get 401"
+    echo "  client_authentication_required. The token is NOT consumed, so the fix"
+    echo "  is to retry at /oauth/token with the client secret."
+else
+    echo "  No live session belongs to a confidential client — #40 changes nothing"
+    echo "  observable for current traffic."
 fi
 
 echo
