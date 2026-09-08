@@ -63,7 +63,7 @@ func TestAuthService_AuthorizeUser_RecordsFailures(t *testing.T) {
 				return nil
 			}).AnyTimes()
 
-			svc := service.NewAuthService(newTestIssuer(t), users, tokens, backup, audit, 0)
+			svc := service.NewAuthService(newTestIssuer(t), users, tokens, nil, backup, audit, 0)
 			_, err := svc.AuthorizeUser("ghost", "wrong-password", "203.0.113.7")
 			require.Error(t, err)
 
@@ -94,7 +94,7 @@ func TestAuthService_AuthorizeUser_SuccessRecordsNoFailure(t *testing.T) {
 		return nil
 	}).AnyTimes()
 
-	svc := service.NewAuthService(newTestIssuer(t), users, tokens, backup, audit, 0)
+	svc := service.NewAuthService(newTestIssuer(t), users, tokens, nil, backup, audit, 0)
 	id, err := svc.AuthorizeUser("alice", "correctpassword", "203.0.113.7")
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)

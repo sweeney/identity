@@ -81,7 +81,7 @@ func newTestAuthService(t *testing.T, ctrl *gomock.Controller, userRepo *mocks.M
 	t.Helper()
 	auditRepo := mocks.NewMockAuditRepository(ctrl)
 	auditRepo.EXPECT().Record(gomock.Any()).Return(nil).AnyTimes()
-	svc := service.NewAuthService(newTestIssuer(t), userRepo, tokenRepo, backupSvc, auditRepo, 30*24*time.Hour)
+	svc := service.NewAuthService(newTestIssuer(t), userRepo, tokenRepo, nil, backupSvc, auditRepo, 30*24*time.Hour)
 	return svc, auditRepo
 }
 

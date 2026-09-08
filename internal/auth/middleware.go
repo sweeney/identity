@@ -182,9 +182,24 @@ func RequireScope(scope string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Check user token — admins pass all scope checks
+			// Check user token.
+			//
+			// An absent scope claim means the grant was never narrowed, which
+			// is what a direct API login and any unscoped OAuth grant produce;
+			// such a token is unrestricted and passes. A token that does carry
+			// a scope was deliberately narrowed at consent, and must satisfy
+			// the requirement to proceed.
+			//
+			// Role is not consulted. This used to pass any admin and refuse
+			// anyone else, which conflated two different questions: being an
+			// admin is a role, and RequireAdmin is what enforces it (every
+			// user-management route already has it). Treating admin as "has
+			// every scope" meant a device token deliberately narrowed to
+			// read:sensors carried full privilege the moment the account behind
+			// it was an admin — exactly the case the consent screen's scope is
+			// there to prevent (#32).
 			if uc := ClaimsFromContext(r.Context()); uc != nil {
-				if uc.Role == domain.RoleAdmin {
+				if uc.Scope == "" || uc.HasScope(scope) {
 					next.ServeHTTP(w, r)
 					return
 				}

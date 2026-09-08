@@ -143,3 +143,31 @@ func (mr *MockAuthServicerMockRecorder) RefreshForClient(rawRefreshToken, client
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshForClient", reflect.TypeOf((*MockAuthServicer)(nil).RefreshForClient), rawRefreshToken, clientID)
 }
+
+// RevokeTokensForAuthCode mocks base method.
+func (m *MockAuthServicer) RevokeTokensForAuthCode(authCodeID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RevokeTokensForAuthCode", authCodeID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RevokeTokensForAuthCode indicates an expected call of RevokeTokensForAuthCode.
+func (mr *MockAuthServicerMockRecorder) RevokeTokensForAuthCode(authCodeID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeTokensForAuthCode", reflect.TypeOf((*MockAuthServicer)(nil).RevokeTokensForAuthCode), authCodeID)
+}
+
+// UsernameForID mocks base method.
+func (m *MockAuthServicer) UsernameForID(userID string) string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UsernameForID", userID)
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// UsernameForID indicates an expected call of UsernameForID.
+func (mr *MockAuthServicerMockRecorder) UsernameForID(userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UsernameForID", reflect.TypeOf((*MockAuthServicer)(nil).UsernameForID), userID)
+}

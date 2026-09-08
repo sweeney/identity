@@ -31,9 +31,15 @@ type LoginResult struct {
 
 // AuthService handles login, refresh, and logout business logic.
 type AuthService struct {
-	issuer          *auth.TokenIssuer
-	users           domain.UserRepository
-	tokens          domain.TokenRepository
+	issuer *auth.TokenIssuer
+	users  domain.UserRepository
+	tokens domain.TokenRepository
+	// clients resolves the OAuth client a refresh token is bound to, so
+	// rotation can re-read its registered audiences rather than replay the set
+	// captured at grant time. May be nil in a deployment with no OAuth clients;
+	// rotation then carries the stored set forward, which is the pre-#39
+	// behaviour and is correct when there is no registration to consult.
+	clients         domain.OAuthClientRepository
 	backup          domain.BackupService
 	audit           domain.AuditRepository
 	refreshTokenTTL time.Duration
@@ -44,6 +50,7 @@ func NewAuthService(
 	issuer *auth.TokenIssuer,
 	users domain.UserRepository,
 	tokens domain.TokenRepository,
+	clients domain.OAuthClientRepository,
 	backup domain.BackupService,
 	audit domain.AuditRepository,
 	refreshTokenTTL time.Duration,
@@ -52,6 +59,7 @@ func NewAuthService(
 		issuer:          issuer,
 		users:           users,
 		tokens:          tokens,
+		clients:         clients,
 		backup:          backup,
 		audit:           audit,
 		refreshTokenTTL: refreshTokenTTL,
@@ -70,6 +78,8 @@ type loginArgs struct {
 	scope string
 	// claimCodeID ties a device-grant family to the claim code that produced it.
 	claimCodeID string
+	// authCodeID ties an authorization-code family to the code that produced it.
+	authCodeID string
 	// clientID is the OAuth client this grant was issued to; empty for a
 	// direct API login.
 	clientID string
@@ -191,6 +201,9 @@ type GrantContext struct {
 	// ClaimCodeID records the claim code a device grant came from, so revoking
 	// that code can revoke the tokens it produced.
 	ClaimCodeID string
+	// AuthCodeID records the authorization code this grant came from, so
+	// replaying that code can revoke the tokens it produced (RFC 6749 §4.1.2).
+	AuthCodeID string
 	// ClientID is the OAuth client this grant was issued to. Recorded on the
 	// refresh token so the refresh grant can refuse a token that belongs to a
 	// different client.
@@ -219,6 +232,7 @@ func (s *AuthService) IssueTokensForGrant(userID string, grant GrantContext) (*L
 		audience:    grant.Audience,
 		scope:       grant.Scope,
 		claimCodeID: grant.ClaimCodeID,
+		authCodeID:  grant.AuthCodeID,
 		clientID:    grant.ClientID,
 	})
 }
@@ -245,6 +259,56 @@ func (s *AuthService) RefreshForClient(rawRefreshToken, clientID string) (*Login
 	return s.refresh(rawRefreshToken, clientID)
 }
 
+// resolveAudiences returns the audience set the rotated token should carry, or
+// nil to keep whatever the old token stored.
+//
+// A refresh token bound to an OAuth client takes its audiences from that
+// client's live registration on every rotation. The alternative — replaying the
+// set frozen at grant time — makes the registration advisory: removing an
+// audience revokes nothing for a client that keeps refreshing, and rotation
+// issues a fresh TTL with no absolute family lifetime, so that is unbounded
+// (#39). Removal has to be effective; audience removal reads like a revocation
+// mechanism and operators use it as one.
+//
+// An unbound token is a direct API login. There is no registration to consult,
+// so the stored set stands.
+func (s *AuthService) resolveAudiences(tokenHash, adoptClientID string) []string {
+	if s.clients == nil {
+		return nil
+	}
+	clientID := adoptClientID
+	if clientID == "" {
+		// Not every caller knows the binding: /api/v1/auth/refresh takes no
+		// client_id, so the token itself is the only place to learn it.
+		tok, err := s.tokens.GetByHash(tokenHash)
+		if err != nil {
+			// Leave it to RotateToken, which reads the token authoritatively
+			// inside the transaction and reports a missing one properly.
+			return nil
+		}
+		clientID = tok.ClientID
+	}
+	if clientID == "" {
+		return nil
+	}
+
+	client, err := s.clients.GetByID(clientID)
+	if err != nil {
+		// A registration that no longer exists grants no audiences. Narrowing
+		// is the safe direction: the token stops asserting audiences nothing
+		// backs, rather than keeping them because the record is gone. Whether
+		// deleting a client should revoke its live tokens outright is a
+		// separate question.
+		log.Printf("auth: refresh token names client %q which no longer resolves (%v); issuing with no audience", clientID, err)
+		return []string{}
+	}
+	if client.Audiences == nil {
+		// Distinct from nil-means-inherit: this client genuinely names nothing.
+		return []string{}
+	}
+	return client.Audiences
+}
+
 // Refresh validates a refresh token and issues a new token pair via rotation.
 // The read-validate-revoke-insert sequence is performed atomically within a
 // single transaction by RotateToken, preventing the TOCTOU race condition
@@ -266,6 +330,10 @@ func (s *AuthService) refresh(rawRefreshToken, adoptClientID string) (*LoginResu
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 
+	// nil means "no registration to consult" — the stored set stands, and
+	// RotateToken carries it forward.
+	resolvedAuds := s.resolveAudiences(tokenHash, adoptClientID)
+
 	now := time.Now().UTC()
 	newTok := &domain.RefreshToken{
 		ID:         uuid.New().String(),
@@ -274,6 +342,7 @@ func (s *AuthService) refresh(rawRefreshToken, adoptClientID string) (*LoginResu
 		IssuedAt:   now,
 		LastUsedAt: now,
 		ExpiresAt:  now.Add(s.refreshTokenTTL),
+		Audiences:  resolvedAuds,
 	}
 
 	// Atomically: read old token, check not revoked, revoke it, insert new token.
@@ -315,13 +384,22 @@ func (s *AuthService) refresh(rawRefreshToken, adoptClientID string) (*LoginResu
 		return nil, ErrAccountDisabled
 	}
 
+	// The resolved set when the token names a client, the stored set otherwise.
+	// Deriving this here rather than reading it back off newTok keeps the
+	// access token's aud a decision this function makes, instead of one that
+	// depends on RotateToken having filled the field in as a side effect.
+	audience := resolvedAuds
+	if audience == nil {
+		audience = oldTok.Audiences
+	}
+
 	// Mint the access token now that we know the user is valid.
 	claims := domain.TokenClaims{
 		UserID:   user.ID,
 		Username: user.Username,
 		Role:     user.Role,
 		IsActive: user.IsActive,
-		Audience: oldTok.Audiences,
+		Audience: audience,
 		Scope:    oldTok.Scope,
 	}
 
@@ -426,6 +504,7 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		Audiences:     args.audience,
 		Scope:         args.scope,
 		ClaimCodeID:   args.claimCodeID,
+		AuthCodeID:    args.authCodeID,
 		ClientID:      args.clientID,
 		IssuedAt:      now,
 		LastUsedAt:    now,
@@ -453,6 +532,17 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 }
 
 // lookupUsername returns the username for a userID, falling back to the ID itself.
+// RevokeTokensForAuthCode revokes every refresh token descended from an
+// authorization code. See TokenRepository.RevokeByAuthCodeID.
+func (s *AuthService) RevokeTokensForAuthCode(authCodeID string) error {
+	return s.tokens.RevokeByAuthCodeID(authCodeID)
+}
+
+// UsernameForID resolves a user id to a username for audit records.
+func (s *AuthService) UsernameForID(userID string) string {
+	return s.lookupUsername(userID)
+}
+
 func (s *AuthService) lookupUsername(userID string) string {
 	if u, err := s.users.GetByID(userID); err == nil {
 		return u.Username

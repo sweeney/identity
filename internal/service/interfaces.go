@@ -29,12 +29,24 @@ type AuthServicer interface {
 	// RefreshForClient refreshes only if the token was issued to clientID.
 	// An empty clientID means the direct API login, which has no client.
 	RefreshForClient(rawRefreshToken, clientID string) (*LoginResult, error)
+
+	// RevokeTokensForAuthCode revokes every refresh token descended from the
+	// given authorization code. Used when that code is replayed.
+	RevokeTokensForAuthCode(authCodeID string) error
+
+	// UsernameForID resolves a user id to a username for audit records,
+	// returning "" when it cannot be resolved. An audit line naming no user is
+	// still worth writing, so this never fails the operation it describes.
+	UsernameForID(userID string) string
 }
 
 // UserServicer is the interface the API handler uses for user CRUD.
 //
 //go:generate mockgen -destination=../mocks/mock_user_service.go -package=mocks github.com/sweeney/identity/internal/service UserServicer
 type UserServicer interface {
+	// BumpSessionEpoch invalidates every admin UI session for the account.
+	BumpSessionEpoch(id string) error
+
 	Create(username, displayName, password string, role domain.Role, meta ...AuditMeta) (*domain.User, error)
 	GetByID(id string) (*domain.User, error)
 	GetByUsername(username string) (*domain.User, error)

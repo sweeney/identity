@@ -40,6 +40,20 @@ func (m *MockUserRepository) EXPECT() *MockUserRepositoryMockRecorder {
 	return m.recorder
 }
 
+// BumpSessionEpoch mocks base method.
+func (m *MockUserRepository) BumpSessionEpoch(id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BumpSessionEpoch", id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// BumpSessionEpoch indicates an expected call of BumpSessionEpoch.
+func (mr *MockUserRepositoryMockRecorder) BumpSessionEpoch(id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BumpSessionEpoch", reflect.TypeOf((*MockUserRepository)(nil).BumpSessionEpoch), id)
+}
+
 // Count mocks base method.
 func (m *MockUserRepository) Count() (int, error) {
 	m.ctrl.T.Helper()

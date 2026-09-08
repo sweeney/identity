@@ -45,7 +45,7 @@ func (s *UserStore) Create(user *domain.User) error {
 
 func (s *UserStore) GetByID(id string) (*domain.User, error) {
 	row := s.db.DB().QueryRow(
-		`SELECT id, username, display_name, password_hash, role, is_active, created_at, updated_at
+		`SELECT id, username, display_name, password_hash, role, is_active, session_epoch, created_at, updated_at
 		 FROM users WHERE id = ?`, id,
 	)
 	return scanUser(row)
@@ -53,7 +53,7 @@ func (s *UserStore) GetByID(id string) (*domain.User, error) {
 
 func (s *UserStore) GetByUsername(username string) (*domain.User, error) {
 	row := s.db.DB().QueryRow(
-		`SELECT id, username, display_name, password_hash, role, is_active, created_at, updated_at
+		`SELECT id, username, display_name, password_hash, role, is_active, session_epoch, created_at, updated_at
 		 FROM users WHERE username = ? COLLATE NOCASE`, username,
 	)
 	return scanUser(row)
@@ -98,7 +98,7 @@ func (s *UserStore) Delete(id string) error {
 
 func (s *UserStore) List() ([]*domain.User, error) {
 	rows, err := s.db.DB().Query(
-		`SELECT id, username, display_name, password_hash, role, is_active, created_at, updated_at
+		`SELECT id, username, display_name, password_hash, role, is_active, session_epoch, created_at, updated_at
 		 FROM users ORDER BY username`,
 	)
 	if err != nil {
@@ -124,6 +124,24 @@ func (s *UserStore) Count() (int, error) {
 }
 
 // scanUser scans a single *sql.Row into a User.
+// BumpSessionEpoch increments the account's session epoch, invalidating every
+// admin UI session minted before now. Incremented in SQL rather than read then
+// written, so two concurrent bumps cannot land on the same value.
+func (s *UserStore) BumpSessionEpoch(id string) error {
+	res, err := s.db.DB().Exec(
+		`UPDATE users SET session_epoch = session_epoch + 1, updated_at = ? WHERE id = ?`,
+		formatTime(time.Now().UTC()), id,
+	)
+	if err != nil {
+		return fmt.Errorf("bump session epoch: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func scanUser(row *sql.Row) (*domain.User, error) {
 	var u domain.User
 	var role string
@@ -132,7 +150,7 @@ func scanUser(row *sql.Row) (*domain.User, error) {
 
 	err := row.Scan(
 		&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash,
-		&role, &isActive, &createdAt, &updatedAt,
+		&role, &isActive, &u.SessionEpoch, &createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
@@ -157,7 +175,7 @@ func scanUserRow(rows *sql.Rows) (*domain.User, error) {
 
 	err := rows.Scan(
 		&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash,
-		&role, &isActive, &createdAt, &updatedAt,
+		&role, &isActive, &u.SessionEpoch, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan user row: %w", err)

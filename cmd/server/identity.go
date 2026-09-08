@@ -232,7 +232,7 @@ func runIdentityServer() error {
 	}
 
 	// Services
-	authSvc := service.NewAuthService(issuer, userStore, tokenStore, backupMgr, auditStore, cfg.RefreshTokenTTL)
+	authSvc := service.NewAuthService(issuer, userStore, tokenStore, oauthClientStore, backupMgr, auditStore, cfg.RefreshTokenTTL)
 	userSvc := service.NewUserService(userStore, tokenStore, backupMgr, auditStore, 10)
 	oauthSvc := service.NewOAuthService(authSvc, issuer, oauthClientStore, oauthCodeStore, auditStore, 60*time.Second)
 	deviceSvc := service.NewDeviceFlowService(authSvc, oauthClientStore, deviceAuthStore, claimCodeStore, tokenStore, auditStore, service.DeviceFlowConfig{

@@ -17,6 +17,7 @@ type RefreshToken struct {
 	Audiences     []string // aud claim to carry into new access tokens on rotation
 	Scope         string   // space-delimited scope this grant was consented for; empty means unrestricted
 	ClaimCodeID   string   // claim code that produced this family, if any; revoking it revokes the family
+	AuthCodeID    string   // authorization code that produced this family, if any; replaying it revokes the family
 	ClientID      string   // OAuth client this token was issued to; empty for a direct API login
 	IssuedAt      time.Time
 	LastUsedAt    time.Time
@@ -78,6 +79,12 @@ type TokenRepository interface {
 	// tokens it already produced die with it rather than living out the
 	// refresh token's 30-day window.
 	RevokeByClaimCodeID(claimCodeID string) error
+
+	// RevokeByAuthCodeID revokes every refresh token descended from the given
+	// authorization code. Used when that code is replayed: a single-use code
+	// presented twice has leaked, and RFC 6749 §4.1.2 asks that the tokens it
+	// already produced die with it rather than outliving the compromise.
+	RevokeByAuthCodeID(authCodeID string) error
 
 	// DeleteExpiredAndOldRevoked removes tokens that are expired or have been
 	// revoked for more than retentionDays days.

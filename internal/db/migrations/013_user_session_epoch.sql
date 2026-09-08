@@ -1,0 +1,22 @@
+-- #33 (part of GHSA-vrh2-jqhp-4m44): make the admin UI session revocable.
+--
+-- The admin session is a self-contained 2-hour HS256 cookie. requireSession
+-- re-reads the account's IsActive and Role on every request, so disabling or
+-- demoting an admin takes effect immediately — but nothing invalidated the
+-- cookie itself. Whoever held one kept full admin access for its remaining
+-- lifetime no matter what the real owner did: changing the password, logging
+-- out, even --reset-admin on the host.
+--
+-- That is the wrong way round. A credential change is precisely what someone
+-- reaches for when they suspect a session was stolen, and #29 already made it
+-- revoke every refresh token the user holds. The admin plane, which is the more
+-- valuable of the two, was the part it could not reach.
+--
+-- session_epoch is stamped into the session JWT at mint time and compared
+-- against the live row on every request. Bumping it invalidates every session
+-- issued before the bump, with no session table to store or prune.
+--
+-- DEFAULT 0 matches the claim's zero value, so sessions minted before this
+-- migration keep working until the first bump rather than signing every admin
+-- out on deploy.
+ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0;

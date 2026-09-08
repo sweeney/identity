@@ -97,6 +97,20 @@ func (mr *MockTokenRepositoryMockRecorder) RevokeAllForUser(userID any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForUser", reflect.TypeOf((*MockTokenRepository)(nil).RevokeAllForUser), userID)
 }
 
+// RevokeByAuthCodeID mocks base method.
+func (m *MockTokenRepository) RevokeByAuthCodeID(authCodeID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RevokeByAuthCodeID", authCodeID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RevokeByAuthCodeID indicates an expected call of RevokeByAuthCodeID.
+func (mr *MockTokenRepositoryMockRecorder) RevokeByAuthCodeID(authCodeID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeByAuthCodeID", reflect.TypeOf((*MockTokenRepository)(nil).RevokeByAuthCodeID), authCodeID)
+}
+
 // RevokeByClaimCodeID mocks base method.
 func (m *MockTokenRepository) RevokeByClaimCodeID(claimCodeID string) error {
 	m.ctrl.T.Helper()

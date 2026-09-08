@@ -34,6 +34,9 @@ func TestUserService_Update_PasswordChange_RevokesRefreshTokens(t *testing.T) {
 	userRepo.EXPECT().Update(gomock.Any()).Return(nil)
 	backupSvc.EXPECT().TriggerAsync().AnyTimes()
 
+	// A password change must also end the admin UI session, which no token
+	// revocation reaches (#33).
+	userRepo.EXPECT().BumpSessionEpoch("u-1").Return(nil).Times(1)
 	tokenRepo.EXPECT().RevokeAllForUser("u-1").Return(nil).
 		Times(1)
 
@@ -84,7 +87,7 @@ func TestAuthService_Logout_RefusesAnotherUsersToken(t *testing.T) {
 	tokens.EXPECT().GetByHash(victimToken.TokenHash).Return(victimToken, nil)
 	// No RevokeByID expectation: revoking here is the defect.
 
-	svc := service.NewAuthService(newTestIssuer(t), users, tokens, backup, audit, time.Hour)
+	svc := service.NewAuthService(newTestIssuer(t), users, tokens, nil, backup, audit, time.Hour)
 	err := svc.Logout("attacker-1", "victims-raw-token")
 
 	assert.Error(t, err, "logging out somebody else's session must not succeed")
@@ -109,7 +112,7 @@ func TestAuthService_Logout_OwnTokenSucceeds(t *testing.T) {
 	tokens.EXPECT().GetByHash(own.TokenHash).Return(own, nil)
 	tokens.EXPECT().RevokeByID("tok-own").Return(nil)
 
-	svc := service.NewAuthService(newTestIssuer(t), users, tokens, backup, audit, time.Hour)
+	svc := service.NewAuthService(newTestIssuer(t), users, tokens, nil, backup, audit, time.Hour)
 	require.NoError(t, svc.Logout("user-1", "my-raw-token"))
 }
 
@@ -188,5 +191,5 @@ func svcForRefresh(
 	audit *mocks.MockAuditRepository,
 ) *service.AuthService {
 	t.Helper()
-	return service.NewAuthService(newTestIssuer(t), users, tokens, backup, audit, 30*24*time.Hour)
+	return service.NewAuthService(newTestIssuer(t), users, tokens, nil, backup, audit, 30*24*time.Hour)
 }

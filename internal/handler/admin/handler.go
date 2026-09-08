@@ -66,10 +66,26 @@ type adminHandler struct {
 
 // --- Session management ---
 
-func (h *adminHandler) mintSession(username string) (string, error) {
-	claims := jwt.RegisteredClaims{
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(sessionTTL)),
-		Subject:   username,
+// sessionClaims is the admin session cookie's payload.
+//
+// Epoch is what makes the cookie revocable. It is stamped at mint time from the
+// account's session_epoch and compared against the live row on every request,
+// so bumping that column invalidates every outstanding session for the account
+// without a session table to store or prune (#33). A cookie minted before this
+// existed carries no claim and reads as 0, which matches an account that has
+// never been bumped — so the upgrade itself signs nobody out.
+type sessionClaims struct {
+	jwt.RegisteredClaims
+	Epoch int64 `json:"epoch,omitempty"`
+}
+
+func (h *adminHandler) mintSession(username string, epoch int64) (string, error) {
+	claims := sessionClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(sessionTTL)),
+			Subject:   username,
+		},
+		Epoch: epoch,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(h.cfg.SessionSecret))
@@ -81,8 +97,8 @@ func (h *adminHandler) validateSession(tokenStr string) bool {
 }
 
 // parseSession validates and returns the claims from a session token.
-func (h *adminHandler) parseSession(tokenStr string) (*jwt.RegisteredClaims, error) {
-	claims := &jwt.RegisteredClaims{}
+func (h *adminHandler) parseSession(tokenStr string) (*sessionClaims, error) {
+	claims := &sessionClaims{}
 	token, err := jwt.ParseWithClaims(tokenStr, claims,
 		func(t *jwt.Token) (any, error) {
 			return []byte(h.cfg.SessionSecret), nil
@@ -134,12 +150,21 @@ func (h *adminHandler) requireSession(next http.Handler) http.Handler {
 			return
 		}
 
+		// And that the session was minted after the account's last credential
+		// change or sign-out. Without this the cookie is an unrevocable bearer
+		// token for its full two hours (#33).
+		if claims.Epoch != user.SessionEpoch {
+			h.clearSession(w)
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
 
-func (h *adminHandler) setSession(w http.ResponseWriter, username string) error {
-	tokenStr, err := h.mintSession(username)
+func (h *adminHandler) setSession(w http.ResponseWriter, username string, epoch int64) error {
+	tokenStr, err := h.mintSession(username, epoch)
 	if err != nil {
 		return err
 	}
@@ -273,7 +298,7 @@ func (h *adminHandler) loginPost(w http.ResponseWriter, r *http.Request) {
 
 	h.recordAudit(domain.EventLoginSuccess, userID, username, ip)
 
-	if err := h.setSession(w, username); err != nil {
+	if err := h.setSession(w, username, user.SessionEpoch); err != nil {
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
@@ -333,7 +358,7 @@ func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
 	ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
 	h.recordAuditWithDetail(domain.EventPasskeyLoginSuccess, user.ID, user.Username, ip, "admin UI passkey login")
 
-	if err := h.setSession(w, user.Username); err != nil {
+	if err := h.setSession(w, user.Username, user.SessionEpoch); err != nil {
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
@@ -342,6 +367,15 @@ func (h *adminHandler) loginPasskey(w http.ResponseWriter, r *http.Request) {
 
 func (h *adminHandler) logout(w http.ResponseWriter, r *http.Request) {
 	username := h.sessionUsername(r)
+	// Clearing the cookie only asks the browser to forget it. A cookie already
+	// copied elsewhere would keep working for the rest of its two hours, so
+	// logging out bumps the epoch and actually ends the session. On the admin
+	// plane that is worth the cost: signing out here signs out everywhere.
+	if user, err := h.userSvc.GetByUsername(username); err == nil {
+		if err := h.userSvc.BumpSessionEpoch(user.ID); err != nil {
+			log.Printf("admin: logout could not bump session epoch for %s: %v", username, err)
+		}
+	}
 	h.clearSession(w)
 	ip := httputil.ExtractClientIP(r, h.cfg.TrustProxy)
 	h.recordAudit(domain.EventLogout, "", username, ip)

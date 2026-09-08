@@ -38,8 +38,26 @@ alike. A client with an empty Audience mints tokens with no `aud` at all. Tokens
 from the direct API login (`POST /api/v1/auth/login`) never carry one, because
 no client is involved.
 
-`aud` survives refresh: it is stored on the refresh token and copied onto each
-rotation, so it cannot be widened by refreshing.
+**The registration is authoritative, on every rotation.** A refresh re-reads the
+client's current Audience rather than replaying the set captured when the grant
+was created. Editing a client's Audience therefore reaches live sessions within
+one access-token lifetime (~15 minutes) instead of waiting for every user to
+sign in again:
+
+- **Removing** an audience withdraws it. This is what makes the Audience field
+  usable as a revocation control — before, a client that kept refreshing held
+  its original set indefinitely, because rotation grants a fresh refresh TTL and
+  nothing caps the chain.
+- **Adding** one reaches existing sessions on their next refresh, so a resource
+  server can start requiring an audience without signing everyone out first.
+- A client whose registration has been **deleted** mints no `aud` at all from
+  its next rotation onward.
+
+A token from the direct API login has no client, so there is no registration to
+consult and its (absent) audience is carried forward unchanged.
+
+The set still cannot be *widened by the client*: it comes from the registration,
+which only an admin can edit, never from anything the client sends.
 
 **Checking.** `RequireAudience` guards every `/api/v1/*` route, and the three
 public passkey bridges check the same rule directly. A token is accepted when:

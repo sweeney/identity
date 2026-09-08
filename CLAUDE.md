@@ -98,6 +98,12 @@ different service, and such a token is refused here.
 the claim verbatim; test membership with `HasAudience`, never by comparing or
 splitting strings.
 
+A refresh re-reads the issuing client's registered `Audiences` rather than
+replaying the set frozen at grant time, so editing a client's Audience reaches
+live sessions within one access-token lifetime. Removing an audience is a
+revocation; adding one needs no re-login. Direct-login tokens have no client and
+keep what they were issued with.
+
 ## Device grant scope and claim codes
 
 A device grant's `scope` is enforced, not just displayed. The scope the user
@@ -109,6 +115,21 @@ Revoking a claim code at `/admin/claim-codes` stops the paired device two ways:
 its next poll fails with `claim_code_revoked`, and the refresh tokens that claim
 code already produced are revoked (`refresh_tokens.claim_code_id`, migration
 008). A claim code binds to exactly one user, compare-and-swap, on first use.
+
+Replaying an authorization code revokes the refresh tokens that code produced
+(`refresh_tokens.auth_code_id`, migration 012), not just the second exchange —
+RFC 6749 §4.1.2. Both the exchange and the replay are audited
+(`oauth_code_exchanged`, `oauth_code_replayed`). A lost race is treated as a
+replay: the server cannot tell which caller is the attacker.
+
+The admin UI session cookie is revocable too. It carries a `session_epoch`
+claim (migration 013) compared against the live user row on every request, so
+bumping the column ends every outstanding admin session for that account with no
+session table to keep. It is bumped on password change — including
+`--reset-admin`, which goes through the same path — and on logout, which means
+signing out of the admin UI signs out everywhere rather than merely asking the
+browser to forget the cookie. A cookie predating the claim reads as epoch 0 and
+keeps working until the first bump, so deploying this signs nobody out.
 
 Changing a user's password revokes every refresh token they hold. Logout only
 revokes tokens belonging to the caller. Refresh tokens from the OAuth, device
@@ -124,6 +145,14 @@ Disabling or demoting an account takes effect **immediately** on the API, not ju
 
 - `admin` — full access to all endpoints including user management and admin UI. The last active admin cannot be deleted, demoted, or deactivated (`cannot_delete_last_admin`) — otherwise the admin plane locks with no way back short of `--reset-admin` on the host.
 - `user` — can call `/auth/*` and `GET /users/{own-id}` only
+
+Role and scope are separate questions. `RequireAdmin` asks who the account is;
+`RequireScope` asks what the presented token was narrowed to at consent. The
+mutating user routes (`POST /users`, `PUT /users/{id}`, `DELETE /users/{id}`)
+require both admin and the `admin:users` scope. A token carrying no scope claim
+was never narrowed and is unrestricted, so direct logins and unscoped OAuth
+grants are unaffected; a device approved for `scope=read:sensors` is refused
+with `insufficient_scope` even when the account behind it is an admin.
 
 Only these two values are accepted. Anything else is a `400 validation_error`
 on create and update, rather than being coerced to `user` (which would quietly

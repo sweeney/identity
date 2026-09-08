@@ -175,6 +175,25 @@ token verification.
   Setting `RequiredAudience` is the belt to `HasAudience`'s braces — it makes
   the JWT parser itself reject a non-matching `aud`, and (because it requires
   the claim to be present) also rejects tokens that carry no audience at all.
+
+- **Turn enforcement on in warn-only mode first.** `RequiredAudienceWarnOnly`
+  makes the check an observation rather than a gate: a token that fails is still
+  accepted, and the mismatch is logged at warn level with the subject, the
+  audience presented and the one expected.
+
+  ```go
+  RequiredAudience:         "my-service",
+  RequiredAudienceWarnOnly: true,   // observe for a few days, then remove
+  ```
+
+  Without this, switching enforcement on is a guess. Identity's clients table
+  tells you which registered clients *could* satisfy an audience; it cannot tell
+  you which callers actually exist. A caller that is not a registered client at
+  all — another resource server, a script, something nobody remembers — appears
+  only when it breaks. Run warn-only, read the log, then enforce on evidence.
+
+  Watch for `subject` values you do not recognise and for tokens with an empty
+  `presented_audience`, which is the case enforcement breaks hardest.
 - **Errors.** Three errors come back from the parse calls, and the distinction
   matters:
 

@@ -1,8 +1,10 @@
 package auth_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -535,4 +537,109 @@ func TestParse_PopulatesExpiryAndIssuedAt(t *testing.T) {
 			assert.LessOrEqual(t, remaining, ttl)
 		})
 	}
+}
+
+// --- warn-only audience enforcement (#36) ---
+
+// captureLogs returns a logger writing JSON records into buf.
+func captureLogs(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+// TestWarnOnlyAudience covers the observation mode from #36.
+//
+// Turning on RequiredAudience is a guess until it is wrong: the clients table
+// says which registered clients *could* pass, not which callers actually exist.
+// A caller nobody remembers reveals itself by breaking. Warn-only mode inverts
+// that — the verifier checks the audience, reports what it would have rejected,
+// and keeps accepting, so enforcement can be switched on against observed
+// traffic instead of an inference.
+func TestWarnOnlyAudience(t *testing.T) {
+	ti := mustIssuer(t, "https://id.example.com", 5*time.Minute)
+	srv, _ := newJWKSServer(t, ti)
+
+	newVerifier := func(t *testing.T, warnOnly bool, buf *bytes.Buffer) *commonauth.JWKSVerifier {
+		t.Helper()
+		v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
+			IssuerURL:                srv.URL,
+			Issuer:                   "https://id.example.com",
+			RequiredAudience:         "config",
+			RequiredAudienceWarnOnly: warnOnly,
+			Logger:                   captureLogs(buf),
+		})
+		require.NoError(t, err)
+		return v
+	}
+
+	mintUser := func(t *testing.T, aud []string) string {
+		t.Helper()
+		tok, err := ti.Mint(domain.TokenClaims{
+			UserID: "user-1", Username: "alice",
+			Role: domain.RoleUser, IsActive: true, Audience: aud,
+		})
+		require.NoError(t, err)
+		return tok
+	}
+
+	t.Run("mismatch is accepted and reported", func(t *testing.T) {
+		var buf bytes.Buffer
+		v := newVerifier(t, true, &buf)
+
+		claims, err := v.Parse(context.Background(), mintUser(t, []string{"statehouse"}))
+		require.NoError(t, err, "warn-only must not reject")
+		assert.Equal(t, "user-1", claims.UserID)
+
+		logged := buf.String()
+		assert.Contains(t, logged, "user-1", "the log must name the subject, or it cannot be chased")
+		assert.Contains(t, logged, "statehouse", "the log must carry the audience actually presented")
+		assert.Contains(t, logged, "config", "the log must carry the audience that was expected")
+	})
+
+	t.Run("match is accepted silently", func(t *testing.T) {
+		var buf bytes.Buffer
+		v := newVerifier(t, true, &buf)
+
+		_, err := v.Parse(context.Background(), mintUser(t, []string{"config", "statehouse"}))
+		require.NoError(t, err)
+		assert.NotContains(t, buf.String(), "audience",
+			"a token that satisfies the requirement must not be reported")
+	})
+
+	t.Run("a token with no audience at all is reported", func(t *testing.T) {
+		var buf bytes.Buffer
+		v := newVerifier(t, true, &buf)
+
+		_, err := v.Parse(context.Background(), mintUser(t, nil))
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "config",
+			"an absent aud is exactly the case enforcement would break, so it must be visible")
+	})
+
+	t.Run("enforcing mode still rejects", func(t *testing.T) {
+		var buf bytes.Buffer
+		v := newVerifier(t, false, &buf)
+
+		_, err := v.Parse(context.Background(), mintUser(t, []string{"statehouse"}))
+		require.ErrorIs(t, err, commonauth.ErrTokenInvalid,
+			"warn-only must be opt-in — the default stays enforcing")
+	})
+
+	t.Run("service tokens are reported too", func(t *testing.T) {
+		var buf bytes.Buffer
+		v := newVerifier(t, true, &buf)
+
+		tok, err := ti.MintServiceToken(domain.ServiceTokenClaims{
+			ClientID: "countinghouse",
+			Audience: []string{"statehouse"},
+			Scope:    "read:users",
+		}, 5*time.Minute)
+		require.NoError(t, err)
+
+		claims, err := v.ParseServiceToken(context.Background(), tok)
+		require.NoError(t, err, "warn-only must apply to the service-token path as well")
+		assert.Equal(t, "countinghouse", claims.ClientID)
+		assert.Contains(t, buf.String(), "countinghouse",
+			"the log must name the calling client")
+		assert.Contains(t, buf.String(), "statehouse")
+	})
 }
