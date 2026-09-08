@@ -417,13 +417,46 @@ func TestReadsALiveDatabase(t *testing.T) {
 	assert.Regexp(t, `c\s+root\s+1\s+id\.swee\.net\s+allowed`, out)
 }
 
-// TestQuiescentDatabaseIsAnnounced is the other side: the fallback must not be
-// silent, because reading a database nobody is writing may mean the service is
-// down — which the operator wants to know before trusting the numbers.
+// TestQuiescentDatabaseIsAnnounced forces the fallback deterministically.
+//
+// Whether a read-only open of a closed WAL database succeeds is
+// platform-dependent — it works on the Linux CI runner and fails on macOS,
+// because SQLite may need to create the -shm file and cannot when the
+// connection is read-only. Asserting "the fallback happened" after merely
+// closing the handle therefore tests the platform, not the script.
+//
+// Making the containing directory unwritable removes the ambiguity: -shm
+// cannot be created anywhere, so mode=ro must fail and the immutable path must
+// be taken, on any platform. That is also the real-world shape this protects
+// against — a database the operator can read but not write beside.
 func TestQuiescentDatabaseIsAnnounced(t *testing.T) {
-	path := newDB(t) // newDB closes the handle
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions would not prevent creating -shm")
+	}
+	path := newDB(t)
+	dir := filepath.Dir(path)
+
+	require.NoError(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) // so TempDir cleanup can remove it
+
 	out, code := run(t, path)
 	require.Equal(t, exitOK, code, out)
 	assert.Contains(t, out, "no live writer detected",
 		"falling back to immutable mode must be announced, not silent")
+	assert.Contains(t, out, "no live refresh tokens",
+		"and the report itself must still be produced")
+}
+
+// TestQuiescentDatabaseStillReportsCorrectly is the platform-independent half:
+// however the script opens a database nobody is writing, it must produce the
+// same answers.
+func TestQuiescentDatabaseStillReportsCorrectly(t *testing.T) {
+	path := newDB(t)
+	addUser(t, path, "admin1", "root", "admin")
+	addClient(t, path, "delegated", `["id.swee.net","statehouse"]`, "")
+	addToken(t, path, "t1", "admin1", "delegated", `["id.swee.net","statehouse"]`, future, 0)
+
+	out, code := run(t, path, "--strict")
+	require.Equal(t, exitImpact, code, out)
+	assert.Contains(t, out, "REFUSED — delegated to 'statehouse'")
 }
