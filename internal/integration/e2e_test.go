@@ -51,7 +51,7 @@ func newTestServer(t *testing.T) *testServer {
 	noopBackup := &backup.NoopManager{}
 	auditStore := store.NewAuditStore(database)
 
-	authSvc := service.NewAuthService(issuer, userStore, tokenStore, noopBackup, auditStore, 30*24*time.Hour)
+	authSvc := service.NewAuthService(issuer, userStore, tokenStore, nil, noopBackup, auditStore, 30*24*time.Hour)
 	userSvc := service.NewUserService(userStore, tokenStore, noopBackup, auditStore, 10).WithBcryptCost(4)
 
 	handler := apihandler.NewRouter(issuer, authSvc, userSvc, nil, "")

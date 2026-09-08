@@ -98,6 +98,12 @@ different service, and such a token is refused here.
 the claim verbatim; test membership with `HasAudience`, never by comparing or
 splitting strings.
 
+A refresh re-reads the issuing client's registered `Audiences` rather than
+replaying the set frozen at grant time, so editing a client's Audience reaches
+live sessions within one access-token lifetime. Removing an audience is a
+revocation; adding one needs no re-login. Direct-login tokens have no client and
+keep what they were issued with.
+
 ## Device grant scope and claim codes
 
 A device grant's `scope` is enforced, not just displayed. The scope the user

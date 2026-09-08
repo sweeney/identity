@@ -99,7 +99,7 @@ func newRaceStack(t *testing.T, wrap func(domain.OAuthCodeRepository) domain.OAu
 		codeRepo = wrap(codeStore)
 	}
 
-	authSvc := service.NewAuthService(issuer, users, tokens, nil, audit, 30*24*time.Hour)
+	authSvc := service.NewAuthService(issuer, users, tokens, clients, nil, audit, 30*24*time.Hour)
 	oauthSvc := service.NewOAuthService(authSvc, issuer, clients, codeRepo, audit, 60*time.Second)
 
 	return &raceStack{

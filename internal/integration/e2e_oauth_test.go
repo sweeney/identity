@@ -54,7 +54,7 @@ func setupE2EServer(t *testing.T) (http.Handler, *db.Database) {
 	require.NoError(t, err)
 
 	backupMgr := &noopBackup{}
-	authSvc := service.NewAuthService(issuer, userStore, tokenStore, backupMgr, auditStore, 30*24*time.Hour)
+	authSvc := service.NewAuthService(issuer, userStore, tokenStore, oauthClientStore, backupMgr, auditStore, 30*24*time.Hour)
 	userSvc := service.NewUserService(userStore, tokenStore, backupMgr, auditStore, 4)
 	oauthSvc := service.NewOAuthService(authSvc, issuer, oauthClientStore, oauthCodeStore, auditStore, 60*time.Second)
 

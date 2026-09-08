@@ -166,7 +166,13 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	newToken.FamilyID = t.FamilyID
 	newToken.ParentTokenID = t.ID
 	newToken.DeviceHint = t.DeviceHint
-	newToken.Audiences = t.Audiences
+	// A nil audience list means the caller has nothing to say and the stored
+	// set carries forward. A non-nil list — including an empty one — is the
+	// caller asserting the audiences this rotation should have, resolved from
+	// the client's live registration (#39).
+	if newToken.Audiences == nil {
+		newToken.Audiences = t.Audiences
+	}
 	// Scope and claim-code binding travel with the family. Dropping the scope
 	// on rotation would silently widen the grant back to full privilege; losing
 	// the claim code would put the family beyond the reach of its revocation.
