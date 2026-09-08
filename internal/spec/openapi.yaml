@@ -238,6 +238,14 @@ paths:
         Exchange a refresh token for a new access token and refresh token.
         The submitted refresh token is **immediately invalidated**.
         Replaying a used token triggers `token_family_compromised` and revokes all sessions in that family.
+
+        This endpoint authenticates no OAuth client. Tokens from a direct login,
+        and tokens issued to a **public** client (including the device grant, which
+        is what firmware uses), are refreshed here. A token issued to a
+        **confidential** client — one with a registered secret — is refused with
+        `client_authentication_required` and must be refreshed at `/oauth/token`
+        with that client's credentials, which is the only endpoint that can check
+        them. The refused token is not consumed.
       tags: [auth]
       requestBody:
         required: true
@@ -257,12 +265,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/TokenResponse'
         "401":
-          description: Token invalid, expired, or family compromised
+          description: Token invalid, expired, family compromised, or issued to a confidential client
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
               examples:
+                client_authentication_required:
+                  value:
+                    error: client_authentication_required
+                    message: this refresh token was issued to a confidential OAuth client and must be refreshed at /oauth/token with that client's credentials
                 invalid_refresh_token:
                   value:
                     error: invalid_refresh_token

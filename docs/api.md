@@ -260,6 +260,14 @@ it does on the `authorization_code` grant.
 Refresh tokens from the direct API login (`POST /api/v1/auth/login`) carry no
 client and are refreshed through `POST /api/v1/auth/refresh`, not this endpoint.
 
+**Which endpoint should I use?** `/api/v1/auth/refresh` authenticates no client,
+so it handles direct-login tokens and tokens issued to *public* clients —
+including the device grant, which is what firmware uses. A token issued to a
+*confidential* client (one with a registered secret) is refused there with
+`client_authentication_required` and must be refreshed here, because this is the
+only endpoint that can verify the secret. The refused token is not consumed, so
+retrying at the right endpoint works.
+
 **Response 200**: Same token response shape.
 
 ### OAuth Error Format
