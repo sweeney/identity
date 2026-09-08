@@ -385,7 +385,7 @@ paths:
         "401":
           description: Missing or invalid access token
         "403":
-          description: Admin role required
+          description: Admin role required, or the token names a service other than this one (`invalid_audience`) — the management routes require a token issued for this server alone
           content:
             application/json:
               schema:
@@ -430,7 +430,7 @@ paths:
         "401":
           description: Missing or invalid access token
         "403":
-          description: Admin role required, or the token carries a scope that does not include `admin:users` (`insufficient_scope`)
+          description: Admin role required; the token carries a scope excluding `admin:users` (`insufficient_scope`); or the token names a service other than this one (`invalid_audience`) — the management routes require a token issued for this server alone
         "409":
           description: Username already taken
           content:
@@ -529,7 +529,7 @@ paths:
         "401":
           description: Missing or invalid access token
         "403":
-          description: Admin role required, or the token carries a scope that does not include `admin:users` (`insufficient_scope`)
+          description: Admin role required; the token carries a scope excluding `admin:users` (`insufficient_scope`); or the token names a service other than this one (`invalid_audience`) — the management routes require a token issued for this server alone
         "404":
           description: User not found
         "409":
@@ -564,7 +564,7 @@ paths:
         "401":
           description: Missing or invalid access token
         "403":
-          description: Admin role required, or the token carries a scope that does not include `admin:users` (`insufficient_scope`)
+          description: Admin role required; the token carries a scope excluding `admin:users` (`insufficient_scope`); or the token names a service other than this one (`invalid_audience`) — the management routes require a token issued for this server alone
         "404":
           description: User not found
         "409":

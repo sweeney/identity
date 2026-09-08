@@ -128,3 +128,60 @@ func TestAdminLoginPasskey_DeactivatedAdmin_Rejected(t *testing.T) {
 		"a deactivated admin must not be issued a session")
 	assertNoAdminSession(t, rr)
 }
+
+// --- #37: the admin UI is management plane, so exclusivity applies ---
+
+// TestPasskeyLogin_RefusesDelegatedToken tightens the WP1 rule above from
+// "names this server" to "names this server and nothing else".
+//
+// WP1 stopped a token minted purely for a sibling service being traded for an
+// admin session. It did not stop a token that names this server *and* five
+// others — which is the shape production actually registers, because a client
+// that calls /api/v1/auth/me legitimately needs identity in its audience list.
+//
+// That token is a live bearer credential at every service it names. Any one of
+// them, compromised, could exchange it here for a 2-hour admin session cookie
+// that outlives the token and survives refresh-family revocation. The admin UI
+// is the management plane; it takes the exclusive rule.
+func TestPasskeyLogin_RefusesDelegatedToken(t *testing.T) {
+	const issuerName = "https://id.example.com"
+	adminUser := &domain.User{
+		ID: "admin-1", Username: "admin", Role: domain.RoleAdmin, IsActive: true,
+	}
+	handler, issuer := passkeyLoginRouter(t, issuerName, adminUser)
+
+	tok, err := issuer.Mint(domain.TokenClaims{
+		UserID: adminUser.ID, Username: adminUser.Username,
+		Role: domain.RoleAdmin, IsActive: true,
+		// The live production shape: names this server, and five others.
+		Audience: []string{"config", "countinghouse", "greenhouse", issuerName, "mqttauth", "statehouse"},
+	})
+	require.NoError(t, err)
+
+	rr := postPasskeyLogin(t, handler, tok)
+	assert.Equal(t, http.StatusForbidden, rr.Code,
+		"a token delegated to sibling services must not buy an admin session")
+	assert.Empty(t, rr.Result().Cookies(),
+		"no session cookie may be issued on refusal")
+}
+
+// TestPasskeyLogin_AcceptsExclusiveToken keeps the boundary at exclusivity
+// rather than refusing every audience-bearing token.
+func TestPasskeyLogin_AcceptsExclusiveToken(t *testing.T) {
+	const issuerName = "https://id.example.com"
+	adminUser := &domain.User{
+		ID: "admin-1", Username: "admin", Role: domain.RoleAdmin, IsActive: true,
+	}
+	handler, issuer := passkeyLoginRouter(t, issuerName, adminUser)
+
+	tok, err := issuer.Mint(domain.TokenClaims{
+		UserID: adminUser.ID, Username: adminUser.Username,
+		Role: domain.RoleAdmin, IsActive: true,
+		Audience: []string{issuerName},
+	})
+	require.NoError(t, err)
+
+	rr := postPasskeyLogin(t, handler, tok)
+	assert.NotEqual(t, http.StatusForbidden, rr.Code,
+		"a token naming only this server must still work: %s", rr.Body.String())
+}

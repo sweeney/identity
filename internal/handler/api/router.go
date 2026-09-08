@@ -99,6 +99,22 @@ func NewRouter(issuer *auth.TokenIssuer, authSvc service.AuthServicer, userSvc s
 		return auth.RequireAuthWithStatus(issuer, statusProvider, auth.RequireAudience(issuer.Issuer())(next))
 	}
 
+	// requireManagement is requireUserAuth plus the exclusivity rule (#37).
+	//
+	// RequireAudience asks "may this token be used here?", which is right for
+	// ordinary routes: a client naming five services and also calling /auth/me
+	// is doing nothing wrong. The management routes ask the stricter question
+	// "was this token delegated anywhere else?" — because a multi-audience
+	// token is a live bearer credential at every service it names, and any one
+	// of those, compromised, would otherwise be able to create and delete users
+	// here the moment the account behind it is an admin.
+	//
+	// A direct-login token carries no aud and passes: it was never delegated to
+	// anything, which is the strongest position a token can be in.
+	requireManagement := func(next http.Handler) http.Handler {
+		return requireUserAuth(auth.RequireExclusiveAudience(issuer.Issuer())(next))
+	}
+
 	// handlers maps "METHOD /path" to the handler for that route. Routes whose
 	// handler is absent (e.g. WebAuthn when webauthnSvc is nil) are simply not
 	// registered. Every key here MUST appear in routes() — the loop below panics
@@ -122,11 +138,16 @@ func NewRouter(issuer *auth.TokenIssuer, authSvc service.AuthServicer, userSvc s
 		//
 		// A token with no scope claim was never narrowed and is unrestricted,
 		// so every direct login and unscoped OAuth grant is unaffected.
-		"GET /api/v1/users":         requireUserAuth(auth.RequireAdmin(http.HandlerFunc(uh.list))),
-		"POST /api/v1/users":        requireUserAuth(auth.RequireAdmin(auth.RequireScope(ScopeAdminUsers)(http.HandlerFunc(uh.create)))),
+		//
+		// The four admin-only routes are the management plane and additionally
+		// require an exclusively-scoped token (#37). GET /users/{id} is not:
+		// it is how a user reads their own record, a self-service read rather
+		// than administration, so it stays on the ordinary plane.
+		"GET /api/v1/users":         requireManagement(auth.RequireAdmin(http.HandlerFunc(uh.list))),
+		"POST /api/v1/users":        requireManagement(auth.RequireAdmin(auth.RequireScope(ScopeAdminUsers)(http.HandlerFunc(uh.create)))),
 		"GET /api/v1/users/{id}":    requireUserAuth(http.HandlerFunc(uh.get)),
-		"PUT /api/v1/users/{id}":    requireUserAuth(auth.RequireAdmin(auth.RequireScope(ScopeAdminUsers)(http.HandlerFunc(uh.update)))),
-		"DELETE /api/v1/users/{id}": requireUserAuth(auth.RequireAdmin(auth.RequireScope(ScopeAdminUsers)(http.HandlerFunc(uh.delete)))),
+		"PUT /api/v1/users/{id}":    requireManagement(auth.RequireAdmin(auth.RequireScope(ScopeAdminUsers)(http.HandlerFunc(uh.update)))),
+		"DELETE /api/v1/users/{id}": requireManagement(auth.RequireAdmin(auth.RequireScope(ScopeAdminUsers)(http.HandlerFunc(uh.delete)))),
 	}
 
 	// WebAuthn / Passkey endpoints

@@ -59,6 +59,30 @@ consult and its (absent) audience is carried forward unchanged.
 The set still cannot be *widened by the client*: it comes from the registration,
 which only an admin can edit, never from anything the client sends.
 
+**Two planes.** Identity's own routes are split by what they do, not only by
+who may call them:
+
+| Plane | Routes | Rule |
+|---|---|---|
+| Ordinary | `/api/v1/auth/*`, `GET /api/v1/users/{id}` | `aud` is absent **or** names this server |
+| Management | `GET`/`POST` `/api/v1/users`, `PUT`/`DELETE` `/api/v1/users/{id}`, `POST /admin/login/passkey` | `aud` is absent **or** names this server **and nothing else** |
+
+The management rule is stricter because a multi-audience token is a live bearer
+credential at every service it names. A client that calls `/api/v1/auth/me`
+legitimately needs identity in its list, so the normal shape names identity
+*alongside* several siblings — and any one of those siblings, compromised, would
+otherwise hold something that can create and delete users here as soon as the
+account behind it is an admin.
+
+An absent `aud` passes both: a direct `/api/v1/auth/login` token was never
+delegated anywhere, which is the strongest position a token can be in, not the
+weakest. So an admin signing in directly keeps full access, and an admin using a
+delegated client does not — they administer through the admin UI, or through a
+client registered for this server alone.
+
+`GET /api/v1/users/{id}` stays on the ordinary plane deliberately: it is how a
+user reads their own record, a self-service read rather than administration.
+
 **Checking.** `RequireAudience` guards every `/api/v1/*` route, and the three
 public passkey bridges check the same rule directly. A token is accepted when:
 

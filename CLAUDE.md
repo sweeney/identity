@@ -89,6 +89,14 @@ parse a token directly — `/admin/login/passkey`, `/oauth/authorize/passkey`,
 `/oauth/device/passkey`). This is what stops a token delegated to a sibling
 resource server being replayed against the Identity API.
 
+The management routes are stricter still: `GET`/`POST /api/v1/users`,
+`PUT`/`DELETE /api/v1/users/{id}` and `POST /admin/login/passkey` require a
+token naming this server **and nothing else** (`RequireExclusiveAudience` /
+`auth.AudienceExclusive`). A token delegated to sibling services is a bearer
+credential at each of them and must not also administer Identity. An absent
+`aud` — a direct `/api/v1/auth/login` — passes, since it was delegated nowhere.
+`GET /api/v1/users/{id}` stays ordinary: it is a self-service read.
+
 An OAuth client whose tokens are meant for Identity itself may register its
 audience as either the issuer URL (`https://id.swee.net`) or the bare host
 (`id.swee.net`) — Identity treats both as naming itself. Any other value is a
