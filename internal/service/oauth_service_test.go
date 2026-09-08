@@ -161,8 +161,10 @@ func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 	codes.EXPECT().MarkUsed("code-1", gomock.Any()).Return(nil)
 	clients.EXPECT().GetByID("client-1").Return(client, nil)
 	authSvc.EXPECT().IssueTokensForGrant("user-123", service.GrantContext{
-		Audience: []string{"myapp"}, ClientID: "client-1",
+		Audience: []string{"myapp"}, ClientID: "client-1", AuthCodeID: "code-1",
 	}).Return(loginResult, nil)
+	// The exchange is audited (#26); the username lookup feeds that record.
+	authSvc.EXPECT().UsernameForID("user-123").Return("alice").AnyTimes()
 
 	result, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
 	require.NoError(t, err)
@@ -199,8 +201,9 @@ func TestOAuthService_ExchangeCode_NoAudience(t *testing.T) {
 	clients.EXPECT().GetByID("client-1").Return(client, nil)
 	// Audience must be empty string when client has no audience
 	authSvc.EXPECT().IssueTokensForGrant("user-123", service.GrantContext{
-		ClientID: "client-1",
+		ClientID: "client-1", AuthCodeID: "code-noaud",
 	}).Return(loginResult, nil)
+	authSvc.EXPECT().UsernameForID("user-123").Return("alice").AnyTimes()
 
 	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
 	require.NoError(t, err)
@@ -268,7 +271,7 @@ func TestOAuthService_ExchangeCode_ClientMismatch(t *testing.T) {
 
 func TestOAuthService_ExchangeCode_AlreadyUsed(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	svc, _, clients, codes := newOAuthService(t, ctrl)
+	svc, authSvc, clients, codes := newOAuthService(t, ctrl)
 
 	rawCode := "used-code"
 	codeHash := service.HashToken(rawCode)
@@ -288,9 +291,47 @@ func TestOAuthService_ExchangeCode_AlreadyUsed(t *testing.T) {
 
 	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
+	// Denying the replay is not enough: the tokens that code already produced
+	// must be revoked too, or the attacker keeps a 30-day refresh token issued
+	// from a code the server knows is compromised (#25, RFC 6749 §4.1.2).
+	authSvc.EXPECT().RevokeTokensForAuthCode("code-3").Return(nil)
+	authSvc.EXPECT().UsernameForID("user-123").Return("alice").AnyTimes()
 
 	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier")
 	assert.ErrorIs(t, err, service.ErrAuthCodeAlreadyUsed)
+}
+
+// TestOAuthService_ExchangeCode_ReplayRevocationFailureStillDenies checks the
+// failure mode: if revocation errors, the caller must still see invalid_grant.
+// Turning a denied replay into a 500 would tell an attacker their replay hit
+// something interesting, and the denial is correct regardless.
+func TestOAuthService_ExchangeCode_ReplayRevocationFailureStillDenies(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc, authSvc, clients, codes := newOAuthService(t, ctrl)
+
+	rawCode := "used-code-revocation-fails"
+	codeHash := service.HashToken(rawCode)
+	now := time.Now().UTC()
+	usedAt := now.Add(-10 * time.Second)
+	authCode := &domain.AuthCode{
+		ID:          "code-revfail",
+		CodeHash:    codeHash,
+		ClientID:    "client-1",
+		UserID:      "user-123",
+		RedirectURI: "https://myapp.example.com/callback",
+		IssuedAt:    now.Add(-30 * time.Second),
+		ExpiresAt:   now.Add(30 * time.Second),
+		UsedAt:      &usedAt,
+	}
+
+	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
+	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
+	authSvc.EXPECT().RevokeTokensForAuthCode("code-revfail").Return(errors.New("database is locked"))
+	authSvc.EXPECT().UsernameForID("user-123").Return("alice").AnyTimes()
+
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier")
+	assert.ErrorIs(t, err, service.ErrAuthCodeAlreadyUsed,
+		"a failed revocation must not change what the caller is told")
 }
 
 func TestOAuthService_ExchangeCode_Expired(t *testing.T) {
@@ -592,6 +633,12 @@ func TestOAuthService_ExchangeCode_LostRaceMapsToAlreadyUsed(t *testing.T) {
 	codes.EXPECT().MarkUsed("code-race", gomock.Any()).Return(domain.ErrNotFound)
 	// Critically, the loser must not be issued tokens.
 	authSvc.EXPECT().IssueTokensForUser(gomock.Any(), gomock.Any()).Times(0)
+	// A lost race is indistinguishable from a replay from here, so it is
+	// treated as one: the winner's tokens are revoked as well. That is the
+	// conservative reading — the server cannot tell which of the two callers
+	// is the attacker, and RFC 6749 §4.1.2 asks for revocation either way.
+	authSvc.EXPECT().RevokeTokensForAuthCode("code-race").Return(nil)
+	authSvc.EXPECT().UsernameForID(gomock.Any()).Return("alice").AnyTimes()
 
 	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
 	assert.ErrorIs(t, err, service.ErrAuthCodeAlreadyUsed,

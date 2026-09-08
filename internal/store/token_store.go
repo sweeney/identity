@@ -25,8 +25,8 @@ func (s *TokenStore) Create(token *domain.RefreshToken) error {
 	_, err := s.db.DB().Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  audiences, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  audiences, scope, claim_code_id, auth_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		token.ID,
 		token.UserID,
 		token.TokenHash,
@@ -36,6 +36,7 @@ func (s *TokenStore) Create(token *domain.RefreshToken) error {
 		mustJSONStrings(token.Audiences),
 		token.Scope,
 		nullableString(token.ClaimCodeID),
+		nullableString(token.AuthCodeID),
 		nullableString(token.ClientID),
 		formatTime(token.IssuedAt),
 		formatTime(token.LastUsedAt),
@@ -51,7 +52,7 @@ func (s *TokenStore) Create(token *domain.RefreshToken) error {
 func (s *TokenStore) GetByHash(tokenHash string) (*domain.RefreshToken, error) {
 	row := s.db.DB().QueryRow(
 		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
-		        device_hint, audiences, scope, COALESCE(claim_code_id,''), COALESCE(client_id,''),
+		        device_hint, audiences, scope, COALESCE(claim_code_id,''), COALESCE(auth_code_id,''), COALESCE(client_id,''),
 		        issued_at, last_used_at, expires_at, is_revoked
 		 FROM refresh_tokens WHERE token_hash = ?`, tokenHash,
 	)
@@ -78,8 +79,8 @@ func (s *TokenStore) Rotate(oldTokenID string, newToken *domain.RefreshToken) er
 	if _, err := tx.Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  audiences, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		  audiences, scope, claim_code_id, auth_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		newToken.ID,
 		newToken.UserID,
 		newToken.TokenHash,
@@ -89,6 +90,7 @@ func (s *TokenStore) Rotate(oldTokenID string, newToken *domain.RefreshToken) er
 		mustJSONStrings(newToken.Audiences),
 		newToken.Scope,
 		nullableString(newToken.ClaimCodeID),
+		nullableString(newToken.AuthCodeID),
 		nullableString(newToken.ClientID),
 		formatTime(newToken.IssuedAt),
 		formatTime(newToken.LastUsedAt),
@@ -124,7 +126,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	// Read old token within the transaction
 	row := tx.QueryRow(
 		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
-		        device_hint, audiences, scope, COALESCE(claim_code_id,''), COALESCE(client_id,''),
+		        device_hint, audiences, scope, COALESCE(claim_code_id,''), COALESCE(auth_code_id,''), COALESCE(client_id,''),
 		        issued_at, last_used_at, expires_at, is_revoked
 		 FROM refresh_tokens WHERE token_hash = ?`, oldTokenHash,
 	)
@@ -136,7 +138,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 
 	scanErr := row.Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
-		&t.DeviceHint, &audsJSON, &t.Scope, &t.ClaimCodeID, &t.ClientID,
+		&t.DeviceHint, &audsJSON, &t.Scope, &t.ClaimCodeID, &t.AuthCodeID, &t.ClientID,
 		&issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
 	)
 	if scanErr != nil {
@@ -178,6 +180,10 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	// the claim code would put the family beyond the reach of its revocation.
 	newToken.Scope = t.Scope
 	newToken.ClaimCodeID = t.ClaimCodeID
+	// The authorization code that produced this family travels with it for the
+	// same reason the claim code does: a replay of that code has to be able to
+	// find every token descended from it, however many rotations later (#25).
+	newToken.AuthCodeID = t.AuthCodeID
 	// Carry the client binding forward, unless the caller supplied one to adopt
 	// — a token issued before the binding existed has none, and the presenting
 	// client claims it on this rotation.
@@ -199,8 +205,8 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	if _, err := tx.Exec(
 		`INSERT INTO refresh_tokens
 		 (id, user_id, token_hash, family_id, parent_token_id, device_hint,
-		  audiences, scope, claim_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		  audiences, scope, claim_code_id, auth_code_id, client_id, issued_at, last_used_at, expires_at, is_revoked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		newToken.ID,
 		newToken.UserID,
 		newToken.TokenHash,
@@ -210,6 +216,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 		mustJSONStrings(newToken.Audiences),
 		newToken.Scope,
 		nullableString(newToken.ClaimCodeID),
+		nullableString(newToken.AuthCodeID),
 		nullableString(newToken.ClientID),
 		formatTime(newToken.IssuedAt),
 		formatTime(newToken.LastUsedAt),
@@ -267,6 +274,23 @@ func (s *TokenStore) RevokeByClaimCodeID(claimCodeID string) error {
 	return nil
 }
 
+// RevokeByAuthCodeID revokes every refresh token descended from the given
+// authorization code. Called when that code is presented a second time: the
+// code is single-use, so a replay means it leaked, and RFC 6749 §4.1.2 asks
+// that the tokens it already produced be revoked rather than left running.
+func (s *TokenStore) RevokeByAuthCodeID(authCodeID string) error {
+	if authCodeID == "" {
+		return nil
+	}
+	_, err := s.db.DB().Exec(
+		`UPDATE refresh_tokens SET is_revoked = 1
+		 WHERE auth_code_id = ? AND is_revoked = 0`, authCodeID)
+	if err != nil {
+		return fmt.Errorf("revoke tokens for auth code: %w", err)
+	}
+	return nil
+}
+
 // DeleteExpiredAndOldRevoked purges refresh tokens that are no longer needed.
 //
 // A revoked token is retained until it has expired, even if it has been idle
@@ -299,7 +323,7 @@ func scanToken(row *sql.Row) (*domain.RefreshToken, error) {
 
 	err := row.Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
-		&t.DeviceHint, &audsJSON, &t.Scope, &t.ClaimCodeID, &t.ClientID,
+		&t.DeviceHint, &audsJSON, &t.Scope, &t.ClaimCodeID, &t.AuthCodeID, &t.ClientID,
 		&issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

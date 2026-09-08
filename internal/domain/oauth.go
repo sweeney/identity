@@ -114,10 +114,20 @@ type AuthEvent struct {
 
 // Auth event type constants.
 const (
-	EventLoginSuccess           = "login_success"
-	EventLoginFailure           = "login_failure"
-	EventOAuthAuthorizeSuccess  = "oauth_authorize_success"
-	EventOAuthAuthorizeFailure  = "oauth_authorize_failure"
+	EventLoginSuccess          = "login_success"
+	EventLoginFailure          = "login_failure"
+	EventOAuthAuthorizeSuccess = "oauth_authorize_success"
+	EventOAuthAuthorizeFailure = "oauth_authorize_failure"
+	// EventOAuthCodeExchanged marks the moment a user's session comes into
+	// existence for a client. Authorization success only records consent; the
+	// exchange is where tokens are actually issued, and the two can be minutes
+	// and a different network apart.
+	EventOAuthCodeExchanged = "oauth_code_exchanged"
+	// EventOAuthCodeReplayed marks an authorization code presented twice. A
+	// code is single-use, so a second presentation means either a broken client
+	// or a stolen code — the clearest theft signal the authorization endpoint
+	// produces, and worth alerting on.
+	EventOAuthCodeReplayed      = "oauth_code_replayed"
 	EventTokenFamilyCompromised = "token_family_compromised"
 	EventLogout                 = "logout"
 	EventLogoutAll              = "logout_all"

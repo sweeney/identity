@@ -116,6 +116,12 @@ its next poll fails with `claim_code_revoked`, and the refresh tokens that claim
 code already produced are revoked (`refresh_tokens.claim_code_id`, migration
 008). A claim code binds to exactly one user, compare-and-swap, on first use.
 
+Replaying an authorization code revokes the refresh tokens that code produced
+(`refresh_tokens.auth_code_id`, migration 012), not just the second exchange —
+RFC 6749 §4.1.2. Both the exchange and the replay are audited
+(`oauth_code_exchanged`, `oauth_code_replayed`). A lost race is treated as a
+replay: the server cannot tell which caller is the attacker.
+
 Changing a user's password revokes every refresh token they hold. Logout only
 revokes tokens belonging to the caller. Refresh tokens from the OAuth, device
 and claim-code grants are all bound to the issuing client.

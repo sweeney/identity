@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -208,7 +209,7 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 	}
 
 	if code.UsedAt != nil {
-		return nil, ErrAuthCodeAlreadyUsed
+		return nil, s.handleCodeReplay(code, clientID)
 	}
 
 	if time.Now().After(code.ExpiresAt) {
@@ -228,15 +229,56 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 	// error is a genuine infrastructure fault and must stay one.
 	if err := s.codes.MarkUsed(code.ID, time.Now().UTC()); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, ErrAuthCodeAlreadyUsed
+			return nil, s.handleCodeReplay(code, clientID)
 		}
 		return nil, fmt.Errorf("mark code used: %w", err)
 	}
 
-	return s.auth.IssueTokensForGrant(code.UserID, GrantContext{
-		Audience: client.Audiences,
-		ClientID: client.ID,
+	result, err := s.auth.IssueTokensForGrant(code.UserID, GrantContext{
+		Audience:   client.Audiences,
+		ClientID:   client.ID,
+		AuthCodeID: code.ID,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	// The exchange, not the authorize, is where a session actually comes into
+	// existence for a client — the two can be minutes and a different network
+	// apart, and only one of them was being recorded (#26).
+	s.record(&domain.AuthEvent{
+		EventType: domain.EventOAuthCodeExchanged,
+		UserID:    code.UserID,
+		Username:  s.auth.UsernameForID(code.UserID),
+		ClientID:  clientID,
+	})
+	return result, nil
+}
+
+// handleCodeReplay deals with an authorization code presented a second time.
+//
+// A code is single-use, so a replay means it leaked — a referrer header, a
+// proxy log, a shared device. Denying the second request is not enough on its
+// own: whoever lost the race may be the legitimate client, which would leave
+// the attacker holding a working refresh token for the full 30-day sliding
+// window, issued from a code the server already knows is compromised. RFC 6749
+// §4.1.2 asks that those tokens be revoked, so that is done here (#25).
+//
+// Revocation failure is logged rather than returned. The caller must still see
+// invalid_grant — turning a denied replay into a 500 would tell an attacker
+// their replay hit something interesting, and the denial is correct regardless.
+func (s *OAuthService) handleCodeReplay(code *domain.AuthCode, clientID string) error {
+	if err := s.auth.RevokeTokensForAuthCode(code.ID); err != nil {
+		log.Printf("oauth: auth code %s replayed but token revocation failed: %v", code.ID, err)
+	}
+	s.record(&domain.AuthEvent{
+		EventType: domain.EventOAuthCodeReplayed,
+		UserID:    code.UserID,
+		Username:  s.auth.UsernameForID(code.UserID),
+		ClientID:  clientID,
+		Detail:    "authorization code presented more than once; tokens issued from it revoked",
+	})
+	return ErrAuthCodeAlreadyUsed
 }
 
 // RefreshToken delegates to the underlying auth service refresh.

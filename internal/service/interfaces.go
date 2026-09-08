@@ -29,6 +29,15 @@ type AuthServicer interface {
 	// RefreshForClient refreshes only if the token was issued to clientID.
 	// An empty clientID means the direct API login, which has no client.
 	RefreshForClient(rawRefreshToken, clientID string) (*LoginResult, error)
+
+	// RevokeTokensForAuthCode revokes every refresh token descended from the
+	// given authorization code. Used when that code is replayed.
+	RevokeTokensForAuthCode(authCodeID string) error
+
+	// UsernameForID resolves a user id to a username for audit records,
+	// returning "" when it cannot be resolved. An audit line naming no user is
+	// still worth writing, so this never fails the operation it describes.
+	UsernameForID(userID string) string
 }
 
 // UserServicer is the interface the API handler uses for user CRUD.

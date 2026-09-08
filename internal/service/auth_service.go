@@ -78,6 +78,8 @@ type loginArgs struct {
 	scope string
 	// claimCodeID ties a device-grant family to the claim code that produced it.
 	claimCodeID string
+	// authCodeID ties an authorization-code family to the code that produced it.
+	authCodeID string
 	// clientID is the OAuth client this grant was issued to; empty for a
 	// direct API login.
 	clientID string
@@ -199,6 +201,9 @@ type GrantContext struct {
 	// ClaimCodeID records the claim code a device grant came from, so revoking
 	// that code can revoke the tokens it produced.
 	ClaimCodeID string
+	// AuthCodeID records the authorization code this grant came from, so
+	// replaying that code can revoke the tokens it produced (RFC 6749 §4.1.2).
+	AuthCodeID string
 	// ClientID is the OAuth client this grant was issued to. Recorded on the
 	// refresh token so the refresh grant can refuse a token that belongs to a
 	// different client.
@@ -227,6 +232,7 @@ func (s *AuthService) IssueTokensForGrant(userID string, grant GrantContext) (*L
 		audience:    grant.Audience,
 		scope:       grant.Scope,
 		claimCodeID: grant.ClaimCodeID,
+		authCodeID:  grant.AuthCodeID,
 		clientID:    grant.ClientID,
 	})
 }
@@ -498,6 +504,7 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		Audiences:     args.audience,
 		Scope:         args.scope,
 		ClaimCodeID:   args.claimCodeID,
+		AuthCodeID:    args.authCodeID,
 		ClientID:      args.clientID,
 		IssuedAt:      now,
 		LastUsedAt:    now,
@@ -525,6 +532,17 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 }
 
 // lookupUsername returns the username for a userID, falling back to the ID itself.
+// RevokeTokensForAuthCode revokes every refresh token descended from an
+// authorization code. See TokenRepository.RevokeByAuthCodeID.
+func (s *AuthService) RevokeTokensForAuthCode(authCodeID string) error {
+	return s.tokens.RevokeByAuthCodeID(authCodeID)
+}
+
+// UsernameForID resolves a user id to a username for audit records.
+func (s *AuthService) UsernameForID(userID string) string {
+	return s.lookupUsername(userID)
+}
+
 func (s *AuthService) lookupUsername(userID string) string {
 	if u, err := s.users.GetByID(userID); err == nil {
 		return u.Username

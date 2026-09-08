@@ -1183,6 +1183,8 @@ All authentication events are recorded to an immutable audit log, visible at `/a
 | `login_failure` | Failed login attempt (wrong password or unknown user) |
 | `oauth_authorize_success` | Successful OAuth authorization |
 | `oauth_authorize_failure` | Failed OAuth authorization attempt |
+| `oauth_code_exchanged` | Authorization code redeemed for tokens — the point a session comes into existence for a client |
+| `oauth_code_replayed` | An authorization code was presented more than once. A code is single-use, so this means it leaked; the tokens issued from it are revoked automatically. Worth alerting on. |
 | `token_family_compromised` | Replayed refresh token detected |
 | `logout` | Single-session logout |
 | `logout_all` | All-sessions logout |
