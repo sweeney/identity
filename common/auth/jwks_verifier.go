@@ -249,12 +249,14 @@ func (v *JWKSVerifier) Parse(ctx context.Context, tokenStr string) (*TokenClaims
 		return nil, classifyParseError(err)
 	}
 	return &TokenClaims{
-		UserID:   claims.Subject,
-		Username: claims.Username,
-		Role:     claims.Role,
-		IsActive: claims.IsActive,
-		Audience: []string(claims.Audience),
-		Scope:    claims.Scope,
+		UserID:    claims.Subject,
+		Username:  claims.Username,
+		Role:      claims.Role,
+		IsActive:  claims.IsActive,
+		Audience:  []string(claims.Audience),
+		Scope:     claims.Scope,
+		ExpiresAt: numericDateUnix(claims.ExpiresAt),
+		IssuedAt:  numericDateUnix(claims.IssuedAt),
 	}, nil
 }
 
@@ -277,20 +279,13 @@ func (v *JWKSVerifier) ParseServiceToken(ctx context.Context, tokenStr string) (
 	if claims.ClientID == "" {
 		return nil, ErrTokenInvalid
 	}
-	var exp, iat int64
-	if claims.ExpiresAt != nil {
-		exp = claims.ExpiresAt.Unix()
-	}
-	if claims.IssuedAt != nil {
-		iat = claims.IssuedAt.Unix()
-	}
 	return &ServiceTokenClaims{
 		ClientID:  claims.ClientID,
 		Audience:  []string(claims.Audience),
 		Scope:     claims.Scope,
 		JTI:       claims.ID,
-		ExpiresAt: exp,
-		IssuedAt:  iat,
+		ExpiresAt: numericDateUnix(claims.ExpiresAt),
+		IssuedAt:  numericDateUnix(claims.IssuedAt),
 	}, nil
 }
 
@@ -533,4 +528,13 @@ func classifyParseError(err error) error {
 		return ErrTokenExpired
 	}
 	return ErrTokenInvalid
+}
+
+// numericDateUnix renders an optional registered date claim as unix seconds,
+// or 0 when the claim is absent.
+func numericDateUnix(d *jwt.NumericDate) int64 {
+	if d == nil {
+		return 0
+	}
+	return d.Unix()
 }

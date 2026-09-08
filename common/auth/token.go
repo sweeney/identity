@@ -32,6 +32,15 @@ type TokenClaims struct {
 	// space-delimited string by definition (RFC 6749 §3.3), so there is no
 	// list/string ambiguity to preserve.
 	Scope string
+
+	// ExpiresAt and IssuedAt are the exp and iat claims as unix seconds, or 0
+	// when absent. Verification already enforces expiry, so these are for
+	// callers that need to act on a token's remaining lifetime rather than
+	// merely accept or reject it — closing a long-lived connection when its
+	// token runs out, say, instead of leaving it open indefinitely. Without
+	// them the only way to learn the expiry was to decode the JWT again.
+	ExpiresAt int64
+	IssuedAt  int64
 }
 
 // HasScope returns true if the given scope is in the token's space-delimited

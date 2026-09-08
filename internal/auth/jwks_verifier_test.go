@@ -480,3 +480,59 @@ func TestJWKSVerifier_Parse_PopulatesAudience(t *testing.T) {
 	assert.Equal(t, []string{"config"}, got.Audience,
 		"Parse must surface the aud claim, matching TokenIssuer.Parse")
 }
+
+// TestParse_PopulatesExpiryAndIssuedAt covers a gap that blocks consumers from
+// enforcing token lifetime themselves.
+//
+// ServiceTokenClaims has always exposed ExpiresAt and IssuedAt; TokenClaims
+// exposed neither, so a caller holding a parsed user token could not tell when
+// it expires without decoding the JWT a second time. mqttproxy needs exactly
+// that — it disconnects an MQTT client when its token runs out, rather than
+// leaving an authenticated connection open indefinitely.
+//
+// Both implementations of TokenParser must agree, so this asserts against the
+// in-process issuer and the JWKS verifier with the same token.
+func TestParse_PopulatesExpiryAndIssuedAt(t *testing.T) {
+	const ttl = 5 * time.Minute
+	ti := mustIssuer(t, "https://id.example.com", ttl)
+	srv, _ := newJWKSServer(t, ti)
+
+	v, err := commonauth.NewJWKSVerifier(commonauth.JWKSVerifierConfig{
+		IssuerURL: srv.URL,
+		Issuer:    "https://id.example.com",
+	})
+	require.NoError(t, err)
+
+	before := time.Now()
+	tok, err := ti.Mint(domain.TokenClaims{
+		UserID: "u1", Username: "alice", Role: domain.RoleUser, IsActive: true,
+	})
+	require.NoError(t, err)
+	after := time.Now()
+
+	for name, parse := range map[string]func() (*domain.TokenClaims, error){
+		"TokenIssuer": func() (*domain.TokenClaims, error) {
+			return ti.Parse(context.Background(), tok)
+		},
+		"JWKSVerifier": func() (*domain.TokenClaims, error) {
+			return v.Parse(context.Background(), tok)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			claims, err := parse()
+			require.NoError(t, err)
+
+			assert.GreaterOrEqual(t, claims.IssuedAt, before.Unix()-1,
+				"iat must reflect when the token was minted")
+			assert.LessOrEqual(t, claims.IssuedAt, after.Unix()+1)
+
+			assert.Equal(t, claims.IssuedAt+int64(ttl.Seconds()), claims.ExpiresAt,
+				"exp must be iat plus the issuer's TTL")
+
+			// The point of the field: a caller can act on the remaining lifetime.
+			remaining := time.Until(time.Unix(claims.ExpiresAt, 0))
+			assert.Greater(t, remaining, 4*time.Minute)
+			assert.LessOrEqual(t, remaining, ttl)
+		})
+	}
+}

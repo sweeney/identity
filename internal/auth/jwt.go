@@ -193,20 +193,13 @@ func (ti *TokenIssuer) ParseServiceToken(_ context.Context, tokenStr string) (*d
 		if !ok || !token.Valid || c.ClientID == "" {
 			return nil, ErrTokenInvalid
 		}
-		var exp, iat int64
-		if c.ExpiresAt != nil {
-			exp = c.ExpiresAt.Unix()
-		}
-		if c.IssuedAt != nil {
-			iat = c.IssuedAt.Unix()
-		}
 		return &domain.ServiceTokenClaims{
 			ClientID:  c.ClientID,
 			Audience:  []string(c.Audience),
 			Scope:     c.Scope,
 			JTI:       c.ID,
-			ExpiresAt: exp,
-			IssuedAt:  iat,
+			ExpiresAt: numericDateUnix(c.ExpiresAt),
+			IssuedAt:  numericDateUnix(c.IssuedAt),
 		}, nil
 	}
 
@@ -290,12 +283,14 @@ func (ti *TokenIssuer) parseWithKey(tokenStr string, key *ecdsa.PrivateKey) (*do
 	}
 
 	return &domain.TokenClaims{
-		UserID:   c.Subject,
-		Username: c.Username,
-		Role:     c.Role,
-		IsActive: c.IsActive,
-		Audience: []string(c.Audience),
-		Scope:    c.Scope,
+		UserID:    c.Subject,
+		Username:  c.Username,
+		Role:      c.Role,
+		IsActive:  c.IsActive,
+		Audience:  []string(c.Audience),
+		Scope:     c.Scope,
+		ExpiresAt: numericDateUnix(c.ExpiresAt),
+		IssuedAt:  numericDateUnix(c.IssuedAt),
 	}, nil
 }
 
@@ -325,4 +320,13 @@ func publicKeyToJWK(kid string, pub *ecdsa.PublicKey) JWK {
 		X:   base64.RawURLEncoding.EncodeToString(xPadded),
 		Y:   base64.RawURLEncoding.EncodeToString(yPadded),
 	}
+}
+
+// numericDateUnix renders an optional registered date claim as unix seconds,
+// or 0 when the claim is absent.
+func numericDateUnix(d *jwt.NumericDate) int64 {
+	if d == nil {
+		return 0
+	}
+	return d.Unix()
 }
