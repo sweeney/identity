@@ -256,8 +256,98 @@ func (s *AuthService) RefreshForClient(rawRefreshToken, clientID string) (*Login
 	// security, since accepting it is exactly the pre-migration posture. It is
 	// adopted instead: the rotated token comes back bound to the presenting
 	// client, so the binding takes effect after one refresh per session.
-	return s.refresh(rawRefreshToken, clientID)
+	return s.refresh(rawRefreshToken, clientID, authenticatedCaller)
 }
+
+// clientForToken resolves the OAuth client a refresh token belongs to.
+//
+// Returns (client, true) when the token is bound and the registration resolves,
+// (nil, true) when it is bound to a registration that no longer exists, and
+// (nil, false) when it carries no binding at all — a direct API login.
+//
+// One lookup serves both callers below: the client-authentication decision and
+// the audience resolution. They used to fetch it separately, which cost two
+// extra reads on every refresh.
+func (s *AuthService) clientForToken(tokenHash, adoptClientID string) (*domain.OAuthClient, bool) {
+	if s.clients == nil {
+		return nil, false
+	}
+	clientID := adoptClientID
+	if clientID == "" {
+		// Not every caller knows the binding: /api/v1/auth/refresh takes no
+		// client_id, so the token itself is the only place to learn it.
+		tok, err := s.tokens.GetByHash(tokenHash)
+		if err != nil {
+			// Leave it to RotateToken, which reads the token authoritatively
+			// inside the transaction and reports a missing one properly. This
+			// must not become an oracle for which token hashes exist.
+			return nil, false
+		}
+		clientID = tok.ClientID
+	}
+	if clientID == "" {
+		return nil, false
+	}
+	client, err := s.clients.GetByID(clientID)
+	if err != nil {
+		return nil, true
+	}
+	return client, true
+}
+
+// audiencesForClient returns the audience set a rotation should carry, or nil
+// to keep whatever the old token stored.
+//
+// A refresh token bound to an OAuth client takes its audiences from that
+// client's live registration on every rotation. The alternative — replaying the
+// set frozen at grant time — makes the registration advisory: removing an
+// audience revokes nothing for a client that keeps refreshing, and rotation
+// issues a fresh TTL with no absolute family lifetime, so that is unbounded
+// (#39). Removal has to be effective; audience removal reads like a revocation
+// mechanism and operators use it as one.
+//
+// An unbound token is a direct API login. There is no registration to consult,
+// so the stored set stands.
+func audiencesForClient(client *domain.OAuthClient, bound bool) []string {
+	if !bound {
+		return nil
+	}
+	if client == nil {
+		// A registration that no longer exists grants no audiences. Narrowing
+		// is the safe direction: the token stops asserting audiences nothing
+		// backs, rather than keeping them because the record is gone.
+		return []string{}
+	}
+	if client.Audiences == nil {
+		// Distinct from nil-means-inherit: this client genuinely names nothing.
+		return []string{}
+	}
+	return client.Audiences
+}
+
+// Refresh validates a refresh token and issues a new token pair via rotation.
+// The read-validate-revoke-insert sequence is performed atomically within a
+// single transaction by RotateToken, preventing the TOCTOU race condition
+// where concurrent requests could both observe the token as valid.
+// Refresh validates a refresh token and issues a new token pair via rotation.
+// The read-validate-revoke-insert sequence is performed atomically within a
+// single transaction by RotateToken, preventing the TOCTOU race condition
+// where concurrent requests could both observe the token as valid.
+//
+// This is the unauthenticated entry point: it takes no client credentials, so a
+// token bound to a confidential client is refused here and must go through
+// /oauth/token instead (#40).
+func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
+	return s.refresh(rawRefreshToken, "", unauthenticatedCaller)
+}
+
+// Whether the caller authenticated the OAuth client before reaching rotation.
+// /oauth/token does; /api/v1/auth/refresh cannot, since it takes no client
+// credentials at all.
+const (
+	authenticatedCaller   = false
+	unauthenticatedCaller = true
+)
 
 // resolveAudiences returns the audience set the rotated token should carry, or
 // nil to keep whatever the old token stored.
@@ -309,18 +399,32 @@ func (s *AuthService) resolveAudiences(tokenHash, adoptClientID string) []string
 	return client.Audiences
 }
 
-// Refresh validates a refresh token and issues a new token pair via rotation.
-// The read-validate-revoke-insert sequence is performed atomically within a
-// single transaction by RotateToken, preventing the TOCTOU race condition
-// where concurrent requests could both observe the token as valid.
-func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
-	return s.refresh(rawRefreshToken, "")
-}
-
 // refresh rotates the token. adoptClientID, when non-empty, is recorded on the
 // replacement for a token that carried no client binding.
-func (s *AuthService) refresh(rawRefreshToken, adoptClientID string) (*LoginResult, error) {
+func (s *AuthService) refresh(rawRefreshToken, adoptClientID string, unauthenticated bool) (*LoginResult, error) {
 	tokenHash := HashToken(rawRefreshToken)
+
+	client, bound := s.clientForToken(tokenHash, adoptClientID)
+
+	// A caller that authenticated no client must not redeem a token belonging
+	// to a client that has a secret (#40). Before this check, /api/v1/auth/refresh
+	// would rotate any bound token for whoever held it — no client_id, no
+	// secret, no registration — while /oauth/token demanded the secret. The
+	// requirement was therefore optional from an attacker's point of view.
+	//
+	// Only confidential clients are refused. For a public client the binding
+	// was never strong — /oauth/token accepts a bare client_id and no secret,
+	// so closing this door costs an attacker nothing they did not have — and
+	// docs/api.md points IoT firmware at this endpoint with client-bound
+	// device-grant tokens. Those are logged rather than refused, so who
+	// actually calls this way can be answered from traffic instead of assumed.
+	if unauthenticated && bound && client != nil {
+		if client.SecretHash != "" {
+			return nil, ErrRefreshRequiresClientAuth
+		}
+		log.Printf("auth: unauthenticated refresh of a token bound to public client %q "+
+			"(permitted; a confidential client would be refused)", client.ID)
+	}
 
 	// Build the new token before entering the atomic rotation so we can
 	// pass it in. We need a temporary UserID/FamilyID — these will be set
@@ -332,7 +436,7 @@ func (s *AuthService) refresh(rawRefreshToken, adoptClientID string) (*LoginResu
 
 	// nil means "no registration to consult" — the stored set stands, and
 	// RotateToken carries it forward.
-	resolvedAuds := s.resolveAudiences(tokenHash, adoptClientID)
+	resolvedAuds := audiencesForClient(client, bound)
 
 	now := time.Now().UTC()
 	newTok := &domain.RefreshToken{
