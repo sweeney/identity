@@ -118,7 +118,18 @@ query() {
     sqlite3 -readonly -noheader -separator "$SEP" "$DB_URI" "$1"
 }
 
-if ! query "SELECT 1;" >/dev/null 2>&1; then
+# Probe with a statement that actually reads the file. "SELECT 1" does not
+# touch the database at all, so it can succeed against a file that is not a
+# database — which then fails later as a confusing "no oauth_clients table"
+# rather than an honest "this is not a database". Reading sqlite_master forces
+# a real read, and its behaviour does not vary between sqlite builds.
+probe() {
+    sqlite3 -readonly "$1" "SELECT count(*) FROM sqlite_master;" >/dev/null 2>&1
+}
+
+if probe "file:${DB_PATH}?mode=ro"; then
+    : # ordinary case: a live writer has left the WAL's -shm in place
+elif probe "file:${DB_PATH}?immutable=1"; then
     # A WAL database needs a -shm file, and a read-only connection cannot
     # create one. While the service is running that file exists and mode=ro
     # works; with the service stopped it does not, and mode=ro fails with a
@@ -129,13 +140,11 @@ if ! query "SELECT 1;" >/dev/null 2>&1; then
     # — which is exactly the situation that got us here, since a live writer
     # would have left a -shm for mode=ro to use. Still worth announcing: if the
     # service starts mid-run the read could tear.
-    if sqlite3 -readonly "file:${DB_PATH}?immutable=1" "SELECT 1;" >/dev/null 2>&1; then
-        DB_URI="file:${DB_PATH}?immutable=1"
-        QUIESCENT=1
-    else
-        echo "error: cannot read $DB_PATH — is it corrupt, or not a database?" >&2
-        exit 2
-    fi
+    DB_URI="file:${DB_PATH}?immutable=1"
+    QUIESCENT=1
+else
+    echo "error: cannot read $DB_PATH — is it corrupt, or not a database?" >&2
+    exit 2
 fi
 
 # Audience lists are stored as JSON arrays. Comparing them as raw text would
