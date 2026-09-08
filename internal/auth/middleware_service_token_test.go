@@ -121,7 +121,13 @@ func TestRequireScope_AdminUser_PassesAll(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
-func TestRequireScope_RegularUser_Forbidden(t *testing.T) {
+// TestRequireScope_RegularUser_UnscopedPasses records the boundary between
+// RequireScope and RequireAdmin. RequireScope used to refuse any non-admin,
+// which made it a role check wearing a scope check's name. It now answers only
+// the scope question: an unscoped token was never narrowed, so it passes here
+// and is stopped — or not — by RequireAdmin, which every user-management route
+// already carries. See TestRequireScope_UserTokens for the narrowed cases.
+func TestRequireScope_RegularUser_UnscopedPasses(t *testing.T) {
 	issuer := newTestIssuer(t)
 	token, err := issuer.Mint(domain.TokenClaims{
 		UserID: "user-1", Username: "alice", Role: domain.RoleUser, IsActive: true,
@@ -131,6 +137,27 @@ func TestRequireScope_RegularUser_Forbidden(t *testing.T) {
 	handler := auth.RequireAuth(issuer, auth.RequireScope("read:users")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})))
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+// TestRequireScope_RegularUserStillNeedsAdmin is the other half: with
+// RequireAdmin in the chain, as it is on every route this guards, a regular
+// user is still refused.
+func TestRequireScope_RegularUserStillNeedsAdmin(t *testing.T) {
+	issuer := newTestIssuer(t)
+	token, err := issuer.Mint(domain.TokenClaims{
+		UserID: "user-1", Username: "alice", Role: domain.RoleUser, IsActive: true,
+	})
+	require.NoError(t, err)
+
+	handler := auth.RequireAuth(issuer, auth.RequireAdmin(auth.RequireScope("admin:users")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))))
 
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

@@ -64,6 +64,11 @@ func DocumentedPaths() []string {
 // NewRouter builds the /api/v1 mux and wires all handlers.
 // userSvc or authSvc may be nil if not needed (used in tests to isolate handler groups).
 // webauthnSvc may be nil if passkeys are not enabled.
+// ScopeAdminUsers is the scope a token must carry to change the user table,
+// when it carries any scope at all. Named rather than inlined so the string in
+// the router and the string in a consent screen cannot drift apart.
+const ScopeAdminUsers = "admin:users"
+
 func NewRouter(issuer *auth.TokenIssuer, authSvc service.AuthServicer, userSvc service.UserServicer, webauthnSvc service.WebAuthnServicer, trustProxy string) http.Handler {
 	mux := http.NewServeMux()
 
@@ -105,12 +110,23 @@ func NewRouter(issuer *auth.TokenIssuer, authSvc service.AuthServicer, userSvc s
 		"POST /api/v1/auth/logout":  requireUserAuth(http.HandlerFunc(ah.logout)),
 		"GET /api/v1/auth/me":       requireUserAuth(http.HandlerFunc(ah.me)),
 
-		// User endpoints
+		// User endpoints.
+		//
+		// The mutating ones additionally require the admin:users scope. Role
+		// and scope answer different questions: RequireAdmin asks who the
+		// account is, RequireScope asks what this particular token was narrowed
+		// to at consent. A device approved for scope=read:sensors carries that
+		// claim (WP5), and until it was read the approval screen's scope
+		// restricted nothing — including for an admin account, where it matters
+		// most (#32).
+		//
+		// A token with no scope claim was never narrowed and is unrestricted,
+		// so every direct login and unscoped OAuth grant is unaffected.
 		"GET /api/v1/users":         requireUserAuth(auth.RequireAdmin(http.HandlerFunc(uh.list))),
-		"POST /api/v1/users":        requireUserAuth(auth.RequireAdmin(http.HandlerFunc(uh.create))),
+		"POST /api/v1/users":        requireUserAuth(auth.RequireAdmin(auth.RequireScope(ScopeAdminUsers)(http.HandlerFunc(uh.create)))),
 		"GET /api/v1/users/{id}":    requireUserAuth(http.HandlerFunc(uh.get)),
-		"PUT /api/v1/users/{id}":    requireUserAuth(auth.RequireAdmin(http.HandlerFunc(uh.update))),
-		"DELETE /api/v1/users/{id}": requireUserAuth(auth.RequireAdmin(http.HandlerFunc(uh.delete))),
+		"PUT /api/v1/users/{id}":    requireUserAuth(auth.RequireAdmin(auth.RequireScope(ScopeAdminUsers)(http.HandlerFunc(uh.update)))),
+		"DELETE /api/v1/users/{id}": requireUserAuth(auth.RequireAdmin(auth.RequireScope(ScopeAdminUsers)(http.HandlerFunc(uh.delete)))),
 	}
 
 	// WebAuthn / Passkey endpoints

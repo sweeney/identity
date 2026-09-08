@@ -137,6 +137,14 @@ Disabling or demoting an account takes effect **immediately** on the API, not ju
 - `admin` — full access to all endpoints including user management and admin UI. The last active admin cannot be deleted, demoted, or deactivated (`cannot_delete_last_admin`) — otherwise the admin plane locks with no way back short of `--reset-admin` on the host.
 - `user` — can call `/auth/*` and `GET /users/{own-id}` only
 
+Role and scope are separate questions. `RequireAdmin` asks who the account is;
+`RequireScope` asks what the presented token was narrowed to at consent. The
+mutating user routes (`POST /users`, `PUT /users/{id}`, `DELETE /users/{id}`)
+require both admin and the `admin:users` scope. A token carrying no scope claim
+was never narrowed and is unrestricted, so direct logins and unscoped OAuth
+grants are unaffected; a device approved for `scope=read:sensors` is refused
+with `insufficient_scope` even when the account behind it is an admin.
+
 Only these two values are accepted. Anything else is a `400 validation_error`
 on create and update, rather than being coerced to `user` (which would quietly
 produce an account with the wrong privileges) or stored verbatim (producing a

@@ -418,7 +418,7 @@ paths:
         "401":
           description: Missing or invalid access token
         "403":
-          description: Admin role required
+          description: Admin role required, or the token carries a scope that does not include `admin:users` (`insufficient_scope`)
         "409":
           description: Username already taken
           content:
@@ -517,7 +517,7 @@ paths:
         "401":
           description: Missing or invalid access token
         "403":
-          description: Admin role required
+          description: Admin role required, or the token carries a scope that does not include `admin:users` (`insufficient_scope`)
         "404":
           description: User not found
         "409":
@@ -552,7 +552,7 @@ paths:
         "401":
           description: Missing or invalid access token
         "403":
-          description: Admin role required
+          description: Admin role required, or the token carries a scope that does not include `admin:users` (`insufficient_scope`)
         "404":
           description: User not found
         "409":
