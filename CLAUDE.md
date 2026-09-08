@@ -122,6 +122,15 @@ RFC 6749 §4.1.2. Both the exchange and the replay are audited
 (`oauth_code_exchanged`, `oauth_code_replayed`). A lost race is treated as a
 replay: the server cannot tell which caller is the attacker.
 
+The admin UI session cookie is revocable too. It carries a `session_epoch`
+claim (migration 013) compared against the live user row on every request, so
+bumping the column ends every outstanding admin session for that account with no
+session table to keep. It is bumped on password change — including
+`--reset-admin`, which goes through the same path — and on logout, which means
+signing out of the admin UI signs out everywhere rather than merely asking the
+browser to forget the cookie. A cookie predating the claim reads as epoch 0 and
+keeps working until the first bump, so deploying this signs nobody out.
+
 Changing a user's password revokes every refresh token they hold. Logout only
 revokes tokens belonging to the caller. Refresh tokens from the OAuth, device
 and claim-code grants are all bound to the issuing client.

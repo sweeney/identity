@@ -44,6 +44,9 @@ type AuthServicer interface {
 //
 //go:generate mockgen -destination=../mocks/mock_user_service.go -package=mocks github.com/sweeney/identity/internal/service UserServicer
 type UserServicer interface {
+	// BumpSessionEpoch invalidates every admin UI session for the account.
+	BumpSessionEpoch(id string) error
+
 	Create(username, displayName, password string, role domain.Role, meta ...AuditMeta) (*domain.User, error)
 	GetByID(id string) (*domain.User, error)
 	GetByUsername(username string) (*domain.User, error)

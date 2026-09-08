@@ -48,6 +48,9 @@ func newRouter(t *testing.T, userSvc *mocks.MockUserServicer) http.Handler {
 	userSvc.EXPECT().GetByUsername(adminUser).Return(&domain.User{
 		ID: "admin-id", Username: adminUser, Role: domain.RoleAdmin, IsActive: true,
 	}, nil).AnyTimes()
+	// Logging out ends the session for real rather than only asking the browser
+	// to forget the cookie (#33).
+	userSvc.EXPECT().BumpSessionEpoch("admin-id").Return(nil).AnyTimes()
 
 	return admin.NewRouter(admin.Config{
 		SessionSecret: testSessionSecret,

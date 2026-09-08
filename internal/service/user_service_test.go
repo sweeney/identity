@@ -117,6 +117,7 @@ func TestUserService_Update_ChangePassword(t *testing.T) {
 	backupSvc.EXPECT().TriggerAsync()
 	// A password change ends every existing session (WP4) — see
 	// TestUserService_Update_PasswordChange_RevokesRefreshTokens.
+	userRepo.EXPECT().BumpSessionEpoch("user-123").Return(nil)
 	tokenRepo.EXPECT().RevokeAllForUser("user-123").Return(nil)
 
 	svc := service.NewUserService(userRepo, tokenRepo, backupSvc, nil, maxUsers).WithBcryptCost(4)

@@ -181,6 +181,13 @@ func (s *UserService) Update(id string, input UpdateUserInput, meta ...AuditMeta
 	// a working session for a month. Deactivation already revoked; a password
 	// change has exactly the same requirement.
 	if passwordChanged && !deactivating {
+		// The admin UI session is a self-contained cookie that no token
+		// revocation reaches, so it has to be invalidated separately or a
+		// password change leaves the more privileged of the two sessions
+		// running (#33).
+		if err := s.users.BumpSessionEpoch(id); err != nil {
+			return nil, fmt.Errorf("bump session epoch on password change: %w", err)
+		}
 		if err := s.tokens.RevokeAllForUser(id); err != nil {
 			return nil, fmt.Errorf("revoke tokens on password change: %w", err)
 		}
@@ -285,4 +292,9 @@ func (s *UserService) recordEvent(eventType, userID, username string, meta ...Au
 		event.Detail = actor + " deleted user " + username
 	}
 	_ = s.audit.Record(event)
+}
+
+// BumpSessionEpoch invalidates every admin UI session for the account.
+func (s *UserService) BumpSessionEpoch(id string) error {
+	return s.users.BumpSessionEpoch(id)
 }

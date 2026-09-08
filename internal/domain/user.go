@@ -22,6 +22,11 @@ type User struct {
 	PasswordHash string
 	Role         Role
 	IsActive     bool
+	// SessionEpoch invalidates admin UI sessions minted before it. The value is
+	// stamped into the session cookie and compared against this row on every
+	// request, so bumping it revokes every outstanding session for the account
+	// without a session table to keep. Bumped on password change and logout.
+	SessionEpoch int64
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -49,6 +54,10 @@ func ParseRole(s string) (Role, bool) {
 //
 //go:generate mockgen -destination=../mocks/mock_user_repository.go -package=mocks github.com/sweeney/identity/internal/domain UserRepository
 type UserRepository interface {
+	// BumpSessionEpoch increments the account's session epoch, invalidating
+	// every admin UI session minted before now.
+	BumpSessionEpoch(id string) error
+
 	Create(user *User) error
 	GetByID(id string) (*User, error)
 	GetByUsername(username string) (*User, error)

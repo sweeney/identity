@@ -41,6 +41,20 @@ func (m *MockUserServicer) EXPECT() *MockUserServicerMockRecorder {
 	return m.recorder
 }
 
+// BumpSessionEpoch mocks base method.
+func (m *MockUserServicer) BumpSessionEpoch(id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BumpSessionEpoch", id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// BumpSessionEpoch indicates an expected call of BumpSessionEpoch.
+func (mr *MockUserServicerMockRecorder) BumpSessionEpoch(id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BumpSessionEpoch", reflect.TypeOf((*MockUserServicer)(nil).BumpSessionEpoch), id)
+}
+
 // Create mocks base method.
 func (m *MockUserServicer) Create(username, displayName, password string, role domain.Role, meta ...service.AuditMeta) (*domain.User, error) {
 	m.ctrl.T.Helper()

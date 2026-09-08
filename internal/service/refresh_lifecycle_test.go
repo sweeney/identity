@@ -34,6 +34,9 @@ func TestUserService_Update_PasswordChange_RevokesRefreshTokens(t *testing.T) {
 	userRepo.EXPECT().Update(gomock.Any()).Return(nil)
 	backupSvc.EXPECT().TriggerAsync().AnyTimes()
 
+	// A password change must also end the admin UI session, which no token
+	// revocation reaches (#33).
+	userRepo.EXPECT().BumpSessionEpoch("u-1").Return(nil).Times(1)
 	tokenRepo.EXPECT().RevokeAllForUser("u-1").Return(nil).
 		Times(1)
 
