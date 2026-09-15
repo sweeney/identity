@@ -18,3 +18,14 @@ func (n *NoopManager) TriggerAsync() {}
 // RunNow is the on-demand path, where a caller asked for a backup and is
 // entitled to know it did not happen.
 func (n *NoopManager) RunNow() error { return ErrNotConfigured }
+
+// Status reports a Manager that has never run, because this one never will:
+// the zero Status, whose Configured field is false. That flag is the whole
+// point of the method — it lets a health report distinguish "no backup
+// destination is configured" from "configured, and nothing has happened yet",
+// which are otherwise the same set of zero values.
+//
+// Note that domain interfaces declaring only TriggerAsync and RunNow — as
+// identity's own domain.BackupService does — still need widening before a
+// consumer can call this without a type assertion.
+func (n *NoopManager) Status() Status { return Status{} }

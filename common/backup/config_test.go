@@ -12,6 +12,9 @@ package backup
 // happened. It is installed whenever R2 is unconfigured.
 
 import (
+	"bytes"
+	"log"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,4 +45,37 @@ func TestNoopManager_RunNow_DoesNotReportSuccess(t *testing.T) {
 	err := n.RunNow()
 	require.Error(t, err,
 		"a no-op backup must not report success — nothing was backed up")
+}
+
+// captureLog collects what NewManager logs while fn runs.
+func captureLog(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	fn()
+	return buf.String()
+}
+
+// An unrecognised Schedule used to fall through to "daily" in silence. That
+// was invisible while the decision was internal; NextRun publishes it, so a
+// typo would be reported as a confident wrong answer. It is now clamped and
+// logged, like ScheduleHour.
+func TestNewManager_UnknownScheduleIsClampedAndLogged(t *testing.T) {
+	var m *Manager
+	out := captureLog(t, func() {
+		m = NewManager(Config{DBPath: "x.db", Schedule: "hourly", ScheduleHour: 3}, nil, nil)
+	})
+
+	assert.Contains(t, out, `unknown schedule "hourly"`)
+	assert.Equal(t, "daily", m.cfg.Schedule, "an unknown schedule falls back to the default")
+}
+
+func TestNewManager_ValidSchedulesAreQuiet(t *testing.T) {
+	for _, schedule := range []string{"", "daily", "weekly", "monthly", "off"} {
+		out := captureLog(t, func() {
+			NewManager(Config{DBPath: "x.db", Schedule: schedule, ScheduleHour: 3}, nil, nil)
+		})
+		assert.NotContains(t, out, "unknown schedule", "schedule %q is valid", schedule)
+	}
 }
