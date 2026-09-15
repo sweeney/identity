@@ -1,0 +1,2 @@
+ALTER TABLE shapes ADD COLUMN sides INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE shapes RENAME COLUMN nonexistent TO whatever;

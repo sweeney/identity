@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS shapes (
+    id TEXT PRIMARY KEY
+);

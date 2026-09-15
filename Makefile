@@ -6,15 +6,18 @@ MAIN   := ./cmd/server
 build:
 	go build -o bin/$(BINARY) $(MAIN)
 
-# Unit tests only (no external deps — runs in CI without any setup)
+# Unit tests only (no external deps — runs in CI without any setup).
+# common/ is a separate Go module, so `./...` does not reach it.
 test: test-unit
 
 test-unit:
 	go test -race -count=1 ./...
+	cd common && go test -race -count=1 ./...
 
 # Integration tests require a real filesystem for SQLite; no network deps (R2 is mocked)
 test-integration:
 	go test -race -count=1 -tags integration ./...
+	cd common && go test -race -count=1 -tags integration ./...
 
 # Run all tests
 test-all: test-unit test-integration
@@ -25,6 +28,7 @@ generate:
 
 lint:
 	go vet ./...
+	cd common && go vet ./...
 
 # Structurally validate the OpenAPI spec (errors fail; warnings are advisory).
 # The path-coverage test (go test ./internal/spec/) guards spec/route drift.

@@ -39,7 +39,7 @@ jobs:
 
       - name: Run go vet
         run: |
-          VET_OUTPUT=$(go vet ./... 2>&1 | grep -v "^go: ") || true
+          VET_OUTPUT=$( { go vet ./...; (cd common && go vet ./...); } 2>&1 | grep -v "^go: ") || true
           echo "$VET_OUTPUT"
 
           if [ -n "$VET_OUTPUT" ]; then
@@ -59,10 +59,23 @@ jobs:
           set -o pipefail
           go test -v -race -count=1 -coverprofile=coverage.out -json ./... 2>&1 | tee test-results.json || echo "TEST_FAILED=true" >> $GITHUB_ENV
 
+      # common/ is a separate Go module, so the root `./...` above does not
+      # reach it. Without this step its packages — the migration runner among
+      # them — were never tested in CI at all.
+      - name: Unit tests for common/ (with race detector)
+        run: |
+          set -o pipefail
+          cd common && go test -v -race -count=1 -json ./... 2>&1 | tee -a ../test-results.json || echo "TEST_FAILED=true" >> $GITHUB_ENV
+
       - name: Integration tests (with race detector)
         run: |
           set -o pipefail
           go test -v -race -count=1 -tags integration -json ./... 2>&1 | tee -a test-results.json || echo "TEST_FAILED=true" >> $GITHUB_ENV
+
+      - name: Integration tests for common/ (with race detector)
+        run: |
+          set -o pipefail
+          cd common && go test -v -race -count=1 -tags integration -json ./... 2>&1 | tee -a ../test-results.json || echo "TEST_FAILED=true" >> $GITHUB_ENV
 
       - name: Generate test summary
         if: always()

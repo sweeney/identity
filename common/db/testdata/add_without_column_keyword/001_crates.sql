@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS crates (
+    id    TEXT PRIMARY KEY,
+    label TEXT NOT NULL DEFAULT ''
+);
