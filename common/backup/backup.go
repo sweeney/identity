@@ -56,6 +56,27 @@ type Config struct {
 	// Zero means midnight, not "unset" — pass 3 for the usual 03:00 UTC.
 	// A value outside 0–23 is clamped to 3.
 	ScheduleHour int
+
+	// Clock returns the current time. Nil means time.Now.
+	//
+	// It exists so the schedule can be tested: the tick and the backup key
+	// both read it, so a test can stand the Manager at any instant and assert
+	// what it decides to do — including that a run landing exactly on the
+	// scheduled hour schedules tomorrow rather than the same instant again,
+	// which is the difference between a daily backup and a tight loop.
+	//
+	// It is never called while the Manager holds an internal lock, so a clock
+	// may call back into the Manager — Status included — without deadlocking.
+	//
+	// Only the Manager's idea of "now" is injectable; the timers it waits on
+	// are real. A clock that never advances therefore still fires its
+	// scheduled tick at the real interval, and — because MinInterval
+	// throttling reads the same clock — defers every trigger indefinitely,
+	// re-arming its timer once per interval without ever taking a backup,
+	// since by its own clock no time has passed since the last run. On a
+	// Started Manager that is a goroutine that outlives the test unless the
+	// context is cancelled.
+	Clock func() time.Time
 }
 
 // Manager handles scheduled and on-demand database backups.
@@ -68,6 +89,16 @@ type Manager struct {
 	mu       sync.Mutex
 	lastRun  time.Time
 	pendingT *time.Timer
+	status   Status
+	started  bool
+}
+
+// validSchedules is the set Config.Schedule accepts.
+var validSchedules = map[string]bool{
+	"daily":   true,
+	"weekly":  true,
+	"monthly": true,
+	"off":     true,
 }
 
 // DefaultUploadTimeout bounds a single backup upload when Config.UploadTimeout
@@ -85,6 +116,14 @@ func NewManager(cfg Config, uploader Uploader, record EventRecorder) *Manager {
 		cfg.ServiceName = "identity"
 	}
 	if cfg.Schedule == "" {
+		cfg.Schedule = "daily"
+	}
+	// An unrecognised schedule used to fall through the switch in nextRunAt
+	// and silently behave as "daily". That was invisible while the decision
+	// was internal; NextRun publishes it, so a typo would now be reported as
+	// a confident wrong answer. Clamped and logged, like ScheduleHour.
+	if !validSchedules[cfg.Schedule] {
+		log.Printf("backup: unknown schedule %q (want daily, weekly, monthly or off), using daily", cfg.Schedule)
 		cfg.Schedule = "daily"
 	}
 	// No default is applied to ScheduleHour: 0 is midnight UTC, a documented
@@ -107,9 +146,22 @@ func NewManager(cfg Config, uploader Uploader, record EventRecorder) *Manager {
 // ScheduleHour returns the UTC hour at which scheduled backups run.
 func (m *Manager) ScheduleHour() int { return m.cfg.ScheduleHour }
 
+// now returns the Manager's idea of the current time — Config.Clock when one
+// was supplied, time.Now otherwise. Everything time-dependent goes through it.
+func (m *Manager) now() time.Time {
+	if m.cfg.Clock != nil {
+		return m.cfg.Clock()
+	}
+	return time.Now()
+}
+
 // Start launches the background goroutine that processes backup triggers.
 // It runs until ctx is cancelled.
 func (m *Manager) Start(ctx context.Context) {
+	m.mu.Lock()
+	m.started = true
+	m.mu.Unlock()
+
 	if m.cfg.Schedule == "off" {
 		log.Printf("backup: scheduled backups disabled (triggered and on-demand only)")
 	} else {
@@ -147,9 +199,9 @@ func (m *Manager) loop(ctx context.Context) {
 			m.handleTrigger(ctx)
 		case <-scheduled:
 			scheduled = m.nextScheduledTick()
-			if err := m.run(ctx); err != nil {
-				log.Printf("scheduled backup failed: %v", err)
-			}
+			// run logs and records its own outcome, with the error redacted;
+			// there is no second, unredacted copy of it here.
+			_ = m.run(ctx)
 			m.markRan()
 		}
 	}
@@ -159,9 +211,13 @@ func (m *Manager) loop(ctx context.Context) {
 // from the last one. In that case the trigger is deferred via a single timer
 // so bursts collapse to one upload at the end of the window.
 func (m *Manager) handleTrigger(ctx context.Context) {
+	// Read the clock before taking the lock: Clock is consumer code and may
+	// call back into the Manager, and sync.Mutex is not reentrant.
+	now := m.now()
+
 	m.mu.Lock()
 	if m.cfg.MinInterval > 0 && !m.lastRun.IsZero() {
-		sinceLast := time.Since(m.lastRun)
+		sinceLast := now.Sub(m.lastRun)
 		if sinceLast < m.cfg.MinInterval {
 			if m.pendingT == nil {
 				remaining := m.cfg.MinInterval - sinceLast
@@ -178,15 +234,15 @@ func (m *Manager) handleTrigger(ctx context.Context) {
 	}
 	m.mu.Unlock()
 
-	if err := m.run(ctx); err != nil {
-		log.Printf("backup failed: %v", err)
-	}
+	_ = m.run(ctx)
 	m.markRan()
 }
 
 func (m *Manager) markRan() {
+	now := m.now()
+
 	m.mu.Lock()
-	m.lastRun = time.Now()
+	m.lastRun = now
 	m.mu.Unlock()
 }
 
@@ -196,19 +252,42 @@ func (m *Manager) run(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, m.cfg.UploadTimeout)
 	defer cancel()
 
-	start := time.Now()
+	start := m.now()
 	key := backupKey(m.cfg.Env, m.cfg.ServiceName, start.UTC())
 
 	log.Printf("backup: starting upload to %s/%s", m.cfg.BucketName, key)
 
+	// Every outcome leaves through finish, so the status, the event recorder
+	// and the log agree about what happened — including on the :memory: path,
+	// which used to return without recording anything at all.
+	if err := m.snapshotAndUpload(ctx, key); err != nil {
+		// The errors here are the AWS SDK's, and both destinations below are
+		// places an operator (or a health endpoint) can read.
+		detail := RedactSecrets(err.Error())
+		m.finish(m.now(), false, key, detail)
+		log.Printf("backup: %s failed: %s", key, detail)
+		return err
+	}
+
+	done := m.now()
+	log.Printf("backup: uploaded %s in %s", key, done.Sub(start).Round(time.Millisecond))
+	m.finish(done, true, key, "")
+	return nil
+}
+
+// snapshotAndUpload writes a consistent copy of the database to a temp file and
+// uploads it under key, cleaning up the copy either way.
+func (m *Manager) snapshotAndUpload(ctx context.Context, key string) error {
 	// For :memory: databases (used in tests), skip file creation.
 	if m.cfg.DBPath == ":memory:" {
-		return m.uploader.Upload(ctx, key, "")
+		if err := m.uploader.Upload(ctx, key, ""); err != nil {
+			return fmt.Errorf("upload backup: %w", err)
+		}
+		return nil
 	}
 
 	tmpFile, err := os.CreateTemp("", fmt.Sprintf("%s-backup-*.sqlite3", m.cfg.ServiceName))
 	if err != nil {
-		m.recordBackup(false, fmt.Sprintf("create temp file: %v", err))
 		return fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
@@ -216,26 +295,13 @@ func (m *Manager) run(ctx context.Context) error {
 	defer os.Remove(tmpPath)
 
 	if err := copyDB(m.cfg.DBPath, tmpPath); err != nil {
-		m.recordBackup(false, fmt.Sprintf("copy db: %v", err))
 		return fmt.Errorf("copy db: %w", err)
 	}
 
 	if err := m.uploader.Upload(ctx, key, tmpPath); err != nil {
-		m.recordBackup(false, fmt.Sprintf("upload: %v", err))
 		return fmt.Errorf("upload backup: %w", err)
 	}
-
-	elapsed := time.Since(start).Round(time.Millisecond)
-	log.Printf("backup: uploaded %s in %s", key, elapsed)
-	m.recordBackup(true, key)
 	return nil
-}
-
-func (m *Manager) recordBackup(success bool, detail string) {
-	if m.record == nil {
-		return
-	}
-	m.record(success, detail)
 }
 
 // backupKey returns the R2 object key for a backup at time t.
@@ -296,13 +362,50 @@ func copyDB(src, dst string) error {
 }
 
 // nextScheduledTick returns a channel that fires at the next scheduled backup
-// time based on cfg.Schedule and cfg.ScheduleHour. Returns nil (blocks forever
-// in select) when Schedule is "off".
+// time. Returns nil (blocks forever in select) when Schedule is "off".
 func (m *Manager) nextScheduledTick() <-chan time.Time {
-	if m.cfg.Schedule == "off" {
+	d, ok := m.scheduleDelay()
+	if !ok {
 		return nil
 	}
-	now := time.Now().UTC()
+	return time.After(d)
+}
+
+// scheduleDelay returns how long to wait for the next scheduled backup, and
+// whether there is one at all.
+//
+// The clock is read exactly once: the target and the delay to it are two
+// halves of one decision, and a clock that advances on read — Now returning
+// base + n*step is a common fake — would otherwise measure the delay from an
+// instant the target was not derived from.
+func (m *Manager) scheduleDelay() (time.Duration, bool) {
+	now := m.now()
+	next := m.nextRunAt(now)
+	if next.IsZero() {
+		return 0, false
+	}
+	return next.Sub(now), true
+}
+
+// NextRun returns the UTC instant of the next scheduled backup according to the
+// configured schedule, or the zero time when Schedule is "off". It is the same
+// arithmetic the background loop waits on, exposed so a health report can say
+// when the next backup is due — and so it can be tested against Config.Clock
+// instead of by waiting a day for it.
+//
+// It answers from the configuration alone. Status.NextRun additionally
+// requires that Start has been called, since until then nothing is waiting on
+// the instant.
+func (m *Manager) NextRun() time.Time {
+	return m.nextRunAt(m.now())
+}
+
+// nextRunAt is NextRun as a function of a single reading of the clock.
+func (m *Manager) nextRunAt(now time.Time) time.Time {
+	if m.cfg.Schedule == "off" {
+		return time.Time{}
+	}
+	now = now.UTC()
 	h := m.cfg.ScheduleHour
 	var next time.Time
 	switch m.cfg.Schedule {
@@ -323,5 +426,5 @@ func (m *Manager) nextScheduledTick() <-chan time.Time {
 			next = next.Add(24 * time.Hour)
 		}
 	}
-	return time.After(time.Until(next))
+	return next
 }
