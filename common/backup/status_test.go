@@ -3,7 +3,11 @@ package backup_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,8 +39,63 @@ func TestManager_Status_ZeroBeforeAnyBackup(t *testing.T) {
 	assert.Empty(t, s.LastError)
 	assert.Zero(t, s.Successes)
 	assert.Zero(t, s.Failures)
-	assert.Equal(t, mustParse("2026-09-15T03:00:00Z"), s.NextRun,
-		"a health report wants the next run alongside the last one")
+	assert.True(t, s.Configured, "a real Manager can take backups even before it has taken one")
+}
+
+// TestManager_Status_DistinguishesTheZeroCases covers the three ways every
+// timestamp in a Status can be zero. They mean quite different things, and a
+// consumer's `if` is written against exactly these fields.
+func TestManager_Status_DistinguishesTheZeroCases(t *testing.T) {
+	clock := newFakeClock(mustParse("2026-09-15T01:00:00Z"))
+	newManager := func(schedule string) *backup.Manager {
+		return backup.NewManager(backup.Config{
+			DBPath:       ":memory:",
+			Schedule:     schedule,
+			ScheduleHour: 3,
+			Clock:        clock.Now,
+		}, nil, nil)
+	}
+
+	t.Run("not configured", func(t *testing.T) {
+		var n backup.NoopManager
+		s := n.Status()
+		assert.False(t, s.Configured, "no destination: backups are not happening and never will")
+		assert.False(t, s.Scheduled)
+		assert.True(t, s.NextRun.IsZero())
+	})
+
+	t.Run("configured but never started", func(t *testing.T) {
+		s := newManager("daily").Status()
+		assert.True(t, s.Configured)
+		assert.False(t, s.Scheduled, "nothing is waiting on the schedule until Start is called")
+		assert.True(t, s.NextRun.IsZero(),
+			"a Manager that was never started must not report a backup that is not coming")
+	})
+
+	t.Run("configured, started, schedule off", func(t *testing.T) {
+		m := newManager("off")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		m.Start(ctx)
+
+		s := m.Status()
+		assert.True(t, s.Configured, "trigger-only is configured — it is not the NoopManager")
+		assert.False(t, s.Scheduled)
+		assert.True(t, s.NextRun.IsZero())
+	})
+
+	t.Run("configured, started, scheduled", func(t *testing.T) {
+		m := newManager("daily")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		m.Start(ctx)
+
+		s := m.Status()
+		assert.True(t, s.Configured)
+		assert.True(t, s.Scheduled)
+		assert.Equal(t, mustParse("2026-09-15T03:00:00Z"), s.NextRun,
+			"a health report wants the next run alongside the last one")
+	})
 }
 
 func TestManager_Status_RecordsSuccess(t *testing.T) {
@@ -288,7 +347,110 @@ func TestNoopManager_Status_IsZero(t *testing.T) {
 	s := n.Status()
 	assert.True(t, s.LastAttempt.IsZero())
 	assert.True(t, s.LastSuccess.IsZero())
-	assert.True(t, s.NextRun.IsZero(), "nothing is scheduled when backups are not configured")
+	assert.True(t, s.NextRun.IsZero())
 	assert.Zero(t, s.Successes)
 	assert.Zero(t, s.Failures)
+	assert.False(t, s.Configured,
+		"Configured is what separates this from a Manager that has simply not run yet")
+}
+
+// TestManager_Status_CountsSnapshotFailures covers the two paths the finish
+// consolidation changed most: a snapshot that fails before any upload is
+// attempted still lands in the status like any other outcome.
+func TestManager_Status_CountsSnapshotFailures(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	uploader := mocks.NewMockUploader(ctrl)
+	// Nothing is uploaded: the failure happens before the upload.
+	uploader.EXPECT().Upload(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	// A file that is not a database, so VACUUM INTO fails in copyDB.
+	notADB := filepath.Join(t.TempDir(), "not-a-database.sqlite3")
+	require.NoError(t, os.WriteFile(notADB, []byte("this is not a SQLite database"), 0o600))
+
+	m := backup.NewManager(backup.Config{
+		DBPath:     notADB,
+		BucketName: "test-bucket",
+	}, uploader, nil)
+
+	require.Error(t, m.RunNow())
+
+	s := m.Status()
+	assert.Equal(t, 1, s.Failures)
+	assert.Equal(t, 0, s.Successes)
+	assert.Contains(t, s.LastError, "copy db:", "the status says which stage failed")
+	assert.False(t, s.LastAttempt.IsZero(), "an attempt that never reached R2 is still an attempt")
+	assert.True(t, s.LastSuccess.IsZero())
+}
+
+// TestManager_Clock_IsNotCalledUnderTheLock guards the property Config.Clock
+// documents: a clock is consumer code and may call back into the Manager, so
+// it must never run while an internal lock is held. A regression is a
+// deadlock, so the test drives the paths that read the clock — RunNow,
+// handleTrigger's throttle branch and markRan — and waits on each with a
+// deadline rather than hanging.
+func TestManager_Clock_IsNotCalledUnderTheLock(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	uploader := mocks.NewMockUploader(ctrl)
+
+	uploads := make(chan struct{}, 8)
+	uploader.EXPECT().Upload(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _, _ string) error {
+			uploads <- struct{}{}
+			return nil
+		},
+	).AnyTimes()
+
+	var m *backup.Manager
+	var reentering atomic.Bool
+	var mu sync.Mutex
+	base := mustParse("2026-09-15T03:00:00Z")
+	reads := 0
+
+	// A clock that reads the Manager it belongs to — a decorator logging
+	// Status alongside each tick is the realistic version of this. It also
+	// advances, so the MinInterval throttle lets triggers through.
+	clock := func() time.Time {
+		mu.Lock()
+		reads++
+		now := base.Add(time.Duration(reads) * time.Second)
+		mu.Unlock()
+
+		if m != nil && reentering.CompareAndSwap(false, true) {
+			defer reentering.Store(false)
+			_ = m.Status()
+		}
+		return now
+	}
+
+	m = backup.NewManager(backup.Config{
+		DBPath:      ":memory:",
+		BucketName:  "test-bucket",
+		MinInterval: 100 * time.Millisecond,
+		Clock:       clock,
+	}, uploader, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.Start(ctx)
+
+	awaitUpload := func(what string) {
+		t.Helper()
+		select {
+		case <-uploads:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("deadlocked in %s: Config.Clock was called while the Manager held its lock", what)
+		}
+	}
+
+	require.NoError(t, m.RunNow())
+	awaitUpload("RunNow")
+
+	// Each trigger runs a backup and then calls markRan, so the second and
+	// third only arrive if the loop got past both of those.
+	for i := range 3 {
+		m.TriggerAsync()
+		awaitUpload(fmt.Sprintf("triggered backup %d", i+1))
+	}
+
+	assert.False(t, m.Status().LastAttempt.IsZero())
 }

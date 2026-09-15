@@ -161,13 +161,18 @@ Services that embed `common/backup` (rather than reading Identity's audit log)
 can ask the `Manager` directly instead of keeping their own tally:
 
 ```go
-s := mgr.Status()   // LastAttempt, LastSuccess, LastKey, LastError, NextRun, counters
+s := mgr.Status()   // Configured, Scheduled, LastAttempt, LastSuccess, LastKey, LastError, NextRun, counters
 ```
 
 `LastSuccess` is never moved by a failed attempt and `LastKey` keeps naming the
 newest *good* backup while later ones fail, so the two together say both "are
-backups working?" and "which one would I restore?". `LastError` is scrubbed of
-credential-shaped values by `backup.RedactSecrets` before it is exposed.
+backups working?" and "which one would I restore?". `Configured` and
+`Scheduled` separate "no R2 destination" from "configured, nothing has run
+yet". `LastError` is scrubbed of credential-shaped values by
+`backup.RedactSecrets` before it is exposed.
+
+Serve it behind admin auth rather than on an unauthenticated health endpoint:
+`LastKey` names a live object in your bucket.
 
 See [`common/README.md`](../common/README.md#reporting-backup-health) for the
 full example.

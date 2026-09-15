@@ -20,7 +20,25 @@ import "time"
 //   - LastKey names the newest backup known to be good, so it can be found
 //     without listing the bucket — which matters most while backups are
 //     failing, exactly when LastKey is not the newest attempt.
+//
+// Read Configured and Scheduled before reading anything else. A Status whose
+// timestamps are all zero says one of three quite different things, and only
+// those two fields tell them apart: backups are not configured at all
+// (Configured false — the NoopManager); they are configured but nothing
+// schedules them (Scheduled false, Schedule "off" or Start never called, so
+// only TriggerAsync and RunNow produce one); or the first scheduled backup has
+// not come round yet.
 type Status struct {
+	// Configured reports whether backups can happen at all. False only for
+	// the NoopManager, which is installed when no backup destination is
+	// configured — the case where every other field being zero is expected
+	// and permanent.
+	Configured bool
+	// Scheduled reports whether a goroutine is actually waiting to take the
+	// next scheduled backup: Start has been called and Schedule is not "off".
+	// A Manager that was constructed and never Started is not scheduled, and
+	// says so rather than reporting a backup that is not coming.
+	Scheduled bool
 	// LastAttempt is when the most recent backup attempt finished, successful
 	// or not. Zero if none has been made.
 	LastAttempt time.Time
@@ -34,12 +52,14 @@ type Status struct {
 	// if it succeeded — so a non-empty LastError means "failing right now".
 	// It has been passed through RedactSecrets.
 	LastError string
-	// Successes and Failures count attempts since process start.
+	// Successes and Failures count attempts since this Manager was created —
+	// not since process start, which is a distinction for anything that
+	// rebuilds its Manager on a config reload.
 	Successes int
 	Failures  int
-	// NextRun is when the next scheduled backup is due, or zero when
-	// Schedule is "off". Triggered and on-demand backups are not scheduled and
-	// do not affect it.
+	// NextRun is when the next scheduled backup is due, and is zero whenever
+	// Scheduled is false. Triggered and on-demand backups are not scheduled
+	// and do not affect it.
 	NextRun time.Time
 }
 
@@ -47,14 +67,18 @@ type Status struct {
 // The returned value is a copy: it is safe to hold, and it will not change
 // under a handler that is midway through rendering it.
 func (m *Manager) Status() Status {
-	// Computed outside the lock: it reads the clock and the immutable config,
-	// not the mutable status.
+	// Computed outside the lock: it reads the clock, which is consumer code
+	// and may call back in here.
 	next := m.NextRun()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := m.status
-	s.NextRun = next
+	s.Configured = true
+	s.Scheduled = m.started && m.cfg.Schedule != "off"
+	if s.Scheduled {
+		s.NextRun = next
+	}
 	return s
 }
 

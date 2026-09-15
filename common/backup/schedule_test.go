@@ -109,6 +109,14 @@ func TestManager_NextRun(t *testing.T) {
 			want:     "2026-10-01T03:00:00Z",
 		},
 		{
+			// 2026-12-28 is a Monday; the coming Sunday is in the next year.
+			name:     "weekly rolls across a year boundary",
+			schedule: "weekly",
+			hour:     3,
+			now:      "2026-12-28T00:00:00Z",
+			want:     "2027-01-03T03:00:00Z",
+		},
+		{
 			name:     "monthly in December rolls into January",
 			schedule: "monthly",
 			hour:     3,
