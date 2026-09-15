@@ -14,8 +14,10 @@ package db_test
 // here therefore opens the same path twice.
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"path/filepath"
 	"testing"
 
@@ -217,4 +219,117 @@ func TestMigrate_FailedMigrationIsNotRecorded(t *testing.T) {
 	require.NoError(t, raw.QueryRow(
 		"SELECT count(*) FROM pragma_table_info('shapes') WHERE name = 'sides'").Scan(&sides))
 	assert.Zero(t, sides, "the whole migration should roll back, not just the failing statement")
+}
+
+// TestMigrate_DuplicateColumnFromCreateTableIsAnError scopes the one tolerated
+// error to the statement it exists for. `duplicate column name` also comes from
+// a CREATE TABLE whose column list repeats a name — an ordinary copy-paste slip
+// — and swallowing that one is worse than it was before the ledger: the boot
+// succeeds, the table is missing, and the migration is recorded as applied, so
+// it is never retried even once the typo is fixed.
+func TestMigrate_DuplicateColumnFromCreateTableIsAnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "typo.db")
+
+	_, err := commondb.OpenWithMigrations(path, testMigrations, "testdata/duplicate_column_typo")
+	require.Error(t, err, "a repeated column name in CREATE TABLE is a typo, not a no-op")
+	assert.Contains(t, err.Error(), "001_typo.sql")
+	assert.Contains(t, err.Error(), "duplicate column name")
+
+	raw, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer raw.Close()
+
+	var recorded int
+	require.NoError(t, raw.QueryRow(
+		"SELECT count(*) FROM schema_migrations WHERE name = '001_typo.sql'").Scan(&recorded))
+	assert.Zero(t, recorded, "the migration must stay unrecorded so the fix is picked up")
+}
+
+// TestMigrate_RecordsChecksum covers the ledger's checksum column, which exists
+// so that editing a migration that has already shipped is visible on the next
+// boot rather than months later as an unexplained difference between a fresh
+// database and an old one. It is recorded, not enforced: a deployed database
+// will not re-run the file whatever the checksum says, and failing the boot
+// would turn a corrected typo in a comment into an outage.
+func TestMigrate_RecordsChecksum(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "checksum.db")
+
+	database, err := commondb.OpenWithMigrations(path, testMigrations, "testdata/checksum")
+	require.NoError(t, err)
+	defer database.Close()
+
+	body, err := testMigrations.ReadFile("testdata/checksum/001_stable.sql")
+	require.NoError(t, err)
+	want := sha256.Sum256(body)
+
+	var got string
+	require.NoError(t, database.DB().QueryRow(
+		"SELECT checksum FROM schema_migrations WHERE name = '001_stable.sql'").Scan(&got))
+	assert.Equal(t, hex.EncodeToString(want[:]), got)
+}
+
+// TestMigrate_ChecksumDivergenceDoesNotFailTheBoot pins that decision: a row
+// whose checksum no longer matches the file warns and carries on. A row written
+// before the column existed carries an empty checksum and must not warn at all.
+func TestMigrate_ChecksumDivergenceDoesNotFailTheBoot(t *testing.T) {
+	for _, tc := range []struct{ name, stored string }{
+		{"edited since it was applied", "0000000000000000000000000000000000000000000000000000000000000000"},
+		{"recorded before checksums existed", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "checksum.db")
+
+			database, err := commondb.OpenWithMigrations(path, testMigrations, "testdata/checksum")
+			require.NoError(t, err)
+			_, err = database.DB().Exec(
+				"UPDATE schema_migrations SET checksum = ? WHERE name = '001_stable.sql'", tc.stored)
+			require.NoError(t, err)
+			require.NoError(t, database.Close())
+
+			again, err := commondb.OpenWithMigrations(path, testMigrations, "testdata/checksum")
+			require.NoError(t, err, "a checksum mismatch must not block a boot")
+			defer again.Close()
+
+			var stored string
+			require.NoError(t, again.DB().QueryRow(
+				"SELECT checksum FROM schema_migrations WHERE name = '001_stable.sql'").Scan(&stored))
+			assert.Equal(t, tc.stored, stored, "and must not rewrite the recorded checksum")
+		})
+	}
+}
+
+// TestMigrate_DuplicateColumnFromRenameIsAnError is the other half of scoping
+// the tolerance. `ALTER TABLE ... RENAME COLUMN x TO y` where the table already
+// has a `y` reports "duplicate column name" too, so a check for `ALTER TABLE`
+// alone would swallow a rename that never happened and record it as done.
+func TestMigrate_DuplicateColumnFromRenameIsAnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rename.db")
+
+	_, err := commondb.OpenWithMigrations(path, testMigrations, "testdata/rename_collision")
+	require.Error(t, err, "a rename onto a name the table already has is a mistake, not a no-op")
+	assert.Contains(t, err.Error(), "002_rename_onto_taken_name.sql")
+
+	raw, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer raw.Close()
+
+	var recorded int
+	require.NoError(t, raw.QueryRow(
+		"SELECT count(*) FROM schema_migrations WHERE name = '002_rename_onto_taken_name.sql'").
+		Scan(&recorded))
+	assert.Zero(t, recorded)
+}
+
+// TestMigrate_AddColumnIsRecognisedInEveryForm guards the other direction: the
+// COLUMN keyword is optional in SQLite and the table name may be qualified, so
+// narrowing the tolerance to ADD COLUMN must not narrow it out of the forms
+// people actually write.
+func TestMigrate_AddColumnIsRecognisedInEveryForm(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "addforms.db")
+
+	database := openTwice(t, path, "testdata/add_without_column_keyword")
+
+	found := columns(t, database, "crates")
+	assert.True(t, found["label"], "the already-present column should have been skipped")
+	assert.True(t, found["weight"], "and the statement after it should still have run")
 }

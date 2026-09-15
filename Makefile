@@ -17,6 +17,7 @@ test-unit:
 # Integration tests require a real filesystem for SQLite; no network deps (R2 is mocked)
 test-integration:
 	go test -race -count=1 -tags integration ./...
+	cd common && go test -race -count=1 -tags integration ./...
 
 # Run all tests
 test-all: test-unit test-integration

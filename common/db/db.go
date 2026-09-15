@@ -1,9 +1,12 @@
 package db
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -111,7 +114,8 @@ func (d *Database) migrate(migFS embed.FS, dir string) error {
 
 	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS ` + migrationsTable + ` (
 		name       TEXT PRIMARY KEY,
-		applied_at TEXT NOT NULL
+		applied_at TEXT NOT NULL,
+		checksum   TEXT NOT NULL DEFAULT ''
 	)`); err != nil {
 		return fmt.Errorf("create %s: %w", migrationsTable, err)
 	}
@@ -121,39 +125,77 @@ func (d *Database) migrate(migFS embed.FS, dir string) error {
 		return err
 	}
 
+	var ran int
 	for _, name := range names {
-		if applied[name] {
-			continue
-		}
-
 		body, err := migFS.ReadFile(dir + "/" + name)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
+		sum := checksum(body)
 
-		if err := d.applyMigration(name, string(body)); err != nil {
+		if recorded, ok := applied[name]; ok {
+			// A migration that has shipped must never be edited or renamed:
+			// deployed databases already record it and will never run it
+			// again, so the change reaches only databases created afterwards,
+			// and the two drift apart silently. Comparing the checksum cannot
+			// undo that, but it does make it visible on the next boot instead
+			// of months later as an unexplained schema difference.
+			if recorded != "" && recorded != sum {
+				log.Printf("db: WARNING: migration %s has changed since it was applied here "+
+					"(recorded %s, now %s). Databases that already ran it will not run it "+
+					"again, so this edit reaches only new databases.",
+					name, shortSum(recorded), shortSum(sum))
+			}
+			continue
+		}
+
+		if ran == 0 {
+			log.Printf("db: applying migrations from %s", dir)
+		}
+		if err := d.applyMigration(name, string(body), sum); err != nil {
 			return err
 		}
+		ran++
+	}
+
+	if ran > 0 {
+		log.Printf("db: applied %d migration(s)", ran)
 	}
 
 	return nil
 }
 
-// appliedMigrations reads the ledger.
-func (d *Database) appliedMigrations() (map[string]bool, error) {
-	rows, err := d.db.Query(`SELECT name FROM ` + migrationsTable)
+// checksum fingerprints a migration body for the ledger.
+func checksum(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+// shortSum abbreviates a checksum for a log line.
+func shortSum(sum string) string {
+	if len(sum) > 12 {
+		return sum[:12]
+	}
+	return sum
+}
+
+// appliedMigrations reads the ledger, mapping each recorded migration to the
+// checksum of the body that was applied. The checksum is empty for a row
+// written before the column existed.
+func (d *Database) appliedMigrations() (map[string]string, error) {
+	rows, err := d.db.Query(`SELECT name, checksum FROM ` + migrationsTable)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", migrationsTable, err)
 	}
 	defer rows.Close()
 
-	applied := make(map[string]bool)
+	applied := make(map[string]string)
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var name, sum string
+		if err := rows.Scan(&name, &sum); err != nil {
 			return nil, fmt.Errorf("read %s: %w", migrationsTable, err)
 		}
-		applied[name] = true
+		applied[name] = sum
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read %s: %w", migrationsTable, err)
@@ -167,16 +209,25 @@ func (d *Database) appliedMigrations() (map[string]bool, error) {
 //
 // A migration file therefore must not manage transactions itself, and must not
 // contain a statement SQLite refuses to run inside one (VACUUM, or a
-// foreign_keys pragma).
+// foreign_keys pragma). It must also not rebuild a table that something
+// references: configure() enables foreign keys before this runs, and they
+// cannot be turned off inside a transaction, so DROP TABLE would cascade.
 //
-// "duplicate column name" is not treated as a failure. SQLite has no
-// `ADD COLUMN IF NOT EXISTS`, so a migration that backfills a column only into
-// the databases missing it — because a later revision of an earlier migration
-// creates it outright — can be written no other way. Skipping is per statement,
-// so the rest of the file still runs. It is also what lets a database migrated
-// by a pre-ledger build be adopted: its columns are already there, the re-run
-// is a no-op, and the ledger row written here means it is never offered again.
-func (d *Database) applyMigration(name, body string) error {
+// An `ALTER TABLE ... ADD COLUMN` that fails with "duplicate column name" is
+// skipped rather than failing the boot. SQLite has no `ADD COLUMN IF NOT EXISTS`, so a migration
+// that backfills a column only into the databases missing it — because a later
+// revision of an earlier migration creates it outright — can be written no
+// other way. Skipping is per statement, so the rest of the file still runs, and
+// it is scoped to ADD COLUMN because that is the only statement the exception
+// exists for. The same message from a CREATE TABLE means a repeated name in its
+// column list, and from an ALTER TABLE ... RENAME COLUMN it means a rename onto
+// a name already taken — both are mistakes to fail on, not columns already in
+// place, and the ledger would record either as done and never offer it again.
+//
+// This is also what adopts a database migrated by a pre-ledger build: its
+// columns are already there, the re-run is a no-op, and the ledger row written
+// here means the file is never offered again.
+func (d *Database) applyMigration(name, body, sum string) error {
 	tx, err := d.db.Begin()
 	if err != nil {
 		return fmt.Errorf("apply migration %s: %w", name, err)
@@ -185,7 +236,8 @@ func (d *Database) applyMigration(name, body string) error {
 
 	for _, stmt := range splitStatements(body) {
 		if _, err := tx.Exec(stmt); err != nil {
-			if strings.Contains(err.Error(), "duplicate column name") {
+			if isAddColumn(stmt) && strings.Contains(err.Error(), "duplicate column name") {
+				log.Printf("db: %s: column already present, skipping: %s", name, summarize(stmt))
 				continue
 			}
 			return fmt.Errorf("apply migration %s: %w", name, err)
@@ -193,8 +245,8 @@ func (d *Database) applyMigration(name, body string) error {
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO `+migrationsTable+` (name, applied_at) VALUES (?, ?)`,
-		name, time.Now().UTC().Format(time.RFC3339Nano),
+		`INSERT INTO `+migrationsTable+` (name, applied_at, checksum) VALUES (?, ?, ?)`,
+		name, time.Now().UTC().Format(time.RFC3339Nano), sum,
 	); err != nil {
 		return fmt.Errorf("record migration %s: %w", name, err)
 	}
@@ -204,4 +256,78 @@ func (d *Database) applyMigration(name, body string) error {
 	}
 
 	return nil
+}
+
+// isAddColumn reports whether stmt is an `ALTER TABLE ... ADD [COLUMN]`, the
+// one statement the duplicate-column exception exists for.
+//
+// It has to be this precise rather than a test for `ALTER TABLE`. A rename onto
+// a name the table already has reports the same "duplicate column name", and
+// that one is a broken migration, not one already applied:
+//
+//	ALTER TABLE a RENAME COLUMN x TO z   =>  error in table a after rename:
+//	                                         duplicate column name: z
+//
+// The COLUMN keyword is optional in SQLite, and the table name may be quoted or
+// schema-qualified, so the clause is found by reading forward to the first of
+// ADD, RENAME or DROP rather than by counting words.
+func isAddColumn(stmt string) bool {
+	words := headWords(stmt, 8)
+	if len(words) < 3 || words[0] != "ALTER" || words[1] != "TABLE" {
+		return false
+	}
+	for _, w := range words[2:] {
+		switch w {
+		case "ADD":
+			return true
+		case "RENAME", "DROP":
+			return false
+		}
+	}
+	return false
+}
+
+// headWords returns up to max leading unquoted words of stmt, upper-cased.
+// Quoted runs are skipped whole, so a table named "add" cannot be mistaken for
+// the clause keyword. splitStatements has already stripped comments and trimmed
+// leading whitespace, so the first word is the statement's own keyword.
+func headWords(stmt string, max int) []string {
+	var (
+		words []string
+		word  strings.Builder
+	)
+	flush := func() {
+		if word.Len() > 0 {
+			words = append(words, strings.ToUpper(word.String()))
+			word.Reset()
+		}
+	}
+
+	for i := 0; i < len(stmt) && len(words) < max; i++ {
+		c := stmt[i]
+		if isWordByte(c) {
+			word.WriteByte(c)
+			continue
+		}
+		flush()
+		if c == '\'' || c == '"' || c == '`' || c == '[' {
+			var discard strings.Builder // only reached on a failing statement
+			i = copyQuoted(&discard, stmt, i)
+		}
+	}
+	flush()
+
+	if len(words) > max {
+		words = words[:max]
+	}
+	return words
+}
+
+// summarize renders a statement as a single short line for a log message.
+func summarize(stmt string) string {
+	line := strings.Join(strings.Fields(stmt), " ")
+	if len(line) > 90 {
+		return line[:90] + "..."
+	}
+	return line
 }

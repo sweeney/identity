@@ -72,6 +72,11 @@ jobs:
           set -o pipefail
           go test -v -race -count=1 -tags integration -json ./... 2>&1 | tee -a test-results.json || echo "TEST_FAILED=true" >> $GITHUB_ENV
 
+      - name: Integration tests for common/ (with race detector)
+        run: |
+          set -o pipefail
+          cd common && go test -v -race -count=1 -tags integration -json ./... 2>&1 | tee -a ../test-results.json || echo "TEST_FAILED=true" >> $GITHUB_ENV
+
       - name: Generate test summary
         if: always()
         run: |

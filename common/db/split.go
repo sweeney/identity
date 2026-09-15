@@ -124,10 +124,12 @@ func splitStatements(script string) []string {
 }
 
 // copyQuoted copies the quoted run starting at script[start] into dst verbatim,
-// delimiters included, and returns the index of its closing delimiter (or the
-// last byte of the script if it is unterminated). A doubled delimiter is an
-// escape for the delimiter itself, which is how SQLite writes an apostrophe
-// inside a string literal; bracket quoting has no escape.
+// delimiters included, and returns the index of its closing delimiter. A
+// doubled delimiter is an escape for the delimiter itself, which is how SQLite
+// writes an apostrophe inside a string literal; bracket quoting has no escape.
+//
+// An unterminated run returns the script's last byte rather than its length, so
+// that the caller's own i++ still steps past the end and ends its loop.
 func copyQuoted(dst *strings.Builder, script string, start int) int {
 	open := script[start]
 	closer := open
