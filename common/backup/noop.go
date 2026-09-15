@@ -18,3 +18,8 @@ func (n *NoopManager) TriggerAsync() {}
 // RunNow is the on-demand path, where a caller asked for a backup and is
 // entitled to know it did not happen.
 func (n *NoopManager) RunNow() error { return ErrNotConfigured }
+
+// Status reports a Manager that has never run, because this one never will.
+// It is here so a consumer can report backup health without first asking which
+// implementation it was given.
+func (n *NoopManager) Status() Status { return Status{} }
