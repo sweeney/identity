@@ -119,6 +119,9 @@ func (d *Database) migrate(migFS embed.FS, dir string) error {
 	)`); err != nil {
 		return fmt.Errorf("create %s: %w", migrationsTable, err)
 	}
+	if err := d.upgradeMigrationsTable(); err != nil {
+		return err
+	}
 
 	applied, err := d.appliedMigrations()
 	if err != nil {
@@ -162,6 +165,34 @@ func (d *Database) migrate(migFS embed.FS, dir string) error {
 		log.Printf("db: applied %d migration(s)", ran)
 	}
 
+	return nil
+}
+
+// upgradeMigrationsTable brings an existing ledger up to the current shape.
+//
+// The ledger needs the same thing it gives everything else: a way for its own
+// schema to reach databases that already exist. CREATE TABLE IF NOT EXISTS does
+// nothing to a table that is already there, whatever its columns, so a column
+// added to the definition above would never appear in a database created before
+// it — and the next read of that column would fail the boot with "no such
+// column". Adding it here instead means the two-column ledger written by the
+// first build that had one is repaired on its next boot, and the column added
+// after this one will be too.
+//
+// SQLite has no ADD COLUMN IF NOT EXISTS, so an already-upgraded ledger reports
+// the duplicate and it is skipped — the same exception applyMigration makes,
+// for the same reason. The DEFAULT leaves existing rows reading as "recorded
+// before this column existed", which the caller treats as unknown rather than
+// as a mismatch.
+func (d *Database) upgradeMigrationsTable() error {
+	for _, column := range []string{
+		`checksum TEXT NOT NULL DEFAULT ''`,
+	} {
+		_, err := d.db.Exec(`ALTER TABLE ` + migrationsTable + ` ADD COLUMN ` + column)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("upgrade %s: %w", migrationsTable, err)
+		}
+	}
 	return nil
 }
 
