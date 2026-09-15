@@ -1,0 +1,220 @@
+package db_test
+
+// db_test.go covers #44: the migration runner kept no record of what it had
+// already applied, so every file was re-executed on every startup.
+//
+// `CREATE TABLE IF NOT EXISTS` made that harmless; `ALTER TABLE ... ADD COLUMN`
+// could not, so those migrations failed with "duplicate column name" on the
+// second boot and fell into a retry that split the file on every `;` — comments
+// and trigger bodies included. The fragments no longer parsed, and the service
+// refused to start.
+//
+// The failure only ever showed up on the *second* boot of a database, which is
+// why a suite that opens a fresh database each time never saw it. Every test
+// here therefore opens the same path twice.
+
+import (
+	"database/sql"
+	"embed"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	commondb "github.com/sweeney/identity/common/db"
+
+	_ "modernc.org/sqlite"
+)
+
+//go:embed testdata/*/*.sql
+var testMigrations embed.FS
+
+// openTwice opens path with the given migration directory, closes it, and opens
+// it again — the restart that #44 broke. It returns the second handle.
+func openTwice(t *testing.T, path, dir string) *commondb.Database {
+	t.Helper()
+
+	first, err := commondb.OpenWithMigrations(path, testMigrations, dir)
+	require.NoError(t, err, "first boot should apply the migrations cleanly")
+	require.NoError(t, first.Close())
+
+	second, err := commondb.OpenWithMigrations(path, testMigrations, dir)
+	require.NoError(t, err, "second boot should be a no-op, not a startup failure")
+	t.Cleanup(func() { second.Close() })
+	return second
+}
+
+func columns(t *testing.T, database *commondb.Database, table string) map[string]bool {
+	t.Helper()
+
+	rows, err := database.DB().Query("SELECT name FROM pragma_table_info(?)", table)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	found := map[string]bool{}
+	for rows.Next() {
+		var name string
+		require.NoError(t, rows.Scan(&name))
+		found[name] = true
+	}
+	require.NoError(t, rows.Err())
+	return found
+}
+
+func appliedMigrations(t *testing.T, database *commondb.Database) []string {
+	t.Helper()
+
+	rows, err := database.DB().Query("SELECT name FROM schema_migrations ORDER BY name")
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		require.NoError(t, rows.Scan(&name))
+		names = append(names, name)
+	}
+	require.NoError(t, rows.Err())
+	return names
+}
+
+// TestMigrate_SemicolonInsideComment is the reproduction from #44: a migration
+// whose only sin is a semicolon in its prose.
+func TestMigrate_SemicolonInsideComment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "semicolon.db")
+
+	database := openTwice(t, path, "testdata/semicolon_comment")
+
+	assert.True(t, columns(t, database, "widgets")["label"],
+		"the ADD COLUMN migration should still have been applied")
+}
+
+// TestMigrate_TriggerBodySurvivesRestart covers the same splitter against a
+// compound statement. A trigger body is delimited by BEGIN ... END and contains
+// its own semicolons, so splitting on `;` cuts it in half.
+func TestMigrate_TriggerBodySurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trigger.db")
+
+	database := openTwice(t, path, "testdata/trigger")
+
+	assert.True(t, columns(t, database, "gadgets")["note"])
+
+	// The trigger must exist and fire — a half-applied CREATE TRIGGER would
+	// leave the column in place but the behaviour missing.
+	_, err := database.DB().Exec("INSERT INTO gadgets (id) VALUES ('g1')")
+	require.NoError(t, err)
+	_, err = database.DB().Exec("UPDATE gadgets SET note = 'hello' WHERE id = 'g1'")
+	require.NoError(t, err)
+
+	var touched int
+	require.NoError(t, database.DB().
+		QueryRow("SELECT touched FROM gadgets WHERE id = 'g1'").Scan(&touched))
+	assert.Equal(t, 1, touched, "the trigger should have fired exactly once")
+}
+
+// TestMigrate_AppliesEachMigrationOnce is the ledger's own guarantee, and the
+// reason the splitter is no longer reachable on a restart: a migration that has
+// already run is not run again. It also makes non-idempotent migrations
+// writable, which they were not before.
+func TestMigrate_AppliesEachMigrationOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ledger.db")
+
+	database := openTwice(t, path, "testdata/ledger")
+
+	var seeds int
+	require.NoError(t, database.DB().QueryRow("SELECT count(*) FROM seeds").Scan(&seeds))
+	assert.Equal(t, 1, seeds, "a one-shot INSERT migration should not be replayed on restart")
+
+	assert.Equal(t, []string{"001_seeds.sql", "002_seed_row.sql"}, appliedMigrations(t, database),
+		"the ledger should record every applied migration by filename")
+}
+
+// TestMigrate_AdoptsPreExistingDatabase covers the deploy itself: a database
+// created by the old ledger-less runner already has every column, but no record
+// of it. Adopting it must neither fail nor re-run the data migrations.
+func TestMigrate_AdoptsPreExistingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	// Build the database the way the pre-#44 runner would have: the migration
+	// bodies applied straight to a bare file, with no ledger table.
+	legacy, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	for _, name := range []string{"001_people.sql", "002_person_nickname.sql", "003_person_email.sql"} {
+		body, err := testMigrations.ReadFile("testdata/legacy/" + name)
+		require.NoError(t, err)
+		_, err = legacy.Exec(string(body))
+		require.NoError(t, err)
+	}
+	_, err = legacy.Exec("INSERT INTO people (id, name, nickname) VALUES ('p1', 'Ada', 'Addie')")
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	database, err := commondb.OpenWithMigrations(path, testMigrations, "testdata/legacy")
+	require.NoError(t, err, "adopting a pre-existing database must not fail")
+	defer database.Close()
+
+	assert.Equal(t,
+		[]string{"001_people.sql", "002_person_nickname.sql", "003_person_email.sql"},
+		appliedMigrations(t, database),
+		"every migration should be recorded as applied, not left to re-run forever")
+
+	var nickname string
+	require.NoError(t, database.DB().
+		QueryRow("SELECT nickname FROM people WHERE id = 'p1'").Scan(&nickname))
+	assert.Equal(t, "Addie", nickname, "adoption must not disturb existing rows")
+
+	// And the adopted database is now an ordinary one: the next boot skips
+	// everything rather than leaning on duplicate-column tolerance again.
+	require.NoError(t, database.Close())
+	again, err := commondb.OpenWithMigrations(path, testMigrations, "testdata/legacy")
+	require.NoError(t, err)
+	defer again.Close()
+	assert.Len(t, appliedMigrations(t, again), 3)
+}
+
+// TestMigrate_BackfillColumnSkipsWhatIsAlreadyThere pins the one pattern that
+// depends on "duplicate column name" being survivable. SQLite has no
+// ADD COLUMN IF NOT EXISTS, so a migration that exists to reach databases
+// created before an earlier migration grew a column has to add it
+// unconditionally — and on a database that already has it, the statements after
+// it must still run. Identity's own migration 004 is exactly this shape.
+func TestMigrate_BackfillColumnSkipsWhatIsAlreadyThere(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "backfill.db")
+
+	database := openTwice(t, path, "testdata/backfill")
+
+	found := columns(t, database, "notes")
+	assert.True(t, found["pinned"])
+	assert.True(t, found["archived"],
+		"a skipped duplicate column must not abandon the rest of the migration")
+	assert.Equal(t, []string{"001_notes.sql", "002_note_flags.sql"}, appliedMigrations(t, database))
+}
+
+// TestMigrate_FailedMigrationIsNotRecorded covers the other direction: an error
+// that is not a duplicate column fails the boot, names the file it came from,
+// and leaves no ledger row — so the migration is offered again once it is
+// fixed, rather than being recorded as done.
+func TestMigrate_FailedMigrationIsNotRecorded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "broken.db")
+
+	_, err := commondb.OpenWithMigrations(path, testMigrations, "testdata/broken")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "002_broken.sql", "the error should name the failing migration")
+
+	raw, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer raw.Close()
+
+	var recorded int
+	require.NoError(t, raw.QueryRow(
+		"SELECT count(*) FROM schema_migrations WHERE name = '002_broken.sql'").Scan(&recorded))
+	assert.Zero(t, recorded, "a migration that failed must not be recorded as applied")
+
+	// Its first statement must have been rolled back with it: a half-applied
+	// migration that is offered again has to start from a clean slate.
+	var sides int
+	require.NoError(t, raw.QueryRow(
+		"SELECT count(*) FROM pragma_table_info('shapes') WHERE name = 'sides'").Scan(&sides))
+	assert.Zero(t, sides, "the whole migration should roll back, not just the failing statement")
+}
