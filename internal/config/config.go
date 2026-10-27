@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sweeney/identity/common/httputil"
+	"github.com/sweeney/common/web/httputil"
 )
 
 // Environment represents the deployment environment.

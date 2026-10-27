@@ -1,6 +1,6 @@
 package domain
 
-import commonapierr "github.com/sweeney/identity/common/apierr"
+import commonapierr "github.com/sweeney/common/web/apierr"
 
 var (
 	ErrNotFound            = commonapierr.ErrNotFound

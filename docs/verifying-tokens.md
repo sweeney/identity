@@ -23,7 +23,7 @@ importable from other modules) and holds the private key. Instead, depend on the
 purpose-built, self-contained module:
 
 ```bash
-go get github.com/sweeney/identity/common@v0.1.0
+go get github.com/sweeney/identity/common@v0.7.0
 ```
 
 `common/auth.JWKSVerifier` fetches and caches Identity's public keys and verifies

@@ -157,7 +157,7 @@ reverse) is rejected rather than confirmed.
 
 ## Monitoring from another service
 
-Services that embed `common/backup` (rather than reading Identity's audit log)
+Services that embed `github.com/sweeney/common/backup` (rather than reading Identity's audit log)
 can ask the `Manager` directly instead of keeping their own tally:
 
 ```go

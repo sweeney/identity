@@ -13,7 +13,7 @@ import (
 	"log"
 	"strings"
 
-	commondb "github.com/sweeney/identity/common/db"
+	commondb "github.com/sweeney/common/db"
 )
 
 const (

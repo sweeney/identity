@@ -1,4 +1,0 @@
-CREATE TABLE IF NOT EXISTS notes (
-    id     TEXT PRIMARY KEY,
-    pinned INTEGER NOT NULL DEFAULT 0
-);

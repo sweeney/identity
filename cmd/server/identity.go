@@ -18,9 +18,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/sweeney/identity/common/backup"
-	"github.com/sweeney/identity/common/httputil"
-	"github.com/sweeney/identity/common/ratelimit"
+	"github.com/sweeney/common/backup"
+	"github.com/sweeney/common/web/httputil"
+	"github.com/sweeney/common/web/ratelimit"
 	"github.com/sweeney/identity/internal/auth"
 	"github.com/sweeney/identity/internal/config"
 	"github.com/sweeney/identity/internal/db"
