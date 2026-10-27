@@ -63,3 +63,31 @@ The deploy script uploads the new binary (versioned), atomically
 swings the `current` symlink, and restarts the unit. It then curls
 the service's health endpoint and aborts the rollout if it fails —
 the previous versioned binary stays in place for rollback via symlink.
+
+### Before a risky deploy: snapshot and rehearse
+
+```bash
+./deploy/rehearse-deploy.sh --check sweeney@garibaldi   # no sudo, nothing written on the host
+./deploy/rehearse-deploy.sh sweeney@garibaldi           # one sudo prompt
+```
+
+`rehearse-deploy.sh` reads the version production runs from `/health`, builds
+it and this checkout's HEAD, and snapshots the live database on the host with
+SQLite's online backup (`deploy/snapshot-db.sh`; safe while identity runs in
+WAL mode). The snapshot stays on the host under
+`/var/lib/identity/snapshots/`, mode 0600, as the pre-deploy backup. A copy is
+fetched to a private temp dir, where `deploy/rehearse-upgrade.sh` boots the new
+binary on it, boots it again, rolls back to the old binary and forward again,
+checking the schema, the durable row counts and the migrations ledger at each
+step. The local copy is deleted afterwards, pass or fail. `--check` does the
+same against a database the production version builds itself.
+
+Run it in a terminal (sudo needs one for the password). The scripts' tests are
+`deploy/snapshot-db.test.sh` and `deploy/rehearse-deploy.test.sh`; both run
+entirely on this machine.
+
+To roll back, point the symlink at the previous versioned binary and restart:
+
+```bash
+ssh sweeney@garibaldi 'ln -sfn identity-server-<previous> /opt/identity/bin/identity-server && sudo systemctl restart identity'
+```
