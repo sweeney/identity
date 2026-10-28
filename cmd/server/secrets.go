@@ -6,8 +6,8 @@ import (
 	"encoding/pem"
 	"fmt"
 
-	"github.com/sweeney/identity/internal/secrets"
 	"github.com/sweeney/identity/internal/db"
+	"github.com/sweeney/identity/internal/secrets"
 )
 
 // serverSecrets is an alias so existing callers in this package compile unchanged.
