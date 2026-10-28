@@ -7,9 +7,13 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
+	github.com/sweeney/common/backup v0.1.0
+	github.com/sweeney/common/db v0.1.0
+	github.com/sweeney/common/web v0.2.0
 	github.com/sweeney/identity/common v0.0.0-00010101000000-000000000000
 	go.uber.org/mock v0.6.0
 	golang.org/x/crypto v0.49.0
+	modernc.org/sqlite v1.46.2
 	rsc.io/qr v0.2.0
 )
 
@@ -56,5 +60,4 @@ require (
 	modernc.org/libc v1.70.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.46.2 // indirect
 )

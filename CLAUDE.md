@@ -237,8 +237,8 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `internal/service/user_service.go` | User CRUD business logic |
 | `internal/auth/jwt.go` | JWT mint/parse, supports previous-secret fallback |
 | `internal/auth/middleware.go` | `RequireAuth` and `RequireAdmin` middleware |
-| `common/ratelimit/ratelimit.go` | Per-IP rate limiting middleware |
-| `common/httputil/clientip.go` | Shared client IP extraction with proxy trust |
+| `common/auth/` | `JWKSVerifier` and token claim types — the only package in the `identity/common` module |
+| `internal/secrets/` | DB-managed JWT signing keys and session secret (`Resolve`, `RotateJWT`, `ClearPrevJWT`) |
 | `internal/store/token_store.go` | Token rotation with atomic TOCTOU-safe transaction |
 | `internal/store/audit_store.go` | Audit event recording (also emits to stdout) |
 | `internal/domain/oauth.go` | OAuth types, auth event constants, repository interfaces |
@@ -256,6 +256,7 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `cmd/server/identity.go` | Identity subcommand entrypoint and HTTP server |
 | `cmd/server/secrets.go` | DB-managed JWT secret with rotation support |
 | `cmd/server/backups.go` | `--list-backups` and `--restore-backup` |
+| `github.com/sweeney/common` | External modules: `db` (SQLite + migrations ledger), `backup` (+ `backup/cli`), `web` (`apierr`, `httputil` — `ExtractClientIP`, `ratelimit`, `spec`) |
 | `deploy/` | systemd unit, env template, install script |
 | `examples/` | Four demo clients (server-side, SPA, BFF, passkey) |
 | `scripts/e2e.sh` | End-to-end test suite (58 checks) |
@@ -265,22 +266,30 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 ## Releasing a new version of common/
 
 The `common/` directory is a separate Go module (`github.com/sweeney/identity/common`)
-consumed by the config service repo. After changing anything in `common/`:
+holding only `auth`, the JWKS token verifier. It stays here because it changes
+in lockstep with the token issuer in `internal/auth/jwt.go`. Consumers: config,
+countinghouse, greenhouse, statehouse and mqttproxy.
+
+The generic packages it used to hold (`db`, `backup`, `cli`, `apierr`,
+`httputil`, `ratelimit`, `spec`) moved to `github.com/sweeney/common` as of
+v0.7.0 and are released from that repo; `secrets` is now `internal/secrets`.
+
+After changing anything in `common/`:
 
 1. Commit and push to the identity repo.
 2. Tag the new version from the repo root (the `common/` prefix is required
    by Go module proxy conventions):
    ```bash
-   git tag common/v0.1.1
-   git push origin common/v0.1.1
+   git tag common/v0.7.1
+   git push origin common/v0.7.1
    ```
-3. In `github.com/sweeney/config`, update the dependency:
+3. In each consumer, update the dependency:
    ```bash
-   go get github.com/sweeney/identity/common@v0.1.1
+   go get github.com/sweeney/identity/common@v0.7.1
    go mod tidy
    go test -race -count=1 ./...
    ```
 
 Never make breaking changes to `common/` without bumping the minor version.
-The config repo pins an exact version — it will not pick up changes until
+Consumers pin an exact version — they will not pick up changes until
 explicitly updated.

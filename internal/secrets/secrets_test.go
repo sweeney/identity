@@ -24,8 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	commondb "github.com/sweeney/identity/common/db"
-	"github.com/sweeney/identity/common/secrets"
+	commondb "github.com/sweeney/common/db"
+	"github.com/sweeney/identity/internal/secrets"
 )
 
 //go:embed testdata/migrations/*.sql

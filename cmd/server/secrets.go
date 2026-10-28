@@ -6,7 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 
-	"github.com/sweeney/identity/common/secrets"
+	"github.com/sweeney/identity/internal/secrets"
 	"github.com/sweeney/identity/internal/db"
 )
 

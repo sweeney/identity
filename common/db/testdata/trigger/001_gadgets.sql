@@ -1,4 +1,0 @@
-CREATE TABLE IF NOT EXISTS gadgets (
-    id      TEXT PRIMARY KEY,
-    touched INTEGER NOT NULL DEFAULT 0
-);

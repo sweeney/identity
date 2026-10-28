@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/sweeney/identity/common/cli"
+	"github.com/sweeney/common/backup/cli"
 	"github.com/sweeney/identity/internal/config"
 )
 
