@@ -92,14 +92,16 @@ Or create a user (any login triggers an async backup).
 
 Output:
 ```
-Listing backups for environment: production
+Listing identity backups for environment: production
 
 #     Date                      Size  Key
 ────────────────────────────────────────────────────────────────────
-1     2026-03-17 17:17:37      100KB  production/backups/2026/03/17/identity-...
-2     2026-03-17 17:09:46        4KB  production/backups/2026/03/17/identity-...
+1     2026-03-17 17:17:37      100KB  production/backups/identity/2026/03/17/identity-...
+2     2026-03-17 17:09:46        4KB  production/backups/identity/2026/03/17/identity-...
 
 2 backup(s) found.
+
+To restore (stop the service first): ./identity-server --restore-backup <key>
 ```
 
 ---
@@ -109,14 +111,18 @@ Listing backups for environment: production
 Each backup is a complete copy of the SQLite database file. Backups are separated by environment:
 
 ```
-<env>/backups/YYYY/MM/DD/identity-<RFC3339-timestamp>.sqlite3
+<env>/backups/identity/YYYY/MM/DD/identity-<RFC3339-timestamp>.sqlite3
 ```
 
 For example:
 ```
-production/backups/2026/03/17/identity-2026-03-17T14:30:00Z.sqlite3
-development/backups/2026/03/17/identity-2026-03-17T10:00:00Z.sqlite3
+production/backups/identity/2026/03/17/identity-2026-03-17T14:30:00Z.sqlite3
+development/backups/identity/2026/03/17/identity-2026-03-17T10:00:00Z.sqlite3
 ```
+
+Backups from before the per-service layout sit at
+`<env>/backups/YYYY/MM/DD/identity-<timestamp>.sqlite3`; they still appear in
+`--list-backups` and can still be restored.
 
 The environment is set by `IDENTITY_ENV` (defaults to `development`; an unrecognised value fails startup).
 
@@ -134,7 +140,7 @@ sudo systemctl stop identity
 sudo -u identity ./identity-server --restore-backup
 
 # Or specify a key directly
-sudo -u identity ./identity-server --restore-backup "production/backups/2026/03/17/identity-2026-03-17T14:30:00Z.sqlite3"
+sudo -u identity ./identity-server --restore-backup "production/backups/identity/2026/03/17/identity-2026-03-17T14:30:00Z.sqlite3"
 
 # Start the service
 sudo systemctl start identity

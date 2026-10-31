@@ -7,7 +7,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
-	github.com/sweeney/common/backup v0.1.0
+	github.com/sweeney/common/backup v0.1.1
 	github.com/sweeney/common/db v0.1.0
 	github.com/sweeney/common/web v0.2.1
 	github.com/sweeney/identity/common v0.0.0-00010101000000-000000000000
