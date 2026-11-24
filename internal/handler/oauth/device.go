@@ -426,6 +426,11 @@ var _ = json.Marshal
 // A client we cannot look up is left to the handler's own unknown-client
 // handling, so the failure mode stays a single consistent invalid_client
 // rather than two different ones.
+//
+// Unlike authenticateTokenClient, which serves the authorization_code and
+// refresh_token grants, this deliberately ignores credentials presented for a
+// public client rather than refusing them, so device firmware that sends a
+// stale or placeholder secret keeps working. The difference is intentional.
 func (h *oauthHandler) authenticateDeviceClient(w http.ResponseWriter, r *http.Request, clientID string) bool {
 	client, err := h.svc.GetClient(clientID)
 	if err != nil || client.SecretHash == "" {

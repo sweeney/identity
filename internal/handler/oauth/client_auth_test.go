@@ -579,6 +579,121 @@ func TestTokenAuthCode_Confidential_ValidSecret(t *testing.T) {
 	assert.Equal(t, "at", body["access_token"])
 }
 
+// RFC 6749 §4.1.3: client_id is required in the body only "if the client is
+// not authenticating with the authorization server". A client_secret_basic
+// client may name itself solely in the Authorization header.
+func TestTokenAuthCode_Confidential_BasicAuthOnly_NoBodyClientID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	svc.EXPECT().GetClient("conf-client").Return(confidentialAuthCodeClient(), nil)
+	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz").
+		Return(&service.LoginResult{AccessToken: "at", TokenType: "Bearer", ExpiresIn: 900, RefreshToken: "rt"}, nil)
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	form := authCodeForm(nil)
+	form.Del("client_id")
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("conf-client:s3cret")))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+}
+
+// A body client_id that disagrees with the Basic header is refused rather
+// than letting either one win.
+func TestTokenAuthCode_BasicAuth_BodyClientIDMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	// Neither GetClient nor ExchangeCode may be reached.
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	form := authCodeForm(url.Values{"client_id": {"other-client"}})
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("conf-client:s3cret")))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Equal(t, "Basic", rr.Header().Get("WWW-Authenticate"))
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "invalid_client", body["error"])
+}
+
+// When the client is named only by the Basic header, its secret is still
+// checked: a wrong secret must not reach the exchange.
+func TestTokenAuthCode_Confidential_BasicAuthOnly_WrongSecret(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	svc.EXPECT().GetClient("conf-client").Return(confidentialAuthCodeClient(), nil)
+	// ExchangeCode must NOT be reached.
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	form := authCodeForm(nil)
+	form.Del("client_id")
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("conf-client:wrong")))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Equal(t, "Basic", rr.Header().Get("WWW-Authenticate"))
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "invalid_client", body["error"])
+}
+
+// A public client has no secret to check, so client credentials presented for
+// it are a failed authentication (RFC 6749 §5.2), not something to ignore.
+func TestTokenAuthCode_Public_WithBasicCredentials_Rejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	svc.EXPECT().GetClient("spa").Return(&domain.OAuthClient{
+		ID:         "spa",
+		GrantTypes: []string{"authorization_code"},
+	}, nil)
+	// ExchangeCode must NOT be reached.
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	form := authCodeForm(nil)
+	form.Del("client_id")
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("spa:anything")))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Equal(t, "Basic", rr.Header().Get("WWW-Authenticate"))
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "invalid_client", body["error"])
+}
+
+// Without client_id anywhere, the request is still malformed.
+func TestTokenAuthCode_NoClientIDAnywhere(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	form := authCodeForm(nil)
+	form.Del("client_id")
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "invalid_request", body["error"])
+}
+
 // A public auth-code client (no secret) still succeeds with PKCE alone.
 func TestTokenAuthCode_Public_NoSecretRequired(t *testing.T) {
 	ctrl := gomock.NewController(t)
