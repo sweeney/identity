@@ -91,3 +91,44 @@ To roll back, point the symlink at the previous versioned binary and restart:
 ```bash
 ssh sweeney@garibaldi 'ln -sfn identity-server-<previous> /opt/identity/bin/identity-server && sudo systemctl restart identity'
 ```
+
+## Debugging from the journal
+
+Every audit event is also written to the journal as one line:
+
+```
+audit: <event> user="…" [client="…"] [device="…"] [detail="…"] ip="…"
+```
+
+`device` is the caller's User-Agent on token-endpoint and refresh events, or
+the declared device name on a login.
+
+**A client says `/oauth/token` failed.** Every refusal logs the grant, the
+client, how it authenticated and which required fields arrived. It logs
+presence only, never values:
+
+```bash
+ssh sweeney@garibaldi 'journalctl -u identity --since "-1h" --no-pager | grep "oauth: token refused"'
+# oauth: token refused status=400 error="invalid_request" grant_type="authorization_code"
+#   client="muse" client_via=basic auth=client_secret_basic
+#   fields=client_id:-,code:+,redirect_uri:+,code_verifier:+ ip="…" ua="…"
+```
+
+Device polling's `authorization_pending` and `slow_down` are not logged.
+
+**Something keeps presenting a dead refresh token.**
+`refresh_token_revoked_reuse` means the token was revoked on purpose and a
+client has not noticed. The detail gives the reason; `client`, `device` and
+`ip` say which client it is. `token_family_compromised` is kept for a replay of
+a rotated token (or one revoked before migration 014), which is a real theft
+signal. Both are throttled to one line per token family, then one summary per
+10 minutes:
+
+```bash
+ssh sweeney@garibaldi 'journalctl -u identity --since today --no-pager | grep -E "revoked_reuse|token_family_compromised"'
+# audit: refresh_token_revoked_reuse user="sweeney" client="thermostat" device="thermo-fw/2.1"
+#   detail="reason=password_change repeated=23 since=2026-11-24T10:15:22Z" ip="…"
+```
+
+The `auth_events` table holds the same records with the client always set. It
+is owned by the `identity` user, so querying it needs sudo on the host.

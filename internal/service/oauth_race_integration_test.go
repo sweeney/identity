@@ -191,7 +191,7 @@ func TestExchangeCode_ConcurrentRace_LoserGetsInvalidGrant(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			res, err := st.oauthSvc.ExchangeCode(st.clientID, rawCode, st.redirect, verifier)
+			res, err := st.oauthSvc.ExchangeCode(st.clientID, rawCode, st.redirect, verifier, service.RequestMeta{})
 			outcomes[i] = outcome{res, err}
 		}(i)
 	}
@@ -243,7 +243,7 @@ func TestExchangeCode_ConcurrentRace_NoDoubleIssuance(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = st.oauthSvc.ExchangeCode(st.clientID, rawCode, st.redirect, verifier)
+			_, errs[i] = st.oauthSvc.ExchangeCode(st.clientID, rawCode, st.redirect, verifier, service.RequestMeta{})
 		}(i)
 	}
 	wg.Wait()
@@ -357,7 +357,7 @@ func TestExchangeCode_ConcurrentRace_Unsynchronized(t *testing.T) {
 			go func(i int) {
 				defer wg.Done()
 				<-start
-				_, errs[i] = st.oauthSvc.ExchangeCode(st.clientID, rawCode, st.redirect, verifier)
+				_, errs[i] = st.oauthSvc.ExchangeCode(st.clientID, rawCode, st.redirect, verifier, service.RequestMeta{})
 			}(i)
 		}
 		close(start)

@@ -37,7 +37,7 @@ func TestUserService_Update_PasswordChange_RevokesRefreshTokens(t *testing.T) {
 	// A password change must also end the admin UI session, which no token
 	// revocation reaches (#33).
 	userRepo.EXPECT().BumpSessionEpoch("u-1").Return(nil).Times(1)
-	tokenRepo.EXPECT().RevokeAllForUser("u-1").Return(nil).
+	tokenRepo.EXPECT().RevokeAllForUser("u-1", domain.RevokeReasonPasswordChange).Return(nil).
 		Times(1)
 
 	svc := service.NewUserService(userRepo, tokenRepo, backupSvc, nil, maxUsers).WithBcryptCost(4)
@@ -110,7 +110,7 @@ func TestAuthService_Logout_OwnTokenSucceeds(t *testing.T) {
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
 	tokens.EXPECT().GetByHash(own.TokenHash).Return(own, nil)
-	tokens.EXPECT().RevokeByID("tok-own").Return(nil)
+	tokens.EXPECT().RevokeByID("tok-own", domain.RevokeReasonLogout).Return(nil)
 
 	svc := service.NewAuthService(newTestIssuer(t), users, tokens, nil, backup, audit, time.Hour)
 	require.NoError(t, svc.Logout("user-1", "my-raw-token"))
@@ -150,7 +150,7 @@ func TestAuthService_RefreshForClient_AdoptsLegacyUnboundToken(t *testing.T) {
 		})
 
 	result, err := svcForRefresh(t, users, tokens, backup, audit).
-		RefreshForClient("legacy-raw", "claude")
+		RefreshForClient("legacy-raw", "claude", service.RequestMeta{})
 
 	require.NoError(t, err, "a pre-migration session must survive the upgrade")
 	require.NotNil(t, result)
@@ -179,7 +179,7 @@ func TestAuthService_RefreshForClient_BoundTokenRefusesOtherClient(t *testing.T)
 	// No RotateToken expectation: the wrong client must not get a rotation.
 
 	_, err := svcForRefresh(t, users, tokens, backup, audit).
-		RefreshForClient("bound-raw", "attacker-app")
+		RefreshForClient("bound-raw", "attacker-app", service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrRefreshTokenClientMismatch)
 }
 

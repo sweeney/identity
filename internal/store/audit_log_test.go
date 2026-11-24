@@ -66,3 +66,37 @@ func TestAuditLogLine_LeavesOrdinaryValuesReadable(t *testing.T) {
 	assert.Contains(t, line, "192.0.2.10")
 	assert.Contains(t, line, "admin UI passkey login")
 }
+
+// The journal line names the client and the device hint (the caller's
+// User-Agent on token-endpoint events, the declared device on a login) when
+// the event has them. Without the client, matching an oauth_authorize_success to the app
+// that asked for it took timestamp correlation.
+func TestAuditLogLine_IncludesClientAndUserAgent(t *testing.T) {
+	line := auditLogLine(&domain.AuthEvent{
+		EventType:  "refresh_token_revoked_reuse",
+		Username:   "sweeney",
+		ClientID:   "thermostat",
+		DeviceHint: "thermo-fw/2.1",
+		IPAddress:  "203.0.113.9",
+		Detail:     "reason=password_change",
+	})
+	assert.Equal(t,
+		`audit: refresh_token_revoked_reuse user="sweeney" client="thermostat" device="thermo-fw/2.1" detail="reason=password_change" ip="203.0.113.9"`,
+		line)
+}
+
+// Fields an event does not have are left out rather than printed empty, so
+// existing lines read as before.
+func TestAuditLogLine_OmitsAbsentClientAndUserAgent(t *testing.T) {
+	line := auditLogLine(&domain.AuthEvent{EventType: "login_success", Username: "alice", IPAddress: "192.0.2.10"})
+	assert.Equal(t, `audit: login_success user="alice" ip="192.0.2.10"`, line)
+}
+
+// The User-Agent is caller-controlled, so it is escaped like the username.
+func TestAuditLogLine_EscapesUserAgent(t *testing.T) {
+	line := auditLogLine(&domain.AuthEvent{
+		EventType:  "oauth_code_exchanged",
+		DeviceHint: "evil\naudit: login_success user=\"root\"",
+	})
+	assert.NotContains(t, line, "\n")
+}

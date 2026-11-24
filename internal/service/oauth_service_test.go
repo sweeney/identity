@@ -166,7 +166,7 @@ func TestOAuthService_ExchangeCode_Success(t *testing.T) {
 	// The exchange is audited (#26); the username lookup feeds that record.
 	authSvc.EXPECT().UsernameForID("user-123").Return("alice").AnyTimes()
 
-	result, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
+	result, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier, service.RequestMeta{})
 	require.NoError(t, err)
 	assert.Equal(t, "access.token", result.AccessToken)
 }
@@ -205,7 +205,7 @@ func TestOAuthService_ExchangeCode_NoAudience(t *testing.T) {
 	}).Return(loginResult, nil)
 	authSvc.EXPECT().UsernameForID("user-123").Return("alice").AnyTimes()
 
-	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier, service.RequestMeta{})
 	require.NoError(t, err)
 }
 
@@ -216,7 +216,7 @@ func TestOAuthService_ExchangeCode_InvalidCode(t *testing.T) {
 	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(gomock.Any()).Return(nil, domain.ErrNotFound)
 
-	_, err := svc.ExchangeCode("client-1", "bad-code", "https://myapp.example.com/callback", "verifier")
+	_, err := svc.ExchangeCode("client-1", "bad-code", "https://myapp.example.com/callback", "verifier", service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrInvalidAuthCode)
 }
 
@@ -230,7 +230,7 @@ func TestOAuthService_ExchangeCode_WrongGrantType(t *testing.T) {
 	client.GrantTypes = []string{"client_credentials"} // no authorization_code
 	clients.EXPECT().GetByID("client-1").Return(client, nil)
 
-	_, err := svc.ExchangeCode("client-1", "some-code", "https://myapp.example.com/callback", "verifier")
+	_, err := svc.ExchangeCode("client-1", "some-code", "https://myapp.example.com/callback", "verifier", service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrUnauthorizedClient)
 }
 
@@ -240,7 +240,7 @@ func TestOAuthService_ExchangeCode_UnknownClient(t *testing.T) {
 
 	clients.EXPECT().GetByID("client-1").Return(nil, domain.ErrNotFound)
 
-	_, err := svc.ExchangeCode("client-1", "some-code", "https://myapp.example.com/callback", "verifier")
+	_, err := svc.ExchangeCode("client-1", "some-code", "https://myapp.example.com/callback", "verifier", service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrUnknownClient)
 }
 
@@ -265,7 +265,7 @@ func TestOAuthService_ExchangeCode_ClientMismatch(t *testing.T) {
 	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 
-	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier")
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier", service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrInvalidAuthCode)
 }
 
@@ -297,7 +297,7 @@ func TestOAuthService_ExchangeCode_AlreadyUsed(t *testing.T) {
 	authSvc.EXPECT().RevokeTokensForAuthCode("code-3").Return(nil)
 	authSvc.EXPECT().UsernameForID("user-123").Return("alice").AnyTimes()
 
-	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier")
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier", service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrAuthCodeAlreadyUsed)
 }
 
@@ -329,7 +329,7 @@ func TestOAuthService_ExchangeCode_ReplayRevocationFailureStillDenies(t *testing
 	authSvc.EXPECT().RevokeTokensForAuthCode("code-revfail").Return(errors.New("database is locked"))
 	authSvc.EXPECT().UsernameForID("user-123").Return("alice").AnyTimes()
 
-	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier")
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier", service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrAuthCodeAlreadyUsed,
 		"a failed revocation must not change what the caller is told")
 }
@@ -355,7 +355,7 @@ func TestOAuthService_ExchangeCode_Expired(t *testing.T) {
 	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 
-	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier")
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "verifier", service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrAuthCodeExpired)
 }
 
@@ -383,7 +383,7 @@ func TestOAuthService_ExchangeCode_PKCEFailed(t *testing.T) {
 	clients.EXPECT().GetByID("client-1").Return(testClient(), nil)
 	codes.EXPECT().GetByHash(codeHash).Return(authCode, nil)
 
-	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "wrong-verifier")
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "wrong-verifier", service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrPKCEVerificationFailed)
 }
 
@@ -417,7 +417,7 @@ func TestOAuthService_ExchangeCode_EmptyChallengeRejected(t *testing.T) {
 
 	// An empty verifier hashes to a non-empty S256 digest, so it must not match an
 	// empty stored challenge.
-	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "")
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", "", service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrPKCEVerificationFailed)
 }
 
@@ -433,9 +433,9 @@ func TestOAuthService_RefreshToken(t *testing.T) {
 		ExpiresIn:    900,
 		RefreshToken: "new-refresh",
 	}
-	authSvc.EXPECT().Refresh("old-refresh").Return(result, nil)
+	authSvc.EXPECT().Refresh("old-refresh", gomock.Any()).Return(result, nil)
 
-	got, err := svc.RefreshToken("old-refresh")
+	got, err := svc.RefreshToken("old-refresh", service.RequestMeta{})
 	require.NoError(t, err)
 	assert.Equal(t, "new.access.token", got.AccessToken)
 }
@@ -640,7 +640,7 @@ func TestOAuthService_ExchangeCode_LostRaceMapsToAlreadyUsed(t *testing.T) {
 	authSvc.EXPECT().RevokeTokensForAuthCode("code-race").Return(nil)
 	authSvc.EXPECT().UsernameForID(gomock.Any()).Return("alice").AnyTimes()
 
-	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier, service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrAuthCodeAlreadyUsed,
 		"losing racer must surface ErrAuthCodeAlreadyUsed so the handler maps it to invalid_grant")
 }
@@ -673,7 +673,7 @@ func TestOAuthService_ExchangeCode_MarkUsedInfraErrorIsNotAlreadyUsed(t *testing
 	codes.EXPECT().MarkUsed("code-infra", gomock.Any()).Return(diskErr)
 	authSvc.EXPECT().IssueTokensForUser(gomock.Any(), gomock.Any()).Times(0)
 
-	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier)
+	_, err := svc.ExchangeCode("client-1", rawCode, "https://myapp.example.com/callback", verifier, service.RequestMeta{})
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, service.ErrAuthCodeAlreadyUsed,
 		"a real infrastructure fault must stay a server fault, not become invalid_grant")

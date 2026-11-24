@@ -43,7 +43,20 @@ type AuthService struct {
 	backup          domain.BackupService
 	audit           domain.AuditRepository
 	refreshTokenTTL time.Duration
+
+	// reuse throttles the audit records written when a revoked refresh token
+	// keeps being presented; now is its clock.
+	reuse *reuseLimiter
+	now   func() time.Time
 }
+
+// Revoked-token reuse throttling: one full record per family, then at most one
+// summary per reuseWindow. Families idle for reuseIdle are forgotten.
+const (
+	reuseWindow     = 10 * time.Minute
+	reuseIdle       = time.Hour
+	reuseMaxEntries = 10000
+)
 
 // NewAuthService creates an AuthService.
 func NewAuthService(
@@ -63,6 +76,8 @@ func NewAuthService(
 		backup:          backup,
 		audit:           audit,
 		refreshTokenTTL: refreshTokenTTL,
+		reuse:           newReuseLimiter(reuseWindow, reuseIdle, reuseMaxEntries),
+		now:             time.Now,
 	}
 }
 
@@ -245,7 +260,7 @@ func (s *AuthService) IssueTokensForGrant(userID string, grant GrantContext) (*L
 // never consented to it. An empty clientID means the direct API login, which
 // has no client; tokens issued that way carry no binding and are only
 // redeemable through the same unbound path.
-func (s *AuthService) RefreshForClient(rawRefreshToken, clientID string) (*LoginResult, error) {
+func (s *AuthService) RefreshForClient(rawRefreshToken, clientID string, meta RequestMeta) (*LoginResult, error) {
 	tok, err := s.tokens.GetByHash(HashToken(rawRefreshToken))
 	if err == nil && tok.ClientID != "" && tok.ClientID != clientID {
 		return nil, ErrRefreshTokenClientMismatch
@@ -256,7 +271,7 @@ func (s *AuthService) RefreshForClient(rawRefreshToken, clientID string) (*Login
 	// security, since accepting it is exactly the pre-migration posture. It is
 	// adopted instead: the rotated token comes back bound to the presenting
 	// client, so the binding takes effect after one refresh per session.
-	return s.refresh(rawRefreshToken, clientID, authenticatedCaller)
+	return s.refresh(rawRefreshToken, clientID, authenticatedCaller, meta)
 }
 
 // clientForToken resolves the OAuth client a refresh token belongs to.
@@ -337,8 +352,8 @@ func audiencesForClient(client *domain.OAuthClient, bound bool) []string {
 // This is the unauthenticated entry point: it takes no client credentials, so a
 // token bound to a confidential client is refused here and must go through
 // /oauth/token instead (#40).
-func (s *AuthService) Refresh(rawRefreshToken string) (*LoginResult, error) {
-	return s.refresh(rawRefreshToken, "", unauthenticatedCaller)
+func (s *AuthService) Refresh(rawRefreshToken string, meta RequestMeta) (*LoginResult, error) {
+	return s.refresh(rawRefreshToken, "", unauthenticatedCaller, meta)
 }
 
 // Whether the caller authenticated the OAuth client before reaching rotation.
@@ -401,7 +416,7 @@ func (s *AuthService) resolveAudiences(tokenHash, adoptClientID string) []string
 
 // refresh rotates the token. adoptClientID, when non-empty, is recorded on the
 // replacement for a token that carried no client binding.
-func (s *AuthService) refresh(rawRefreshToken, adoptClientID string, unauthenticated bool) (*LoginResult, error) {
+func (s *AuthService) refresh(rawRefreshToken, adoptClientID string, unauthenticated bool, meta RequestMeta) (*LoginResult, error) {
 	tokenHash := HashToken(rawRefreshToken)
 
 	client, bound := s.clientForToken(tokenHash, adoptClientID)
@@ -455,17 +470,16 @@ func (s *AuthService) refresh(rawRefreshToken, adoptClientID string, unauthentic
 		return nil, ErrInvalidRefreshToken
 	}
 	if errors.Is(err, domain.ErrTokenAlreadyRevoked) {
-		// Token reuse detected — potential theft, invalidate entire family
-		s.record(&domain.AuthEvent{
-			EventType: domain.EventTokenFamilyCompromised,
-			UserID:    oldTok.UserID,
-			Username:  s.lookupUsername(oldTok.UserID),
-		})
+		s.recordRevokedReuse(oldTok, meta)
+		// The family is revoked whatever the reason: harmless when it is
+		// already dead, and the safe default when it is not.
 		if rErr := s.tokens.RevokeFamilyByHash(tokenHash); rErr != nil {
 			// The client still receives token_family_compromised, but a failed
 			// family revocation must not be silent — the family may remain usable.
 			log.Printf("auth: token reuse detected but family revocation failed for user %s: %v", oldTok.UserID, rErr)
 		}
+		// What the client sees does not depend on the reason: either way it
+		// must clear its tokens and sign in again.
 		return nil, ErrTokenFamilyCompromised
 	}
 	if err != nil {
@@ -526,7 +540,7 @@ func (s *AuthService) Logout(userID, rawRefreshToken string) error {
 	username := s.lookupUsername(userID)
 
 	if rawRefreshToken == "" {
-		err := s.tokens.RevokeAllForUser(userID)
+		err := s.tokens.RevokeAllForUser(userID, domain.RevokeReasonLogoutAll)
 		if err == nil {
 			s.record(&domain.AuthEvent{
 				EventType: domain.EventLogoutAll,
@@ -560,7 +574,7 @@ func (s *AuthService) Logout(userID, rawRefreshToken string) error {
 		return ErrInvalidRefreshToken
 	}
 
-	err = s.tokens.RevokeByID(tok.ID)
+	err = s.tokens.RevokeByID(tok.ID, domain.RevokeReasonLogout)
 	if err == nil {
 		s.record(&domain.AuthEvent{
 			EventType: domain.EventLogout,
@@ -633,6 +647,43 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 		ExpiresIn:    900,
 		RefreshToken: rawRefresh,
 	}, nil
+}
+
+// recordRevokedReuse audits a revoked refresh token being presented again.
+//
+// Only a replay of a rotated token (or one revoked before reasons were
+// recorded) is reported as token_family_compromised. A token revoked on
+// purpose — password change, logout, claim-code revocation — is reported as
+// refresh_token_revoked_reuse: a client still holding a token it was signed
+// out of, not a thief. Either way the record names the caller and the client
+// the token was bound to, and repeats from one family are throttled to one
+// summary per reuseWindow.
+func (s *AuthService) recordRevokedReuse(tok *domain.RefreshToken, meta RequestMeta) {
+	event := domain.EventRefreshTokenRevokedReuse
+	if tok.RevokedReason.IndicatesTheft() {
+		event = domain.EventTokenFamilyCompromised
+	}
+	record, suppressed, since := s.reuse.observe(event+"|"+tok.FamilyID, s.now())
+	if !record {
+		return
+	}
+	reason := string(tok.RevokedReason)
+	if reason == "" {
+		reason = "unknown"
+	}
+	detail := "reason=" + reason
+	if suppressed > 0 {
+		detail += fmt.Sprintf(" repeated=%d since=%s", suppressed, since.UTC().Format(time.RFC3339))
+	}
+	s.record(&domain.AuthEvent{
+		EventType:  event,
+		UserID:     tok.UserID,
+		Username:   s.lookupUsername(tok.UserID),
+		ClientID:   tok.ClientID,
+		DeviceHint: meta.userAgent(),
+		IPAddress:  meta.IP,
+		Detail:     detail,
+	})
 }
 
 // lookupUsername returns the username for a userID, falling back to the ID itself.

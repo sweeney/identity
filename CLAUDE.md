@@ -154,6 +154,28 @@ here are logged, so who actually uses this path can be answered from traffic.
 
 Every refresh rotates the token: old token is revoked, new pair issued. If a **previously-used** refresh token is ever presented again, the server assumes the token was stolen. It revokes the **entire token family** and returns `token_family_compromised`. The client must clear all tokens and show the login screen.
 
+Each revoked refresh token records why (`refresh_tokens.revoked_reason`,
+migration 014): `rotated`, `family_revoked`, `logout`, `logout_all`,
+`password_change`, `deactivated`, `claim_code_revoked`, `auth_code_replayed`.
+The reason only changes what is *recorded* when a revoked token comes back. A
+replay of a `rotated` token, or one revoked before migration 014 (reason `''`),
+is audited as `token_family_compromised`. Any other reason is audited as
+`refresh_token_revoked_reuse` (detail `reason=…`): a client still holding a
+token it was deliberately signed out of, not a thief. The client receives
+`token_family_compromised` and the family is revoked either way. Revoke paths
+never overwrite an existing reason. Repeats from one family are throttled in
+memory (`reuseLimiter`): one full record, then at most one summary per 10
+minutes (`repeated=N since=…`).
+
+Token-endpoint and refresh audit events name the caller: IP, User-Agent (stored
+as `device_hint`, capped at 200 bytes) and the client the token is bound to
+(`service.RequestMeta`). The journal line prints `client=` and `device=` when
+set. Every refusal at `/oauth/token` also logs one `oauth: token refused …`
+line giving grant type, client, how it was named (`client_via`), auth method,
+and which required fields were present (`fields=code:+,code_verifier:-`). It
+logs presence only, never a value. Device polling's `authorization_pending` and
+`slow_down` are not logged. `docs/deployment.md` has the `journalctl` queries.
+
 Disabling or demoting an account takes effect **immediately** on the API, not just at access-token expiry: the `RequireAuth` middleware re-reads the user's live `IsActive`/`Role` from the database on every authenticated request (`RequireAuthWithStatus` in `internal/auth/middleware.go`, wired in `internal/handler/api/router.go`). A disabled user is rejected with `account_disabled`, and a demoted admin loses admin access on the next request. (Sibling resource servers that verify tokens via the published JWKS have no user database and keep the stateless behavior — their access tokens remain valid until expiry.)
 
 ## Role model
@@ -259,9 +281,9 @@ Deploys versioned binaries to `/opt/identity/bin/` with a symlink, keeps last 3 
 | `github.com/sweeney/common` | External modules: `db` (SQLite + migrations ledger), `backup` (+ `backup/cli`), `web` (`apierr`, `httputil` — `ExtractClientIP`, `ratelimit`, `spec`) |
 | `deploy/` | systemd unit, env template, install script |
 | `examples/` | Four demo clients (server-side, SPA, BFF, passkey) |
-| `scripts/e2e.sh` | End-to-end test suite (58 checks) |
-| `scripts/e2e-webauthn.sh` | WebAuthn end-to-end test suite (32 checks) |
-| `scripts/e2e-client-credentials.sh` | Client credentials end-to-end test suite |
+| `scripts/e2e.sh` | End-to-end test suite (64 checks) |
+| `scripts/e2e-webauthn.sh` | WebAuthn end-to-end test suite (33 checks) |
+| `scripts/e2e-client-credentials.sh` | Client credentials end-to-end test suite (42 checks) |
 
 ## Releasing a new version of common/
 

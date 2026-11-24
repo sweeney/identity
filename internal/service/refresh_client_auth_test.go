@@ -54,7 +54,7 @@ func TestRefresh_ConfidentialClientTokenNeedsClientAuth(t *testing.T) {
 	svc := service.NewAuthService(newTestIssuer(t), userRepo, tokenRepo,
 		clientRepo, backupSvc, auditRepo, 30*24*time.Hour)
 
-	_, err := svc.Refresh(raw)
+	_, err := svc.Refresh(raw, service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrRefreshRequiresClientAuth,
 		"a confidential client's token must not be redeemable without its secret")
 }
@@ -84,7 +84,7 @@ func TestRefresh_PublicClientTokenStillAccepted(t *testing.T) {
 	svc := service.NewAuthService(newTestIssuer(t), userRepo, tokenRepo,
 		clientRepo, backupSvc, auditRepo, 30*24*time.Hour)
 
-	result, err := svc.Refresh(raw)
+	result, err := svc.Refresh(raw, service.RequestMeta{})
 	require.NoError(t, err,
 		"a public/device client must keep working — docs/api.md points firmware at this endpoint")
 	assert.NotEmpty(t, result.AccessToken)
@@ -111,7 +111,7 @@ func TestRefresh_UnboundTokenUnaffectedByClientAuth(t *testing.T) {
 	svc := service.NewAuthService(newTestIssuer(t), userRepo, tokenRepo,
 		clientRepo, backupSvc, auditRepo, 30*24*time.Hour)
 
-	_, err := svc.Refresh(raw)
+	_, err := svc.Refresh(raw, service.RequestMeta{})
 	require.NoError(t, err)
 }
 
@@ -137,7 +137,7 @@ func TestRefresh_UnknownTokenDoesNotLeakThroughClientAuth(t *testing.T) {
 	svc := service.NewAuthService(newTestIssuer(t), userRepo, tokenRepo,
 		clientRepo, backupSvc, auditRepo, 30*24*time.Hour)
 
-	_, err := svc.Refresh(raw)
+	_, err := svc.Refresh(raw, service.RequestMeta{})
 	assert.ErrorIs(t, err, service.ErrInvalidRefreshToken)
 }
 
@@ -167,7 +167,7 @@ func TestRefreshForClient_ConfidentialUnaffected(t *testing.T) {
 	svc := service.NewAuthService(newTestIssuer(t), userRepo, tokenRepo,
 		clientRepo, backupSvc, auditRepo, 30*24*time.Hour)
 
-	_, err := svc.RefreshForClient(raw, "svc")
+	_, err := svc.RefreshForClient(raw, "svc", service.RequestMeta{})
 	require.NoError(t, err,
 		"the OAuth endpoint authenticates the client itself; this check must not fire there")
 }

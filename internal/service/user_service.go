@@ -188,13 +188,13 @@ func (s *UserService) Update(id string, input UpdateUserInput, meta ...AuditMeta
 		if err := s.users.BumpSessionEpoch(id); err != nil {
 			return nil, fmt.Errorf("bump session epoch on password change: %w", err)
 		}
-		if err := s.tokens.RevokeAllForUser(id); err != nil {
+		if err := s.tokens.RevokeAllForUser(id, domain.RevokeReasonPasswordChange); err != nil {
 			return nil, fmt.Errorf("revoke tokens on password change: %w", err)
 		}
 	}
 
 	if deactivating {
-		if err := s.tokens.RevokeAllForUser(id); err != nil {
+		if err := s.tokens.RevokeAllForUser(id, domain.RevokeReasonDeactivated); err != nil {
 			return nil, fmt.Errorf("revoke tokens on deactivation: %w", err)
 		}
 		s.recordEvent(domain.EventUserDeactivated, user.ID, user.Username, meta...)

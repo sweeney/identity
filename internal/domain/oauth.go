@@ -129,19 +129,24 @@ const (
 	// produces, and worth alerting on.
 	EventOAuthCodeReplayed      = "oauth_code_replayed"
 	EventTokenFamilyCompromised = "token_family_compromised"
-	EventLogout                 = "logout"
-	EventLogoutAll              = "logout_all"
-	EventUserCreated            = "user_created"
-	EventUserUpdated            = "user_updated"
-	EventUserDeleted            = "user_deleted"
-	EventUserDeactivated        = "user_deactivated"
-	EventOAuthClientCreated     = "oauth_client_created"
-	EventOAuthClientUpdated     = "oauth_client_updated"
-	EventOAuthClientDeleted     = "oauth_client_deleted"
-	EventBackupSuccess          = "backup_success"
-	EventBackupFailure          = "backup_failure"
-	EventClientCredentials      = "client_credentials"
-	EventClientSecretRotated    = "client_secret_rotated"
+	// EventRefreshTokenRevokedReuse is a revoked refresh token presented again
+	// when it was revoked deliberately (password change, logout, claim-code
+	// revocation, …) rather than by rotation. Not a theft signal: a client is
+	// still holding a token it was signed out of. Detail carries the reason.
+	EventRefreshTokenRevokedReuse = "refresh_token_revoked_reuse"
+	EventLogout                   = "logout"
+	EventLogoutAll                = "logout_all"
+	EventUserCreated              = "user_created"
+	EventUserUpdated              = "user_updated"
+	EventUserDeleted              = "user_deleted"
+	EventUserDeactivated          = "user_deactivated"
+	EventOAuthClientCreated       = "oauth_client_created"
+	EventOAuthClientUpdated       = "oauth_client_updated"
+	EventOAuthClientDeleted       = "oauth_client_deleted"
+	EventBackupSuccess            = "backup_success"
+	EventBackupFailure            = "backup_failure"
+	EventClientCredentials        = "client_credentials"
+	EventClientSecretRotated      = "client_secret_rotated"
 )
 
 // OAuthClientRepository defines persistence operations for OAuth clients.

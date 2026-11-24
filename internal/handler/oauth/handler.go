@@ -298,6 +298,14 @@ func (h *oauthHandler) authorizePasskey(w http.ResponseWriter, r *http.Request) 
 
 // token handles authorization_code and refresh_token grant types.
 func (h *oauthHandler) token(w http.ResponseWriter, r *http.Request) {
+	rec := &tokenRecorder{ResponseWriter: w}
+	defer func() {
+		if rec.status >= 400 {
+			h.logTokenRefusal(r, rec)
+		}
+	}()
+	w = rec
+
 	if err := r.ParseForm(); err != nil {
 		oauthError(w, "invalid_request", "Could not parse form.")
 		return
@@ -339,7 +347,7 @@ func (h *oauthHandler) tokenAuthCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.svc.ExchangeCode(clientID, code, redirectURI, codeVerifier)
+	result, err := h.svc.ExchangeCode(clientID, code, redirectURI, codeVerifier, h.requestMeta(r))
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrUnknownClient):
@@ -383,7 +391,7 @@ func (h *oauthHandler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
 	// And the token has to belong to the client redeeming it. A refresh token
 	// that leaks could otherwise be redeemed by any other registered client,
 	// for a user who never consented to that client.
-	result, err := h.svc.RefreshTokenForClient(rawRefreshToken, clientID)
+	result, err := h.svc.RefreshTokenForClient(rawRefreshToken, clientID, h.requestMeta(r))
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrRefreshTokenClientMismatch):
@@ -638,6 +646,15 @@ func oauthErrorWithStatus(w http.ResponseWriter, status int, code, description s
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(oauthErrorBody{Error: code, ErrorDescription: description}) //nolint:errcheck
+}
+
+// requestMeta identifies the caller for the audit records a token request
+// produces.
+func (h *oauthHandler) requestMeta(r *http.Request) service.RequestMeta {
+	return service.RequestMeta{
+		IP:        httputil.ExtractClientIP(r, h.trustProxy),
+		UserAgent: r.UserAgent(),
+	}
 }
 
 func jsonOK(w http.ResponseWriter, v any) {

@@ -115,33 +115,33 @@ func (mr *MockAuthServicerMockRecorder) Logout(userID, rawRefreshToken any) *gom
 }
 
 // Refresh mocks base method.
-func (m *MockAuthServicer) Refresh(rawRefreshToken string) (*service.LoginResult, error) {
+func (m *MockAuthServicer) Refresh(rawRefreshToken string, meta service.RequestMeta) (*service.LoginResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Refresh", rawRefreshToken)
+	ret := m.ctrl.Call(m, "Refresh", rawRefreshToken, meta)
 	ret0, _ := ret[0].(*service.LoginResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Refresh indicates an expected call of Refresh.
-func (mr *MockAuthServicerMockRecorder) Refresh(rawRefreshToken any) *gomock.Call {
+func (mr *MockAuthServicerMockRecorder) Refresh(rawRefreshToken, meta any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Refresh", reflect.TypeOf((*MockAuthServicer)(nil).Refresh), rawRefreshToken)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Refresh", reflect.TypeOf((*MockAuthServicer)(nil).Refresh), rawRefreshToken, meta)
 }
 
 // RefreshForClient mocks base method.
-func (m *MockAuthServicer) RefreshForClient(rawRefreshToken, clientID string) (*service.LoginResult, error) {
+func (m *MockAuthServicer) RefreshForClient(rawRefreshToken, clientID string, meta service.RequestMeta) (*service.LoginResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RefreshForClient", rawRefreshToken, clientID)
+	ret := m.ctrl.Call(m, "RefreshForClient", rawRefreshToken, clientID, meta)
 	ret0, _ := ret[0].(*service.LoginResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RefreshForClient indicates an expected call of RefreshForClient.
-func (mr *MockAuthServicerMockRecorder) RefreshForClient(rawRefreshToken, clientID any) *gomock.Call {
+func (mr *MockAuthServicerMockRecorder) RefreshForClient(rawRefreshToken, clientID, meta any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshForClient", reflect.TypeOf((*MockAuthServicer)(nil).RefreshForClient), rawRefreshToken, clientID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshForClient", reflect.TypeOf((*MockAuthServicer)(nil).RefreshForClient), rawRefreshToken, clientID, meta)
 }
 
 // RevokeTokensForAuthCode mocks base method.

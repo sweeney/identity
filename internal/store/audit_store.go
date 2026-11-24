@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/sweeney/identity/internal/db"
@@ -125,11 +126,21 @@ func scanAuthEvents(rows *sql.Rows) ([]*domain.AuthEvent, error) {
 // from real ones to anyone reading journalctl or shipping the log elsewhere.
 // %q escapes newlines, carriage returns, tabs and other control characters
 // while leaving ordinary values readable and greppable.
+//
+// client and device are printed only when the event has them, so lines for
+// events without them read exactly as before.
 func auditLogLine(event *domain.AuthEvent) string {
-	if event.Detail != "" {
-		return fmt.Sprintf("audit: %s user=%q detail=%q ip=%q",
-			event.EventType, event.Username, event.Detail, event.IPAddress)
+	var b strings.Builder
+	fmt.Fprintf(&b, "audit: %s user=%q", event.EventType, event.Username)
+	if event.ClientID != "" {
+		fmt.Fprintf(&b, " client=%q", event.ClientID)
 	}
-	return fmt.Sprintf("audit: %s user=%q ip=%q",
-		event.EventType, event.Username, event.IPAddress)
+	if event.DeviceHint != "" {
+		fmt.Fprintf(&b, " device=%q", event.DeviceHint)
+	}
+	if event.Detail != "" {
+		fmt.Fprintf(&b, " detail=%q", event.Detail)
+	}
+	fmt.Fprintf(&b, " ip=%q", event.IPAddress)
+	return b.String()
 }

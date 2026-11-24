@@ -31,7 +31,7 @@ func TestTokenRefresh_WrongClient_Rejected(t *testing.T) {
 	svc := mocks.NewMockOAuthServicer(ctrl)
 
 	svc.EXPECT().
-		RefreshTokenForClient("leaked-refresh-token", "attacker-app").
+		RefreshTokenForClient("leaked-refresh-token", "attacker-app", gomock.Any()).
 		Return(nil, service.ErrRefreshTokenClientMismatch)
 
 	h := newDeviceRouter(svc, nil, nil)
@@ -51,7 +51,7 @@ func TestTokenRefresh_OwningClient_Succeeds(t *testing.T) {
 	svc := mocks.NewMockOAuthServicer(ctrl)
 
 	svc.EXPECT().
-		RefreshTokenForClient("good-refresh-token", "photo-app").
+		RefreshTokenForClient("good-refresh-token", "photo-app", gomock.Any()).
 		Return(&service.LoginResult{AccessToken: "a", RefreshToken: "r", TokenType: "Bearer", ExpiresIn: 900}, nil)
 
 	h := newDeviceRouter(svc, nil, nil)
@@ -143,7 +143,7 @@ func TestTokenRefresh_ConfidentialClient_BasicOnly_Succeeds(t *testing.T) {
 	client.SecretHash = mustHash("s3cret") // the shared fixture's hash is not of "s3cret"
 	svc.EXPECT().GetClient("device-client").Return(client, nil)
 	svc.EXPECT().
-		RefreshTokenForClient("good-refresh-token", "device-client").
+		RefreshTokenForClient("good-refresh-token", "device-client", gomock.Any()).
 		Return(&service.LoginResult{AccessToken: "a", RefreshToken: "r", TokenType: "Bearer", ExpiresIn: 900}, nil)
 
 	h := newDeviceRouter(svc, nil, nil)

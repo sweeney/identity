@@ -290,7 +290,7 @@ func TestTokenEndpoint_AuthCode_Success(t *testing.T) {
 		RefreshToken: "refresh-token",
 	}
 	svc.EXPECT().GetClient("client-1").Return(&domain.OAuthClient{ID: "client-1"}, nil)
-	svc.EXPECT().ExchangeCode("client-1", "code-abc", "https://myapp.example.com/callback", "verifier-xyz").
+	svc.EXPECT().ExchangeCode("client-1", "code-abc", "https://myapp.example.com/callback", "verifier-xyz", gomock.Any()).
 		Return(result, nil)
 
 	h := newTestRouter(svc)
@@ -314,7 +314,7 @@ func TestTokenEndpoint_AuthCode_InvalidGrant(t *testing.T) {
 	svc := mocks.NewMockOAuthServicer(ctrl)
 
 	svc.EXPECT().GetClient("client-1").Return(&domain.OAuthClient{ID: "client-1"}, nil)
-	svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, service.ErrInvalidAuthCode)
 
 	h := newTestRouter(svc)
@@ -347,7 +347,7 @@ func TestTokenEndpoint_AuthCode_UnifiedErrorMessage(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			svc := mocks.NewMockOAuthServicer(ctrl)
 			svc.EXPECT().GetClient("client-1").Return(&domain.OAuthClient{ID: "client-1"}, nil)
-			svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 				Return(nil, svcErr)
 
 			h := newTestRouter(svc)
@@ -381,7 +381,7 @@ func TestTokenEndpoint_RefreshToken_Success(t *testing.T) {
 	}
 	// Refresh is now scoped to the redeeming client; an empty client_id is the
 	// direct-login path, whose tokens carry no binding.
-	svc.EXPECT().RefreshTokenForClient("old-refresh", "").Return(result, nil)
+	svc.EXPECT().RefreshTokenForClient("old-refresh", "", gomock.Any()).Return(result, nil)
 
 	h := newTestRouter(svc)
 	rr := postForm(t, h, "/oauth/token", url.Values{
@@ -555,7 +555,7 @@ func TestTokenEndpoint_ServerFaultsReturn500(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		svc := mocks.NewMockOAuthServicer(ctrl)
 		svc.EXPECT().GetClient("client-1").Return(&domain.OAuthClient{ID: "client-1"}, nil)
-		svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil, infraErr)
 
 		h := newTestRouter(svc)
@@ -578,7 +578,7 @@ func TestTokenEndpoint_ServerFaultsReturn500(t *testing.T) {
 	t.Run("refresh_token", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		svc := mocks.NewMockOAuthServicer(ctrl)
-		svc.EXPECT().RefreshTokenForClient("some-refresh-token", "").Return(nil, infraErr)
+		svc.EXPECT().RefreshTokenForClient("some-refresh-token", "", gomock.Any()).Return(nil, infraErr)
 
 		h := newTestRouter(svc)
 		rr := postForm(t, h, "/oauth/token", url.Values{
@@ -599,7 +599,7 @@ func TestTokenEndpoint_ClientErrorsStayAt400(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := mocks.NewMockOAuthServicer(ctrl)
 	svc.EXPECT().GetClient("client-1").Return(&domain.OAuthClient{ID: "client-1"}, nil)
-	svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	svc.EXPECT().ExchangeCode(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, service.ErrAuthCodeAlreadyUsed)
 
 	h := newTestRouter(svc)
