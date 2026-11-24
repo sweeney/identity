@@ -131,6 +131,7 @@ func TestTokenRefresh_PublicClient_WithBasicCredentials_Rejected(t *testing.T) {
 	}, "public-app:anything")
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Equal(t, "Basic", rr.Header().Get("WWW-Authenticate"))
 	assert.Contains(t, rr.Body.String(), "invalid_client")
 }
 

@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"encoding/base64"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -114,6 +115,15 @@ func (h *oauthHandler) authenticateTokenClient(w http.ResponseWriter, r *http.Re
 	creds, ok := extractClientCredentials(r)
 	if client.SecretHash == "" {
 		if ok {
+			// Logged so it can be told from traffic whether anything live
+			// hits this: before it, such credentials were silently ignored.
+			log.Printf("oauth: refused %s credentials for public client %q at /oauth/token (grant_type=%s)",
+				creds.Method, clientID, r.FormValue("grant_type"))
+			// RFC 6749 §5.2: the challenge is required when the client tried
+			// the Authorization header.
+			if creds.Method == "client_secret_basic" {
+				w.Header().Set("WWW-Authenticate", "Basic")
+			}
 			oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "This client is not configured for client authentication.")
 			return false
 		}

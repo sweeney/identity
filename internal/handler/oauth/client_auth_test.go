@@ -669,6 +669,7 @@ func TestTokenAuthCode_Public_WithBasicCredentials_Rejected(t *testing.T) {
 	h.ServeHTTP(rr, req)
 
 	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Equal(t, "Basic", rr.Header().Get("WWW-Authenticate"))
 	var body map[string]string
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 	assert.Equal(t, "invalid_client", body["error"])
