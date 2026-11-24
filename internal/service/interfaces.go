@@ -9,7 +9,7 @@ import (
 //go:generate mockgen -destination=../mocks/mock_auth_service.go -package=mocks github.com/sweeney/identity/internal/service AuthServicer
 type AuthServicer interface {
 	Login(username, password, deviceHint, clientIP string) (*LoginResult, error)
-	Refresh(rawRefreshToken string) (*LoginResult, error)
+	Refresh(rawRefreshToken string, meta RequestMeta) (*LoginResult, error)
 	Logout(userID, rawRefreshToken string) error
 
 	// AuthorizeUser authenticates without issuing tokens. Returns userID on success.
@@ -28,7 +28,7 @@ type AuthServicer interface {
 
 	// RefreshForClient refreshes only if the token was issued to clientID.
 	// An empty clientID means the direct API login, which has no client.
-	RefreshForClient(rawRefreshToken, clientID string) (*LoginResult, error)
+	RefreshForClient(rawRefreshToken, clientID string, meta RequestMeta) (*LoginResult, error)
 
 	// RevokeTokensForAuthCode revokes every refresh token descended from the
 	// given authorization code. Used when that code is replayed.
@@ -62,12 +62,12 @@ type OAuthServicer interface {
 	ValidateAuthorizeRequest(clientID, redirectURI string) (*domain.OAuthClient, error)
 	Authorize(clientID, redirectURI, username, password, codeChallenge, ip string) (rawCode string, err error)
 	AuthorizeByUserID(clientID, redirectURI, userID, username, codeChallenge, ip string) (rawCode string, err error)
-	ExchangeCode(clientID, code, redirectURI, codeVerifier string) (*LoginResult, error)
-	RefreshToken(rawRefreshToken string) (*LoginResult, error)
+	ExchangeCode(clientID, code, redirectURI, codeVerifier string, meta RequestMeta) (*LoginResult, error)
+	RefreshToken(rawRefreshToken string, meta RequestMeta) (*LoginResult, error)
 
 	// RefreshTokenForClient refreshes only if the token was issued to clientID,
 	// so a leaked refresh token cannot be redeemed by a different client.
-	RefreshTokenForClient(rawRefreshToken, clientID string) (*LoginResult, error)
+	RefreshTokenForClient(rawRefreshToken, clientID string, meta RequestMeta) (*LoginResult, error)
 	GetClient(clientID string) (*domain.OAuthClient, error)
 	IssueClientCredentials(client *domain.OAuthClient, requestedScope, ip string) (*ClientCredentialsResult, error)
 }

@@ -297,23 +297,30 @@ check_contains "Token exchange returns access_token" "eyJ" "$OAUTH_ACCESS"
 check "OAuth token resolves to alice" "alice" \
   "$(curl -s "$BASE/api/v1/auth/me" -H "Authorization: Bearer $OAUTH_ACCESS" | jq -r '.username')"
 
-# Code replay
-REPLAY_T=$(curl -s -X POST "$BASE/oauth/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=authorization_code&client_id=testapp&code=$CODE&redirect_uri=http://localhost:3000/callback&code_verifier=$VERIFIER")
-check "Code replay = invalid_grant" "invalid_grant" "$(echo "$REPLAY_T" | jq -r '.error')"
-
 # OAuth refresh — client_id is required: the token is bound to its issuing client
 OAUTH_R=$(curl -s -X POST "$BASE/oauth/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=refresh_token&refresh_token=$OAUTH_REFRESH&client_id=testapp")
 check_contains "OAuth refresh works" "eyJ" "$(echo "$OAUTH_R" | jq -r '.access_token')"
+OAUTH_R_REFRESH=$(echo "$OAUTH_R" | jq -r '.refresh_token')
 
 # A refresh token issued to one client must not be redeemable by another.
 OAUTH_R_WRONG=$(curl -s -X POST "$BASE/oauth/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=refresh_token&refresh_token=$(echo "$OAUTH_R" | jq -r '.refresh_token')&client_id=otherapp")
+  -d "grant_type=refresh_token&refresh_token=$OAUTH_R_REFRESH&client_id=otherapp")
 check "Refresh with wrong client = invalid_grant" "invalid_grant" "$(echo "$OAUTH_R_WRONG" | jq -r '.error')"
+
+# Code replay. Done after the refresh: a replay revokes every token the code
+# produced, rotated descendants included (#25, RFC 6749 §4.1.2).
+REPLAY_T=$(curl -s -X POST "$BASE/oauth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code&client_id=testapp&code=$CODE&redirect_uri=http://localhost:3000/callback&code_verifier=$VERIFIER")
+check "Code replay = invalid_grant" "invalid_grant" "$(echo "$REPLAY_T" | jq -r '.error')"
+
+AFTER_REPLAY=$(curl -s -X POST "$BASE/oauth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=refresh_token&refresh_token=$OAUTH_R_REFRESH&client_id=testapp")
+check "Code replay revoked the rotated refresh token" "invalid_grant" "$(echo "$AFTER_REPLAY" | jq -r '.error')"
 
 # ── 11. OAuth error pages ─────────────────────────────────────────────
 

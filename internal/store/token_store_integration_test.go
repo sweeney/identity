@@ -221,7 +221,7 @@ func TestTokenStore_RotateToken_AlreadyRevoked(t *testing.T) {
 	require.NoError(t, ts.Create(old))
 
 	// Revoke the token first
-	require.NoError(t, ts.RevokeByID(old.ID))
+	require.NoError(t, ts.RevokeByID(old.ID, domain.RevokeReasonLogout))
 
 	newTok := &domain.RefreshToken{
 		ID:         "tok-revoked-new",
@@ -327,7 +327,7 @@ func TestTokenStore_RevokeByID(t *testing.T) {
 	tok := newToken(u.ID, "family-4", "rawtoken-jack")
 	require.NoError(t, ts.Create(tok))
 
-	require.NoError(t, ts.RevokeByID(tok.ID))
+	require.NoError(t, ts.RevokeByID(tok.ID, domain.RevokeReasonLogout))
 
 	got, err := ts.GetByHash(sha256hex("rawtoken-jack"))
 	require.NoError(t, err)
@@ -346,7 +346,7 @@ func TestTokenStore_RevokeAllForUser(t *testing.T) {
 		require.NoError(t, ts.Create(tok))
 	}
 
-	require.NoError(t, ts.RevokeAllForUser(u.ID))
+	require.NoError(t, ts.RevokeAllForUser(u.ID, domain.RevokeReasonPasswordChange))
 
 	for _, raw := range []string{"tok-k1", "tok-k2", "tok-k3"} {
 		tok, err := ts.GetByHash(sha256hex(raw))

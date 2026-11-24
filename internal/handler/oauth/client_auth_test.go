@@ -563,7 +563,7 @@ func TestTokenAuthCode_Confidential_ValidSecret(t *testing.T) {
 	svc := mocks.NewMockOAuthServicer(ctrl)
 
 	svc.EXPECT().GetClient("conf-client").Return(confidentialAuthCodeClient(), nil)
-	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz").
+	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz", gomock.Any()).
 		Return(&service.LoginResult{AccessToken: "at", TokenType: "Bearer", ExpiresIn: 900, RefreshToken: "rt"}, nil)
 
 	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
@@ -587,7 +587,7 @@ func TestTokenAuthCode_Confidential_BasicAuthOnly_NoBodyClientID(t *testing.T) {
 	svc := mocks.NewMockOAuthServicer(ctrl)
 
 	svc.EXPECT().GetClient("conf-client").Return(confidentialAuthCodeClient(), nil)
-	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz").
+	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz", gomock.Any()).
 		Return(&service.LoginResult{AccessToken: "at", TokenType: "Bearer", ExpiresIn: 900, RefreshToken: "rt"}, nil)
 
 	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
@@ -704,7 +704,7 @@ func TestTokenAuthCode_Public_NoSecretRequired(t *testing.T) {
 		GrantTypes: []string{"authorization_code"},
 		// no SecretHash → public client
 	}, nil)
-	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz").
+	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz", gomock.Any()).
 		Return(&service.LoginResult{AccessToken: "at", TokenType: "Bearer", ExpiresIn: 900, RefreshToken: "rt"}, nil)
 
 	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
@@ -728,7 +728,7 @@ func TestTokenAuthCode_WrongGrantType(t *testing.T) {
 		ID:         "conf-client",
 		GrantTypes: []string{"client_credentials"},
 	}, nil)
-	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz").
+	svc.EXPECT().ExchangeCode("conf-client", "code-abc", "https://app.example.com/callback", "verifier-xyz", gomock.Any()).
 		Return(nil, service.ErrUnauthorizedClient)
 
 	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")

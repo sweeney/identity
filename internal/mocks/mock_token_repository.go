@@ -84,17 +84,17 @@ func (mr *MockTokenRepositoryMockRecorder) GetByHash(tokenHash any) *gomock.Call
 }
 
 // RevokeAllForUser mocks base method.
-func (m *MockTokenRepository) RevokeAllForUser(userID string) error {
+func (m *MockTokenRepository) RevokeAllForUser(userID string, reason domain.RevokeReason) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RevokeAllForUser", userID)
+	ret := m.ctrl.Call(m, "RevokeAllForUser", userID, reason)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RevokeAllForUser indicates an expected call of RevokeAllForUser.
-func (mr *MockTokenRepositoryMockRecorder) RevokeAllForUser(userID any) *gomock.Call {
+func (mr *MockTokenRepositoryMockRecorder) RevokeAllForUser(userID, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForUser", reflect.TypeOf((*MockTokenRepository)(nil).RevokeAllForUser), userID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForUser", reflect.TypeOf((*MockTokenRepository)(nil).RevokeAllForUser), userID, reason)
 }
 
 // RevokeByAuthCodeID mocks base method.
@@ -126,17 +126,17 @@ func (mr *MockTokenRepositoryMockRecorder) RevokeByClaimCodeID(claimCodeID any) 
 }
 
 // RevokeByID mocks base method.
-func (m *MockTokenRepository) RevokeByID(id string) error {
+func (m *MockTokenRepository) RevokeByID(id string, reason domain.RevokeReason) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RevokeByID", id)
+	ret := m.ctrl.Call(m, "RevokeByID", id, reason)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RevokeByID indicates an expected call of RevokeByID.
-func (mr *MockTokenRepositoryMockRecorder) RevokeByID(id any) *gomock.Call {
+func (mr *MockTokenRepositoryMockRecorder) RevokeByID(id, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeByID", reflect.TypeOf((*MockTokenRepository)(nil).RevokeByID), id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeByID", reflect.TypeOf((*MockTokenRepository)(nil).RevokeByID), id, reason)
 }
 
 // RevokeFamilyByHash mocks base method.

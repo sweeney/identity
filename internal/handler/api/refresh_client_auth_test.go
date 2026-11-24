@@ -18,7 +18,7 @@ import (
 func TestRefresh_ConfidentialClientToken_Returns401(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	authSvc := mocks.NewMockAuthServicer(ctrl)
-	authSvc.EXPECT().Refresh("some-refresh-token").
+	authSvc.EXPECT().Refresh("some-refresh-token", gomock.Any()).
 		Return(nil, service.ErrRefreshRequiresClientAuth)
 
 	h := api.NewRouter(newTestIssuer(t), authSvc, nil, nil, "")

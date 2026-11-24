@@ -1,0 +1,18 @@
+-- Record why each refresh token was revoked.
+--
+-- Presenting a revoked refresh token was always reported as
+-- token_family_compromised, whatever had revoked it. A replay of a rotated
+-- token is a genuine theft signal; a token killed by a password change, a
+-- logout or a claim-code revocation is only a client that has not noticed it
+-- was signed out. On 2026-11-24 one such client produced 330
+-- token_family_compromised events in two hours, and nothing in them said which
+-- case it was.
+--
+-- Values: rotated, family_revoked, logout, logout_all, password_change,
+-- deactivated, claim_code_revoked, auth_code_replayed. Rows revoked before
+-- this migration read as '' (unknown) and are still treated as theft, which
+-- is what they were treated as before.
+--
+-- Additive with a default: a binary predating this migration names its
+-- columns on INSERT and never reads this one, so rolling back is safe.
+ALTER TABLE refresh_tokens ADD COLUMN revoked_reason TEXT NOT NULL DEFAULT '';

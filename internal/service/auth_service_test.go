@@ -294,7 +294,7 @@ func TestAuthService_Refresh_Success(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	result, err := svc.Refresh(rawToken)
+	result, err := svc.Refresh(rawToken, service.RequestMeta{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, result.AccessToken)
 	assert.NotEmpty(t, result.RefreshToken)
@@ -311,7 +311,7 @@ func TestAuthService_Refresh_TokenNotFound(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	_, err := svc.Refresh(rawToken)
+	_, err := svc.Refresh(rawToken, service.RequestMeta{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrInvalidRefreshToken)
 }
@@ -343,7 +343,7 @@ func TestAuthService_Refresh_AlreadyRevoked_TriggersTheftDetection(t *testing.T)
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	_, err := svc.Refresh(rawToken)
+	_, err := svc.Refresh(rawToken, service.RequestMeta{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrTokenFamilyCompromised)
 }
@@ -388,7 +388,7 @@ func TestAuthService_Refresh_FamilyRevokeError_IsLogged(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	_, err := svc.Refresh(rawToken)
+	_, err := svc.Refresh(rawToken, service.RequestMeta{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrTokenFamilyCompromised)
 
@@ -419,7 +419,7 @@ func TestAuthService_Refresh_Expired(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	_, err := svc.Refresh(rawToken)
+	_, err := svc.Refresh(rawToken, service.RequestMeta{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrRefreshTokenExpired)
 }
@@ -450,7 +450,7 @@ func TestAuthService_Refresh_DisabledUser(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	_, err := svc.Refresh(rawToken)
+	_, err := svc.Refresh(rawToken, service.RequestMeta{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, service.ErrAccountDisabled)
 }
@@ -480,7 +480,7 @@ func TestAuthService_Refresh_PreservesAudience(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	result, err := svc.Refresh(rawToken)
+	result, err := svc.Refresh(rawToken, service.RequestMeta{})
 	require.NoError(t, err)
 
 	aud := jwtAudience(t, result.AccessToken)
@@ -512,7 +512,7 @@ func TestAuthService_Refresh_NoAudienceWhenTokenHasNone(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	result, err := svc.Refresh(rawToken)
+	result, err := svc.Refresh(rawToken, service.RequestMeta{})
 	require.NoError(t, err)
 
 	aud := jwtAudience(t, result.AccessToken)
@@ -533,7 +533,7 @@ func TestAuthService_Logout_SpecificToken(t *testing.T) {
 
 	userRepo.EXPECT().GetByID("user-123").Return(activeUser(), nil).AnyTimes()
 	tokenRepo.EXPECT().GetByHash(tokenHash).Return(tok, nil)
-	tokenRepo.EXPECT().RevokeByID("tok-logout").Return(nil)
+	tokenRepo.EXPECT().RevokeByID("tok-logout", domain.RevokeReasonLogout).Return(nil)
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
@@ -548,7 +548,7 @@ func TestAuthService_Logout_AllTokens(t *testing.T) {
 	backupSvc := mocks.NewMockBackupService(ctrl)
 
 	userRepo.EXPECT().GetByID("user-123").Return(activeUser(), nil).AnyTimes()
-	tokenRepo.EXPECT().RevokeAllForUser("user-123").Return(nil)
+	tokenRepo.EXPECT().RevokeAllForUser("user-123", domain.RevokeReasonLogoutAll).Return(nil)
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 

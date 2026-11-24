@@ -53,7 +53,7 @@ func (s *TokenStore) GetByHash(tokenHash string) (*domain.RefreshToken, error) {
 	row := s.db.DB().QueryRow(
 		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
 		        device_hint, audiences, scope, COALESCE(claim_code_id,''), COALESCE(auth_code_id,''), COALESCE(client_id,''),
-		        issued_at, last_used_at, expires_at, is_revoked
+		        issued_at, last_used_at, expires_at, is_revoked, revoked_reason
 		 FROM refresh_tokens WHERE token_hash = ?`, tokenHash,
 	)
 	return scanToken(row)
@@ -70,7 +70,7 @@ func (s *TokenStore) Rotate(oldTokenID string, newToken *domain.RefreshToken) er
 
 	// Revoke old token
 	if _, err := tx.Exec(
-		`UPDATE refresh_tokens SET is_revoked = 1 WHERE id = ?`, oldTokenID,
+		`UPDATE refresh_tokens SET is_revoked = 1, revoked_reason = ? WHERE id = ?`, domain.RevokeReasonRotated, oldTokenID,
 	); err != nil {
 		return fmt.Errorf("revoke old token: %w", err)
 	}
@@ -127,7 +127,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	row := tx.QueryRow(
 		`SELECT id, user_id, token_hash, family_id, COALESCE(parent_token_id,''),
 		        device_hint, audiences, scope, COALESCE(claim_code_id,''), COALESCE(auth_code_id,''), COALESCE(client_id,''),
-		        issued_at, last_used_at, expires_at, is_revoked
+		        issued_at, last_used_at, expires_at, is_revoked, revoked_reason
 		 FROM refresh_tokens WHERE token_hash = ?`, oldTokenHash,
 	)
 
@@ -139,7 +139,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	scanErr := row.Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
 		&t.DeviceHint, &audsJSON, &t.Scope, &t.ClaimCodeID, &t.AuthCodeID, &t.ClientID,
-		&issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
+		&issuedAt, &lastUsedAt, &expiresAt, &isRevoked, &t.RevokedReason,
 	)
 	if scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
@@ -159,6 +159,25 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	// If already revoked, this is a reuse/theft signal
 	if t.IsRevoked {
 		return &t, domain.ErrTokenAlreadyRevoked
+	}
+
+	// An expired token is revoked as expired and gets no replacement. Rotating
+	// it first and refusing it afterwards would leave it marked "rotated", so
+	// a client retrying it — a device back after a month offline — would be
+	// reported as replaying a rotated token, which reads as theft.
+	if time.Now().After(t.ExpiresAt) {
+		if _, err := tx.Exec(
+			`UPDATE refresh_tokens SET is_revoked = 1, revoked_reason = ? WHERE id = ?`,
+			domain.RevokeReasonExpired, t.ID,
+		); err != nil {
+			return nil, fmt.Errorf("revoke expired token: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit expired revoke: %w", err)
+		}
+		t.IsRevoked = true
+		t.RevokedReason = domain.RevokeReasonExpired
+		return &t, domain.ErrTokenExpired
 	}
 
 	// Populate new token fields inherited from the old token.
@@ -196,7 +215,7 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 
 	// Revoke old token
 	if _, err := tx.Exec(
-		`UPDATE refresh_tokens SET is_revoked = 1 WHERE id = ?`, t.ID,
+		`UPDATE refresh_tokens SET is_revoked = 1, revoked_reason = ? WHERE id = ?`, domain.RevokeReasonRotated, t.ID,
 	); err != nil {
 		return nil, fmt.Errorf("revoke old token: %w", err)
 	}
@@ -232,26 +251,34 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 	return &t, nil
 }
 
+// RevokeFamilyByHash revokes the live tokens in the family of the token with
+// the given hash. Tokens already revoked keep their original reason, so a
+// rotated ancestor stays "rotated" and its later replay still reads as theft.
 func (s *TokenStore) RevokeFamilyByHash(tokenHash string) error {
 	_, err := s.db.DB().Exec(
 		`UPDATE refresh_tokens
-		 SET is_revoked = 1
-		 WHERE family_id = (SELECT family_id FROM refresh_tokens WHERE token_hash = ?)`,
-		tokenHash,
+		 SET is_revoked = 1, revoked_reason = ?
+		 WHERE family_id = (SELECT family_id FROM refresh_tokens WHERE token_hash = ?)
+		   AND is_revoked = 0`,
+		domain.RevokeReasonFamilyRevoked, tokenHash,
 	)
 	return err
 }
 
-func (s *TokenStore) RevokeByID(id string) error {
+func (s *TokenStore) RevokeByID(id string, reason domain.RevokeReason) error {
 	_, err := s.db.DB().Exec(
-		`UPDATE refresh_tokens SET is_revoked = 1 WHERE id = ?`, id,
+		`UPDATE refresh_tokens SET is_revoked = 1, revoked_reason = ?
+		 WHERE id = ? AND is_revoked = 0`, reason, id,
 	)
 	return err
 }
 
-func (s *TokenStore) RevokeAllForUser(userID string) error {
+// RevokeAllForUser revokes the user's live tokens. Tokens already revoked
+// keep their original reason.
+func (s *TokenStore) RevokeAllForUser(userID string, reason domain.RevokeReason) error {
 	_, err := s.db.DB().Exec(
-		`UPDATE refresh_tokens SET is_revoked = 1 WHERE user_id = ?`, userID,
+		`UPDATE refresh_tokens SET is_revoked = 1, revoked_reason = ?
+		 WHERE user_id = ? AND is_revoked = 0`, reason, userID,
 	)
 	return err
 }
@@ -264,9 +291,9 @@ func (s *TokenStore) RevokeByClaimCodeID(claimCodeID string) error {
 		return nil
 	}
 	_, err := s.db.DB().Exec(
-		`UPDATE refresh_tokens SET is_revoked = 1
+		`UPDATE refresh_tokens SET is_revoked = 1, revoked_reason = ?
 		 WHERE claim_code_id = ? AND is_revoked = 0`,
-		claimCodeID,
+		domain.RevokeReasonClaimCodeRevoked, claimCodeID,
 	)
 	if err != nil {
 		return fmt.Errorf("revoke tokens for claim code: %w", err)
@@ -283,8 +310,8 @@ func (s *TokenStore) RevokeByAuthCodeID(authCodeID string) error {
 		return nil
 	}
 	_, err := s.db.DB().Exec(
-		`UPDATE refresh_tokens SET is_revoked = 1
-		 WHERE auth_code_id = ? AND is_revoked = 0`, authCodeID)
+		`UPDATE refresh_tokens SET is_revoked = 1, revoked_reason = ?
+		 WHERE auth_code_id = ? AND is_revoked = 0`, domain.RevokeReasonAuthCodeReplayed, authCodeID)
 	if err != nil {
 		return fmt.Errorf("revoke tokens for auth code: %w", err)
 	}
@@ -324,7 +351,7 @@ func scanToken(row *sql.Row) (*domain.RefreshToken, error) {
 	err := row.Scan(
 		&t.ID, &t.UserID, &t.TokenHash, &t.FamilyID, &t.ParentTokenID,
 		&t.DeviceHint, &audsJSON, &t.Scope, &t.ClaimCodeID, &t.AuthCodeID, &t.ClientID,
-		&issuedAt, &lastUsedAt, &expiresAt, &isRevoked,
+		&issuedAt, &lastUsedAt, &expiresAt, &isRevoked, &t.RevokedReason,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound

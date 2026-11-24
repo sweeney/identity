@@ -23,6 +23,34 @@ type RefreshToken struct {
 	LastUsedAt    time.Time
 	ExpiresAt     time.Time
 	IsRevoked     bool
+	RevokedReason RevokeReason // why it was revoked; empty while live, or for a token revoked before reasons were recorded
+}
+
+// RevokeReason records why a refresh token was revoked, so that a later
+// presentation of it can be classified. Only a replay of a rotated token (or
+// one whose reason is unknown) is a theft signal; the others mean a client is
+// still holding a token it was deliberately signed out of.
+type RevokeReason string
+
+const (
+	RevokeReasonRotated          RevokeReason = "rotated"
+	RevokeReasonFamilyRevoked    RevokeReason = "family_revoked"
+	RevokeReasonLogout           RevokeReason = "logout"
+	RevokeReasonLogoutAll        RevokeReason = "logout_all"
+	RevokeReasonPasswordChange   RevokeReason = "password_change"
+	RevokeReasonDeactivated      RevokeReason = "deactivated"
+	RevokeReasonClaimCodeRevoked RevokeReason = "claim_code_revoked"
+	RevokeReasonAuthCodeReplayed RevokeReason = "auth_code_replayed"
+	RevokeReasonExpired          RevokeReason = "expired"
+)
+
+// IndicatesTheft reports whether presenting a token revoked for this reason
+// is a theft signal. A rotated token should never be seen again. A
+// family_revoked token follows a theft in the same family, and the thief may
+// be the one holding it. An unknown reason (a token revoked before reasons
+// were recorded) keeps the cautious treatment it always had.
+func (r RevokeReason) IndicatesTheft() bool {
+	return r == RevokeReasonRotated || r == RevokeReasonFamilyRevoked || r == ""
 }
 
 // TokenFamily groups refresh tokens issued from the same login.
@@ -57,7 +85,7 @@ type TokenRepository interface {
 	// Uses BEGIN IMMEDIATE to prevent concurrent rotation races.
 	Rotate(oldTokenID string, newToken *RefreshToken) error
 
-	// RotateToken atomically validates the old token is not revoked, revokes it,
+	// RotateToken atomically validates the old token is not revoked or expired, revokes it,
 	// and inserts the new token. Returns the old token for caller inspection,
 	// or an error if the token is not found, already revoked, etc.
 	// This prevents the TOCTOU race condition where concurrent refresh requests
@@ -68,11 +96,12 @@ type TokenRepository interface {
 	// Used when token reuse (theft) is detected.
 	RevokeFamilyByHash(tokenHash string) error
 
-	// RevokeByID revokes a single token by its ID.
-	RevokeByID(id string) error
+	// RevokeByID revokes a single token by its ID, recording why.
+	RevokeByID(id string, reason RevokeReason) error
 
-	// RevokeAllForUser revokes every refresh token belonging to a user.
-	RevokeAllForUser(userID string) error
+	// RevokeAllForUser revokes every live refresh token belonging to a user,
+	// recording why. Tokens already revoked keep their original reason.
+	RevokeAllForUser(userID string, reason RevokeReason) error
 
 	// RevokeByClaimCodeID revokes every refresh token issued from the given
 	// claim code. Used when an admin revokes a device's sticker code, so the

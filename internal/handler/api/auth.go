@@ -79,7 +79,10 @@ func (h *authHandler) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.svc.Refresh(req.RefreshToken)
+	result, err := h.svc.Refresh(req.RefreshToken, service.RequestMeta{
+		IP:        httputil.ExtractClientIP(r, h.trustProxy),
+		UserAgent: r.UserAgent(),
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrRefreshRequiresClientAuth):

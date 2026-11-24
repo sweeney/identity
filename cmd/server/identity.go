@@ -156,7 +156,7 @@ func resetAdmin() error {
 	}
 
 	// Revoke all tokens for the admin
-	if err := tokenStore.RevokeAllForUser(adminUser.ID); err != nil {
+	if err := tokenStore.RevokeAllForUser(adminUser.ID, domain.RevokeReasonPasswordChange); err != nil {
 		return fmt.Errorf("revoke tokens: %w", err)
 	}
 

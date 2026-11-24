@@ -111,7 +111,7 @@ func TestRefresh_ReReadsClientAudiences(t *testing.T) {
 			svc := service.NewAuthService(newTestIssuer(t), userRepo, tokenRepo,
 				clientRepo, backupSvc, auditRepo, 30*24*time.Hour)
 
-			result, err := svc.Refresh(raw)
+			result, err := svc.Refresh(raw, service.RequestMeta{})
 			require.NoError(t, err)
 
 			assert.Equal(t, tc.want, jwtAudience(t, result.AccessToken),
@@ -160,7 +160,7 @@ func TestRefresh_UnboundTokenKeepsStoredAudiences(t *testing.T) {
 	svc := service.NewAuthService(newTestIssuer(t), userRepo, tokenRepo,
 		clientRepo, backupSvc, auditRepo, 30*24*time.Hour)
 
-	result, err := svc.Refresh(raw)
+	result, err := svc.Refresh(raw, service.RequestMeta{})
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"legacy-audience"}, jwtAudience(t, result.AccessToken))
@@ -193,7 +193,7 @@ func TestRefresh_NilClientRepoKeepsStoredAudiences(t *testing.T) {
 
 	svc, _ := newTestAuthService(t, ctrl, userRepo, tokenRepo, backupSvc)
 
-	result, err := svc.Refresh(raw)
+	result, err := svc.Refresh(raw, service.RequestMeta{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"statehouse"}, jwtAudience(t, result.AccessToken))
 }

@@ -72,18 +72,18 @@ func (mr *MockOAuthServicerMockRecorder) AuthorizeByUserID(clientID, redirectURI
 }
 
 // ExchangeCode mocks base method.
-func (m *MockOAuthServicer) ExchangeCode(clientID, code, redirectURI, codeVerifier string) (*service.LoginResult, error) {
+func (m *MockOAuthServicer) ExchangeCode(clientID, code, redirectURI, codeVerifier string, meta service.RequestMeta) (*service.LoginResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExchangeCode", clientID, code, redirectURI, codeVerifier)
+	ret := m.ctrl.Call(m, "ExchangeCode", clientID, code, redirectURI, codeVerifier, meta)
 	ret0, _ := ret[0].(*service.LoginResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ExchangeCode indicates an expected call of ExchangeCode.
-func (mr *MockOAuthServicerMockRecorder) ExchangeCode(clientID, code, redirectURI, codeVerifier any) *gomock.Call {
+func (mr *MockOAuthServicerMockRecorder) ExchangeCode(clientID, code, redirectURI, codeVerifier, meta any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExchangeCode", reflect.TypeOf((*MockOAuthServicer)(nil).ExchangeCode), clientID, code, redirectURI, codeVerifier)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExchangeCode", reflect.TypeOf((*MockOAuthServicer)(nil).ExchangeCode), clientID, code, redirectURI, codeVerifier, meta)
 }
 
 // GetClient mocks base method.
@@ -117,33 +117,33 @@ func (mr *MockOAuthServicerMockRecorder) IssueClientCredentials(client, requeste
 }
 
 // RefreshToken mocks base method.
-func (m *MockOAuthServicer) RefreshToken(rawRefreshToken string) (*service.LoginResult, error) {
+func (m *MockOAuthServicer) RefreshToken(rawRefreshToken string, meta service.RequestMeta) (*service.LoginResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RefreshToken", rawRefreshToken)
+	ret := m.ctrl.Call(m, "RefreshToken", rawRefreshToken, meta)
 	ret0, _ := ret[0].(*service.LoginResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RefreshToken indicates an expected call of RefreshToken.
-func (mr *MockOAuthServicerMockRecorder) RefreshToken(rawRefreshToken any) *gomock.Call {
+func (mr *MockOAuthServicerMockRecorder) RefreshToken(rawRefreshToken, meta any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshToken", reflect.TypeOf((*MockOAuthServicer)(nil).RefreshToken), rawRefreshToken)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshToken", reflect.TypeOf((*MockOAuthServicer)(nil).RefreshToken), rawRefreshToken, meta)
 }
 
 // RefreshTokenForClient mocks base method.
-func (m *MockOAuthServicer) RefreshTokenForClient(rawRefreshToken, clientID string) (*service.LoginResult, error) {
+func (m *MockOAuthServicer) RefreshTokenForClient(rawRefreshToken, clientID string, meta service.RequestMeta) (*service.LoginResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RefreshTokenForClient", rawRefreshToken, clientID)
+	ret := m.ctrl.Call(m, "RefreshTokenForClient", rawRefreshToken, clientID, meta)
 	ret0, _ := ret[0].(*service.LoginResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RefreshTokenForClient indicates an expected call of RefreshTokenForClient.
-func (mr *MockOAuthServicerMockRecorder) RefreshTokenForClient(rawRefreshToken, clientID any) *gomock.Call {
+func (mr *MockOAuthServicerMockRecorder) RefreshTokenForClient(rawRefreshToken, clientID, meta any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshTokenForClient", reflect.TypeOf((*MockOAuthServicer)(nil).RefreshTokenForClient), rawRefreshToken, clientID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshTokenForClient", reflect.TypeOf((*MockOAuthServicer)(nil).RefreshTokenForClient), rawRefreshToken, clientID, meta)
 }
 
 // ValidateAuthorizeRequest mocks base method.

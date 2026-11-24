@@ -145,7 +145,7 @@ func TestRefreshHandler_Success(t *testing.T) {
 		ExpiresIn:    900,
 		RefreshToken: "new-refresh-token",
 	}
-	authSvc.EXPECT().Refresh("old-refresh-token").Return(result, nil)
+	authSvc.EXPECT().Refresh("old-refresh-token", gomock.Any()).Return(result, nil)
 
 	h := api.NewRouter(newTestIssuer(t), authSvc, nil, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/refresh", map[string]string{
@@ -161,7 +161,7 @@ func TestRefreshHandler_Success(t *testing.T) {
 func TestRefreshHandler_InvalidToken(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	authSvc := mocks.NewMockAuthServicer(ctrl)
-	authSvc.EXPECT().Refresh("bad-token").Return(nil, service.ErrInvalidRefreshToken)
+	authSvc.EXPECT().Refresh("bad-token", gomock.Any()).Return(nil, service.ErrInvalidRefreshToken)
 
 	h := api.NewRouter(newTestIssuer(t), authSvc, nil, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/refresh", map[string]string{"refresh_token": "bad-token"})
@@ -175,7 +175,7 @@ func TestRefreshHandler_InvalidToken(t *testing.T) {
 func TestRefreshHandler_FamilyCompromised(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	authSvc := mocks.NewMockAuthServicer(ctrl)
-	authSvc.EXPECT().Refresh("stolen-token").Return(nil, service.ErrTokenFamilyCompromised)
+	authSvc.EXPECT().Refresh("stolen-token", gomock.Any()).Return(nil, service.ErrTokenFamilyCompromised)
 
 	h := api.NewRouter(newTestIssuer(t), authSvc, nil, nil, "")
 	rr := postJSON(t, h, "/api/v1/auth/refresh", map[string]string{"refresh_token": "stolen-token"})

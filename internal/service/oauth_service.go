@@ -179,7 +179,7 @@ func (s *OAuthService) AuthorizeByUserID(clientID, redirectURI, userID, username
 // enforced (RFC 6749 §3.2.1): a client registered for only client_credentials
 // or the device flow must not be able to exchange a code for a user token
 // (grant-type confusion).
-func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier string) (*LoginResult, error) {
+func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier string, meta RequestMeta) (*LoginResult, error) {
 	client, err := s.clients.GetByID(clientID)
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil, ErrUnknownClient
@@ -209,7 +209,7 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 	}
 
 	if code.UsedAt != nil {
-		return nil, s.handleCodeReplay(code, clientID)
+		return nil, s.handleCodeReplay(code, clientID, meta)
 	}
 
 	if time.Now().After(code.ExpiresAt) {
@@ -229,7 +229,7 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 	// error is a genuine infrastructure fault and must stay one.
 	if err := s.codes.MarkUsed(code.ID, time.Now().UTC()); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, s.handleCodeReplay(code, clientID)
+			return nil, s.handleCodeReplay(code, clientID, meta)
 		}
 		return nil, fmt.Errorf("mark code used: %w", err)
 	}
@@ -247,10 +247,12 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 	// existence for a client — the two can be minutes and a different network
 	// apart, and only one of them was being recorded (#26).
 	s.record(&domain.AuthEvent{
-		EventType: domain.EventOAuthCodeExchanged,
-		UserID:    code.UserID,
-		Username:  s.auth.UsernameForID(code.UserID),
-		ClientID:  clientID,
+		EventType:  domain.EventOAuthCodeExchanged,
+		UserID:     code.UserID,
+		Username:   s.auth.UsernameForID(code.UserID),
+		ClientID:   clientID,
+		IPAddress:  meta.IP,
+		DeviceHint: meta.userAgent(),
 	})
 	return result, nil
 }
@@ -267,28 +269,30 @@ func (s *OAuthService) ExchangeCode(clientID, rawCode, redirectURI, codeVerifier
 // Revocation failure is logged rather than returned. The caller must still see
 // invalid_grant — turning a denied replay into a 500 would tell an attacker
 // their replay hit something interesting, and the denial is correct regardless.
-func (s *OAuthService) handleCodeReplay(code *domain.AuthCode, clientID string) error {
+func (s *OAuthService) handleCodeReplay(code *domain.AuthCode, clientID string, meta RequestMeta) error {
 	if err := s.auth.RevokeTokensForAuthCode(code.ID); err != nil {
 		log.Printf("oauth: auth code %s replayed but token revocation failed: %v", code.ID, err)
 	}
 	s.record(&domain.AuthEvent{
-		EventType: domain.EventOAuthCodeReplayed,
-		UserID:    code.UserID,
-		Username:  s.auth.UsernameForID(code.UserID),
-		ClientID:  clientID,
-		Detail:    "authorization code presented more than once; tokens issued from it revoked",
+		EventType:  domain.EventOAuthCodeReplayed,
+		UserID:     code.UserID,
+		Username:   s.auth.UsernameForID(code.UserID),
+		ClientID:   clientID,
+		IPAddress:  meta.IP,
+		DeviceHint: meta.userAgent(),
+		Detail:     "authorization code presented more than once; tokens issued from it revoked",
 	})
 	return ErrAuthCodeAlreadyUsed
 }
 
 // RefreshToken delegates to the underlying auth service refresh.
-func (s *OAuthService) RefreshToken(rawRefreshToken string) (*LoginResult, error) {
-	return s.auth.Refresh(rawRefreshToken)
+func (s *OAuthService) RefreshToken(rawRefreshToken string, meta RequestMeta) (*LoginResult, error) {
+	return s.auth.Refresh(rawRefreshToken, meta)
 }
 
 // RefreshTokenForClient refreshes only if the token was issued to clientID.
-func (s *OAuthService) RefreshTokenForClient(rawRefreshToken, clientID string) (*LoginResult, error) {
-	return s.auth.RefreshForClient(rawRefreshToken, clientID)
+func (s *OAuthService) RefreshTokenForClient(rawRefreshToken, clientID string, meta RequestMeta) (*LoginResult, error) {
+	return s.auth.RefreshForClient(rawRefreshToken, clientID, meta)
 }
 
 const serviceTokenTTL = 15 * time.Minute

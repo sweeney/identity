@@ -118,7 +118,7 @@ func TestUserService_Update_ChangePassword(t *testing.T) {
 	// A password change ends every existing session (WP4) — see
 	// TestUserService_Update_PasswordChange_RevokesRefreshTokens.
 	userRepo.EXPECT().BumpSessionEpoch("user-123").Return(nil)
-	tokenRepo.EXPECT().RevokeAllForUser("user-123").Return(nil)
+	tokenRepo.EXPECT().RevokeAllForUser("user-123", domain.RevokeReasonPasswordChange).Return(nil)
 
 	svc := service.NewUserService(userRepo, tokenRepo, backupSvc, nil, maxUsers).WithBcryptCost(4)
 
@@ -152,7 +152,7 @@ func TestUserService_Update_DeactivateRevokesTokens(t *testing.T) {
 	userRepo.EXPECT().GetByID("user-123").Return(existing, nil)
 	userRepo.EXPECT().Update(gomock.Any()).Return(nil)
 	// Deactivating must revoke all tokens
-	tokenRepo.EXPECT().RevokeAllForUser("user-123").Return(nil)
+	tokenRepo.EXPECT().RevokeAllForUser("user-123", domain.RevokeReasonDeactivated).Return(nil)
 	backupSvc.EXPECT().TriggerAsync()
 
 	svc := service.NewUserService(userRepo, tokenRepo, backupSvc, nil, maxUsers)
