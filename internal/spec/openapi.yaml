@@ -1021,11 +1021,16 @@ paths:
           (`client_secret_basic`) or `client_id` + `client_secret` in the body
           (`client_secret_post`). With Basic, the body `client_id` may be
           omitted (RFC 6749 §4.1.3); if sent, it must match the header or the
-          request fails with `invalid_client`.
-        - `refresh_token` — rotate a refresh token for a new token pair. `client_id`
-          is required: the token is bound to the client it was issued to, and
-          presenting it with a different client (or none) returns `invalid_grant`.
-          A confidential client must also authenticate, as on `authorization_code`.
+          request fails with `invalid_client`. A public client (no secret) must
+          not send client credentials: they cannot be verified, so they are
+          refused with `invalid_client`.
+        - `refresh_token` — rotate a refresh token for a new token pair. The
+          client must be named, by the body `client_id` or, for
+          `client_secret_basic`, by the Basic header alone; if both are sent
+          they must match or the request fails with `invalid_client`. The token
+          is bound to the client it was issued to, and presenting it with a
+          different client (or none) returns `invalid_grant`. Client
+          authentication follows the same rules as `authorization_code`.
         - `client_credentials` — service authenticates with client_id + client_secret, receives an access token (no refresh token)
         - `urn:ietf:params:oauth:grant-type:device_code` — RFC 8628 device flow poll. The device polls with its device_code from `/oauth/device_authorization` or `/oauth/device/claim` and receives tokens once a user has approved.
 
@@ -1057,7 +1062,9 @@ paths:
                     `refresh_token` it may be omitted when the client
                     authenticates with `Authorization: Basic`, which names it;
                     otherwise it is required. For `client_credentials` send it
-                    here only with `client_secret` (`client_secret_post`).
+                    here only with `client_secret` (`client_secret_post`). For
+                    the `device_code` grant it is always required in the body,
+                    even when the client authenticates with Basic.
                 client_secret:
                   type: string
                 code:

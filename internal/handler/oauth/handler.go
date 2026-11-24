@@ -320,39 +320,23 @@ func (h *oauthHandler) token(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *oauthHandler) tokenAuthCode(w http.ResponseWriter, r *http.Request) {
-	clientID := r.FormValue("client_id")
+	clientID, ok := resolveTokenClientID(w, r)
+	if !ok {
+		return
+	}
 	code := r.FormValue("code")
 	redirectURI := r.FormValue("redirect_uri")
 	codeVerifier := r.FormValue("code_verifier")
-
-	// RFC 6749 §4.1.3 requires client_id in the body only when the client is
-	// not authenticating, so a client_secret_basic client may name itself in
-	// the Authorization header alone. When both are present they must agree.
-	if creds, ok := extractClientCredentials(r); ok && creds.Method == "client_secret_basic" {
-		if clientID != "" && clientID != creds.ClientID {
-			w.Header().Set("WWW-Authenticate", "Basic")
-			oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Client authentication failed.")
-			return
-		}
-		clientID = creds.ClientID
-	}
 
 	if clientID == "" || code == "" || redirectURI == "" || codeVerifier == "" {
 		oauthError(w, "invalid_request", "client_id, code, redirect_uri, and code_verifier are required")
 		return
 	}
 
-	// Confidential-client authentication (RFC 6749 §4.1.3 / §3.2.1): if the client
-	// has a registered secret, it MUST authenticate at the token endpoint. Public
-	// clients (no secret) continue with PKCE alone. The grant-type gate itself lives
-	// in ExchangeCode.
-	if client, err := h.svc.GetClient(clientID); err == nil && client.SecretHash != "" {
-		creds, ok := extractClientCredentials(r)
-		if !ok || creds.ClientID != clientID || !verifyClientSecret(client, creds.ClientSecret) {
-			w.Header().Set("WWW-Authenticate", "Basic")
-			oauthErrorWithStatus(w, http.StatusUnauthorized, "invalid_client", "Client authentication failed.")
-			return
-		}
+	// Confidential clients authenticate here (RFC 6749 §4.1.3); public clients
+	// continue with PKCE alone. The grant-type gate itself lives in ExchangeCode.
+	if !h.authenticateTokenClient(w, r, clientID) {
+		return
 	}
 
 	result, err := h.svc.ExchangeCode(clientID, code, redirectURI, codeVerifier)
@@ -388,11 +372,11 @@ func (h *oauthHandler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
 
 	// Confidential clients authenticate here, as they do on the
 	// authorization_code grant. Without it, knowing a client_id was enough.
-	clientID := r.FormValue("client_id")
-	if creds, ok := extractClientCredentials(r); ok && clientID == "" {
-		clientID = creds.ClientID
+	clientID, ok := resolveTokenClientID(w, r)
+	if !ok {
+		return
 	}
-	if !h.authenticateDeviceClient(w, r, clientID) {
+	if !h.authenticateTokenClient(w, r, clientID) {
 		return
 	}
 

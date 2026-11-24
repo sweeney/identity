@@ -618,6 +618,57 @@ func TestTokenAuthCode_BasicAuth_BodyClientIDMismatch(t *testing.T) {
 	h.ServeHTTP(rr, req)
 
 	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Equal(t, "Basic", rr.Header().Get("WWW-Authenticate"))
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "invalid_client", body["error"])
+}
+
+// When the client is named only by the Basic header, its secret is still
+// checked: a wrong secret must not reach the exchange.
+func TestTokenAuthCode_Confidential_BasicAuthOnly_WrongSecret(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	svc.EXPECT().GetClient("conf-client").Return(confidentialAuthCodeClient(), nil)
+	// ExchangeCode must NOT be reached.
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	form := authCodeForm(nil)
+	form.Del("client_id")
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("conf-client:wrong")))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Equal(t, "Basic", rr.Header().Get("WWW-Authenticate"))
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "invalid_client", body["error"])
+}
+
+// A public client has no secret to check, so client credentials presented for
+// it are a failed authentication (RFC 6749 §5.2), not something to ignore.
+func TestTokenAuthCode_Public_WithBasicCredentials_Rejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	svc.EXPECT().GetClient("spa").Return(&domain.OAuthClient{
+		ID:         "spa",
+		GrantTypes: []string{"authorization_code"},
+	}, nil)
+	// ExchangeCode must NOT be reached.
+
+	h := oauth.NewRouter(svc, "", nil, nil, nil, nil, "", "")
+	form := authCodeForm(nil)
+	form.Del("client_id")
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("spa:anything")))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
 	var body map[string]string
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 	assert.Equal(t, "invalid_client", body["error"])

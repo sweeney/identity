@@ -219,10 +219,19 @@ grant_type=authorization_code
 | Parameter | Required | Description |
 |---|---|---|
 | `grant_type` | Yes | `authorization_code` |
-| `client_id` | Yes | Must match the authorize request |
+| `client_id` | Yes, unless sent via Basic auth | Must match the authorize request |
 | `code` | Yes | The authorization code from the redirect |
 | `redirect_uri` | Yes | Must match the authorize request |
 | `code_verifier` | Yes | The original PKCE verifier |
+
+A confidential client (one with a registered secret) must also authenticate,
+either with `Authorization: Basic base64(client_id:client_secret)`
+(`client_secret_basic`) or with `client_secret` in the body
+(`client_secret_post`). With Basic, `client_id` may be left out of the body,
+since the header names the client (RFC 6749 §4.1.3). If it is sent, it must
+match the header or the request fails with `401 invalid_client`. A public client
+must not send client credentials: they cannot be verified, so they are refused
+with `invalid_client`.
 
 **Response 200**:
 
@@ -248,7 +257,12 @@ grant_type=refresh_token
 &client_id=<client-id>
 ```
 
-**`client_id` is required.** A refresh token is bound to the client it was
+**The client must be named.** Send `client_id` in the body, or, for a
+confidential client using `client_secret_basic`, let the `Authorization: Basic`
+header name it and leave `client_id` out. If you send both, they must match or
+the request fails with `invalid_client`. A public client must not send client
+credentials at all; they cannot be verified, so they are refused with
+`invalid_client`. A refresh token is bound to the client it was
 issued to, so presenting it with a *different* `client_id` returns
 `invalid_grant`. A token issued before client binding existed carries no
 client; it is accepted and adopted by the presenting client, so the binding

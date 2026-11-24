@@ -10,8 +10,11 @@ package oauth_test
 // authenticates confidential clients here; the refresh grant did not.
 
 import (
+	"encoding/base64"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -82,3 +85,71 @@ func TestTokenRefresh_ConfidentialClient_RequiresSecret(t *testing.T) {
 }
 
 var _ = domain.GrantTypeDeviceCode
+
+func refreshRequest(t *testing.T, h http.Handler, form url.Values, basic string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(basic)))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+// The refresh grant applies the same rule as authorization_code: a body
+// client_id that disagrees with the Basic header is refused, rather than the
+// body silently winning.
+func TestTokenRefresh_BodyAndBasicClientIDMismatch_Rejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	// No RefreshTokenForClient expectation.
+
+	h := newDeviceRouter(svc, nil, nil)
+	rr := refreshRequest(t, h, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {"good-refresh-token"},
+		"client_id":     {"public-app"},
+	}, "other-client:x")
+
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Equal(t, "Basic", rr.Header().Get("WWW-Authenticate"))
+	assert.Contains(t, rr.Body.String(), "invalid_client")
+}
+
+// Credentials presented for a public client cannot be verified and are a
+// failed authentication, as on the authorization_code grant.
+func TestTokenRefresh_PublicClient_WithBasicCredentials_Rejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	svc.EXPECT().GetClient("public-app").Return(&domain.OAuthClient{ID: "public-app"}, nil)
+	// No RefreshTokenForClient expectation.
+
+	h := newDeviceRouter(svc, nil, nil)
+	rr := refreshRequest(t, h, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {"good-refresh-token"},
+	}, "public-app:anything")
+
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	assert.Contains(t, rr.Body.String(), "invalid_client")
+}
+
+// A confidential client named only by its Basic header refreshes normally.
+func TestTokenRefresh_ConfidentialClient_BasicOnly_Succeeds(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := mocks.NewMockOAuthServicer(ctrl)
+	client := confidentialDeviceClient()
+	client.SecretHash = mustHash("s3cret") // the shared fixture's hash is not of "s3cret"
+	svc.EXPECT().GetClient("device-client").Return(client, nil)
+	svc.EXPECT().
+		RefreshTokenForClient("good-refresh-token", "device-client").
+		Return(&service.LoginResult{AccessToken: "a", RefreshToken: "r", TokenType: "Bearer", ExpiresIn: 900}, nil)
+
+	h := newDeviceRouter(svc, nil, nil)
+	rr := refreshRequest(t, h, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {"good-refresh-token"},
+	}, "device-client:s3cret")
+
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+}
