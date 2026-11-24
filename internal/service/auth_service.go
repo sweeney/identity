@@ -469,6 +469,10 @@ func (s *AuthService) refresh(rawRefreshToken, adoptClientID string, unauthentic
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil, ErrInvalidRefreshToken
 	}
+	if errors.Is(err, domain.ErrTokenExpired) {
+		// Revoked as expired inside the transaction, with no replacement.
+		return nil, ErrRefreshTokenExpired
+	}
 	if errors.Is(err, domain.ErrTokenAlreadyRevoked) {
 		s.recordRevokedReuse(oldTok, meta)
 		// The family is revoked whatever the reason: harmless when it is
@@ -489,6 +493,7 @@ func (s *AuthService) refresh(rawRefreshToken, adoptClientID string, unauthentic
 	// Post-rotation checks: expiry and user status.
 	// The token has already been revoked atomically; if these fail the old
 	// token is consumed (which is correct — the client must re-login).
+	// RotateToken refuses an expired token itself; this stays as a backstop.
 	if time.Now().After(oldTok.ExpiresAt) {
 		return nil, ErrRefreshTokenExpired
 	}
@@ -656,16 +661,24 @@ func (s *AuthService) issueTokens(user *domain.User, args loginArgs) (*LoginResu
 // purpose — password change, logout, claim-code revocation — is reported as
 // refresh_token_revoked_reuse: a client still holding a token it was signed
 // out of, not a thief. Either way the record names the caller and the client
-// the token was bound to, and repeats from one family are throttled to one
-// summary per reuseWindow.
+// the token was bound to.
+//
+// Only the non-theft event is throttled, to one summary per reuseWindow per
+// family. Theft events are rare and every replay's source matters, so each is
+// recorded with its own IP and User-Agent.
 func (s *AuthService) recordRevokedReuse(tok *domain.RefreshToken, meta RequestMeta) {
 	event := domain.EventRefreshTokenRevokedReuse
 	if tok.RevokedReason.IndicatesTheft() {
 		event = domain.EventTokenFamilyCompromised
 	}
-	record, suppressed, since := s.reuse.observe(event+"|"+tok.FamilyID, s.now())
-	if !record {
-		return
+	var suppressed int
+	var since time.Time
+	if event == domain.EventRefreshTokenRevokedReuse {
+		var record bool
+		record, suppressed, since = s.reuse.observe(tok.FamilyID, s.now())
+		if !record {
+			return
+		}
 	}
 	reason := string(tok.RevokedReason)
 	if reason == "" {

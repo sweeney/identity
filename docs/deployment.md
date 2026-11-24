@@ -120,9 +120,10 @@ Device polling's `authorization_pending` and `slow_down` are not logged.
 `refresh_token_revoked_reuse` means the token was revoked on purpose and a
 client has not noticed. The detail gives the reason; `client`, `device` and
 `ip` say which client it is. `token_family_compromised` is kept for a replay of
-a rotated token (or one revoked before migration 014), which is a real theft
-signal. Both are throttled to one line per token family, then one summary per
-10 minutes:
+a rotated token, a token from a family already revoked for theft, or one revoked
+before migration 014. Those are real theft signals and are never throttled, so
+each replay keeps its own IP. `refresh_token_revoked_reuse` is throttled to one
+line per token family, then one summary per 10 minutes:
 
 ```bash
 ssh sweeney@garibaldi 'journalctl -u identity --since today --no-pager | grep -E "revoked_reuse|token_family_compromised"'

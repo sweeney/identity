@@ -181,3 +181,20 @@ func TestTokenRefusalLog_QuietOnSuccessAndPolling(t *testing.T) {
 	}
 	assert.Empty(t, refusalLines(buf))
 }
+
+// The handlers read parameters with FormValue (body and query), so the log
+// must report what they saw, not only what arrived in the body.
+func TestTokenRefusalLog_ReadsQueryParametersLikeTheHandler(t *testing.T) {
+	buf := captureLog(t)
+	h := oauth.NewRouter(mocks.NewMockOAuthServicer(gomock.NewController(t)), "", nil, nil, nil, nil, "", "")
+
+	q := url.Values{"grant_type": {"authorization_code"}, "client_id": {"q-client"}, "code": {"c"}}
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token?"+q.Encode(), strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	lines := refusalLines(buf)
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], `grant_type="authorization_code" client="q-client" client_via=body`)
+	assert.Contains(t, lines[0], `fields=client_id:+,code:+,redirect_uri:-,code_verifier:-`)
+}

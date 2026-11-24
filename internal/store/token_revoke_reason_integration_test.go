@@ -138,3 +138,30 @@ func TestRevokeReason_RevokeByAuthCodeID(t *testing.T) {
 	require.NoError(t, ts.RevokeByAuthCodeID(tok.AuthCodeID))
 	assert.Equal(t, domain.RevokeReasonAuthCodeReplayed, reasonOf(t, ts, "rr-code-1"))
 }
+
+// An expired token is revoked as "expired", not "rotated", and gets no
+// replacement. Before, RotateToken rotated it and refresh() refused it
+// afterwards, so the firmware's retry of the same token read as a replay of a
+// rotated token: theft.
+func TestRevokeReason_RotateToken_ExpiredIsNotRotated(t *testing.T) {
+	database := openTestDB(t)
+	ts := store.NewTokenStore(database)
+	u := seedUser(t, store.NewUserStore(database), "rr-expired")
+	tok := newToken(u.ID, "fam", "rr-exp-1")
+	tok.ExpiresAt = time.Now().UTC().Add(-time.Hour)
+	require.NoError(t, ts.Create(tok))
+
+	old, err := ts.RotateToken(sha256hex("rr-exp-1"), freshReplacement("rr-exp-2"))
+	require.ErrorIs(t, err, domain.ErrTokenExpired)
+	require.NotNil(t, old)
+	assert.Equal(t, u.ID, old.UserID)
+	assert.Equal(t, domain.RevokeReasonExpired, reasonOf(t, ts, "rr-exp-1"))
+
+	_, err = ts.GetByHash(sha256hex("rr-exp-2"))
+	assert.ErrorIs(t, err, domain.ErrNotFound, "an expired token must not produce a replacement")
+
+	// The retry is a reuse of an expired token, not of a rotated one.
+	old, err = ts.RotateToken(sha256hex("rr-exp-1"), freshReplacement("rr-exp-3"))
+	require.ErrorIs(t, err, domain.ErrTokenAlreadyRevoked)
+	assert.Equal(t, domain.RevokeReasonExpired, old.RevokedReason)
+}

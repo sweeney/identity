@@ -41,14 +41,16 @@ const (
 	RevokeReasonDeactivated      RevokeReason = "deactivated"
 	RevokeReasonClaimCodeRevoked RevokeReason = "claim_code_revoked"
 	RevokeReasonAuthCodeReplayed RevokeReason = "auth_code_replayed"
+	RevokeReasonExpired          RevokeReason = "expired"
 )
 
 // IndicatesTheft reports whether presenting a token revoked for this reason
-// is a theft signal. A rotated token should never be seen again, and an
-// unknown reason (a token revoked before reasons were recorded) keeps the
-// cautious treatment it always had.
+// is a theft signal. A rotated token should never be seen again. A
+// family_revoked token follows a theft in the same family, and the thief may
+// be the one holding it. An unknown reason (a token revoked before reasons
+// were recorded) keeps the cautious treatment it always had.
 func (r RevokeReason) IndicatesTheft() bool {
-	return r == RevokeReasonRotated || r == ""
+	return r == RevokeReasonRotated || r == RevokeReasonFamilyRevoked || r == ""
 }
 
 // TokenFamily groups refresh tokens issued from the same login.
@@ -83,7 +85,7 @@ type TokenRepository interface {
 	// Uses BEGIN IMMEDIATE to prevent concurrent rotation races.
 	Rotate(oldTokenID string, newToken *RefreshToken) error
 
-	// RotateToken atomically validates the old token is not revoked, revokes it,
+	// RotateToken atomically validates the old token is not revoked or expired, revokes it,
 	// and inserts the new token. Returns the old token for caller inspection,
 	// or an error if the token is not found, already revoked, etc.
 	// This prevents the TOCTOU race condition where concurrent refresh requests

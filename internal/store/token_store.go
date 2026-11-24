@@ -161,6 +161,25 @@ func (s *TokenStore) RotateToken(oldTokenHash string, newToken *domain.RefreshTo
 		return &t, domain.ErrTokenAlreadyRevoked
 	}
 
+	// An expired token is revoked as expired and gets no replacement. Rotating
+	// it first and refusing it afterwards would leave it marked "rotated", so
+	// a client retrying it — a device back after a month offline — would be
+	// reported as replaying a rotated token, which reads as theft.
+	if time.Now().After(t.ExpiresAt) {
+		if _, err := tx.Exec(
+			`UPDATE refresh_tokens SET is_revoked = 1, revoked_reason = ? WHERE id = ?`,
+			domain.RevokeReasonExpired, t.ID,
+		); err != nil {
+			return nil, fmt.Errorf("revoke expired token: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit expired revoke: %w", err)
+		}
+		t.IsRevoked = true
+		t.RevokedReason = domain.RevokeReasonExpired
+		return &t, domain.ErrTokenExpired
+	}
+
 	// Populate new token fields inherited from the old token.
 	// The caller provides ID, TokenHash, IssuedAt, LastUsedAt, and ExpiresAt;
 	// we fill in the chain/family fields from the old token.

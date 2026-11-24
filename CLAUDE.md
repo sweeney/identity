@@ -155,17 +155,20 @@ here are logged, so who actually uses this path can be answered from traffic.
 Every refresh rotates the token: old token is revoked, new pair issued. If a **previously-used** refresh token is ever presented again, the server assumes the token was stolen. It revokes the **entire token family** and returns `token_family_compromised`. The client must clear all tokens and show the login screen.
 
 Each revoked refresh token records why (`refresh_tokens.revoked_reason`,
-migration 014): `rotated`, `family_revoked`, `logout`, `logout_all`,
+migration 014): `rotated`, `family_revoked`, `expired`, `logout`, `logout_all`,
 `password_change`, `deactivated`, `claim_code_revoked`, `auth_code_replayed`.
-The reason only changes what is *recorded* when a revoked token comes back. A
-replay of a `rotated` token, or one revoked before migration 014 (reason `''`),
-is audited as `token_family_compromised`. Any other reason is audited as
-`refresh_token_revoked_reuse` (detail `reason=…`): a client still holding a
-token it was deliberately signed out of, not a thief. The client receives
-`token_family_compromised` and the family is revoked either way. Revoke paths
-never overwrite an existing reason. Repeats from one family are throttled in
-memory (`reuseLimiter`): one full record, then at most one summary per 10
-minutes (`repeated=N since=…`).
+The reason only changes what is *recorded* when a revoked token comes back.
+`rotated`, `family_revoked` (it follows a theft, and the thief may hold it) and
+`''` (revoked before migration 014) are audited as `token_family_compromised`.
+Any other reason is audited as `refresh_token_revoked_reuse` (detail
+`reason=…`): a client still holding a token it was deliberately signed out of,
+not a thief. The client receives `token_family_compromised` and the family is
+revoked either way. Revoke paths never overwrite an existing reason.
+`RotateToken` refuses an expired token itself, revoking it as `expired` with no
+replacement, so a device retrying it is not mistaken for a thief. Only
+`refresh_token_revoked_reuse` is throttled, in memory (`reuseLimiter`): one full
+record per family, then at most one summary per 10 minutes (`repeated=N
+since=…`). Theft events are never throttled, so each replay keeps its own IP.
 
 Token-endpoint and refresh audit events name the caller: IP, User-Agent (stored
 as `device_hint`, capped at 200 bytes) and the client the token is bound to

@@ -80,6 +80,33 @@ func TestRefreshReuse_RotatedToken_IsTheft(t *testing.T) {
 	assert.Equal(t, "alice", e.Username)
 }
 
+// A family_revoked token follows a theft in the same family, and the thief may
+// be the one holding it, so its reuse is reported as theft too.
+func TestRefreshReuse_FamilyRevoked_IsTheft(t *testing.T) {
+	h := newReuseHarness(t, domain.RevokeReasonFamilyRevoked, "fam-1")
+
+	_, err := h.svc.Refresh(reuseRaw, reuseCaller)
+	require.ErrorIs(t, err, service.ErrTokenFamilyCompromised)
+	require.Len(t, *h.recorded, 1)
+	assert.Equal(t, domain.EventTokenFamilyCompromised, (*h.recorded)[0].EventType)
+	assert.Equal(t, "reason=family_revoked", (*h.recorded)[0].Detail)
+}
+
+// Theft events are rare and each replay's source matters, so they are never
+// throttled: every presentation keeps its own IP and User-Agent.
+func TestRefreshReuse_TheftIsNotThrottled(t *testing.T) {
+	h := newReuseHarness(t, domain.RevokeReasonRotated, "fam-1")
+	for i, ip := range []string{"203.0.113.1", "203.0.113.2", "203.0.113.3"} {
+		*h.now = h.now.Add(time.Duration(i) * time.Second)
+		_, _ = h.svc.Refresh(reuseRaw, service.RequestMeta{IP: ip})
+	}
+	require.Len(t, *h.recorded, 3)
+	for i, ip := range []string{"203.0.113.1", "203.0.113.2", "203.0.113.3"} {
+		assert.Equal(t, ip, (*h.recorded)[i].IPAddress)
+		assert.Equal(t, "reason=rotated", (*h.recorded)[i].Detail)
+	}
+}
+
 // Tokens revoked before reasons were recorded keep the cautious treatment.
 func TestRefreshReuse_UnknownReason_IsTheft(t *testing.T) {
 	h := newReuseHarness(t, "", "fam-1")
@@ -97,7 +124,7 @@ func TestRefreshReuse_DeliberateRevocations_AreNotTheft(t *testing.T) {
 		domain.RevokeReasonLogout,
 		domain.RevokeReasonLogoutAll,
 		domain.RevokeReasonDeactivated,
-		domain.RevokeReasonFamilyRevoked,
+		domain.RevokeReasonExpired,
 		domain.RevokeReasonClaimCodeRevoked,
 		domain.RevokeReasonAuthCodeReplayed,
 	} {
@@ -167,4 +194,22 @@ func TestRefreshReuse_UserAgentIsBounded(t *testing.T) {
 	_, _ = h.svc.Refresh(reuseRaw, service.RequestMeta{IP: "203.0.113.9", UserAgent: string(long)})
 	require.Len(t, *h.recorded, 1)
 	assert.Len(t, (*h.recorded)[0].DeviceHint, 200)
+}
+
+// An expired token is refused with refresh_token_expired, without revoking its
+// family or writing a reuse event: nothing was replayed.
+func TestRefresh_ExpiredToken_IsNotReuse(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	tokens := mocks.NewMockTokenRepository(ctrl)
+	audit := mocks.NewMockAuditRepository(ctrl)
+	tokens.EXPECT().RotateToken(gomock.Any(), gomock.Any()).Return(&domain.RefreshToken{
+		ID: "tok-exp", UserID: "user-123", FamilyID: "fam-1",
+		ExpiresAt: time.Now().Add(-time.Hour), IsRevoked: true, RevokedReason: domain.RevokeReasonExpired,
+	}, domain.ErrTokenExpired)
+	// No RevokeFamilyByHash and no audit Record expectations.
+
+	svc := service.NewAuthService(newTestIssuer(t), mocks.NewMockUserRepository(ctrl), tokens, nil,
+		mocks.NewMockBackupService(ctrl), audit, 0)
+	_, err := svc.Refresh(reuseRaw, reuseCaller)
+	require.ErrorIs(t, err, service.ErrRefreshTokenExpired)
 }

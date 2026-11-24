@@ -997,7 +997,7 @@ Every refresh rotates the token: old token is revoked, new pair issued. If a **p
 
 **What to do**: Clear all stored tokens, show the login screen, and alert the user: *"Your session was ended for security reasons. Please log in again."*
 
-The client sees `token_family_compromised` whenever a revoked refresh token is presented, whatever revoked it. The server's audit log tells the cases apart. A replay of a rotated token is logged as `token_family_compromised`. A token that was revoked deliberately (password change, logout, a revoked claim code) is logged as `refresh_token_revoked_reuse` with the reason, because it means a client is still holding a token it was signed out of. If your device keeps retrying a dead token, the operator will see it, with your IP and User-Agent. Send a descriptive `User-Agent` such as `thermo-fw/2.1` to make that easy.
+The client sees `token_family_compromised` whenever a revoked refresh token is presented, whatever revoked it. The server's audit log tells the cases apart. A replay of a rotated token is logged as `token_family_compromised`. A token that was revoked deliberately or has expired (password change, logout, a revoked claim code, expiry) is logged as `refresh_token_revoked_reuse` with the reason, because it means a client is still holding a token it was signed out of. If your device keeps retrying a dead token, the operator will see it, with your IP and User-Agent. Send a descriptive `User-Agent` such as `thermo-fw/2.1` to make that easy.
 
 **Implementation requirement**: Use a mutex around the refresh call. If multiple in-flight requests all get a 401 simultaneously, only one should refresh; the others should wait and reuse the result.
 

@@ -40,8 +40,10 @@ func (t *tokenRecorder) Write(p []byte) (int, error) {
 	return t.ResponseWriter.Write(p)
 }
 
-// tokenRequiredFields lists, per grant, the body fields whose presence is
-// worth reporting on a refusal. Only presence is ever logged, never a value.
+// tokenRequiredFields lists, per grant, the fields whose presence is worth
+// reporting on a refusal. They are read with FormValue (body and query), as
+// the handlers read them, so the log shows what the handler saw. Only presence
+// is ever logged, never a value.
 var tokenRequiredFields = map[string][]string{
 	"authorization_code":        {"client_id", "code", "redirect_uri", "code_verifier"},
 	"refresh_token":             {"client_id", "refresh_token"},
@@ -70,8 +72,8 @@ func (h *oauthHandler) logTokenRefusal(r *http.Request, rec *tokenRecorder) {
 		return
 	}
 
-	grantType := r.PostFormValue("grant_type")
-	bodyClient := r.PostFormValue("client_id")
+	grantType := r.FormValue("grant_type")
+	bodyClient := r.FormValue("client_id")
 
 	auth := "none"
 	basicClient := ""
@@ -97,7 +99,7 @@ func (h *oauthHandler) logTokenRefusal(r *http.Request, rec *tokenRecorder) {
 	fields := make([]string, 0, 4)
 	for _, f := range tokenRequiredFields[grantType] {
 		mark := "-"
-		if r.PostFormValue(f) != "" {
+		if r.FormValue(f) != "" {
 			mark = "+"
 		}
 		fields = append(fields, f+":"+mark)
